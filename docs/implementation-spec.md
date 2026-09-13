@@ -154,6 +154,7 @@ GitHub CLIの既存認証を使用する。独自OAuthを持たない。
 ```bash
 gh pr view <PR> --json \
   author,number,url,title,body,createdAt,updatedAt,state,isDraft,\
+  latestReviews,\
   baseRefName,baseRefOid,headRefName,headRefOid,\
   headRepository,headRepositoryOwner
 ```
@@ -164,12 +165,15 @@ live確認、resetはClosed/Merged後もGitHub metadataを取得し、最後に�
 `createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
 ローカル登録日時で補わず`NULL`のまま表示し、次回の通常同期でだけ埋める。一覧表示を契機にGitHubへ
 一括問い合わせしない。利用者が一覧の一括更新buttonを押した場合だけ、保存済みPRのうち最後に成功した
-syncで`state=OPEN`または状態未取得のPRについて、`state`と`isDraft`をGitHubへ問い合わせてcacheする。
+syncで`state=OPEN`または状態未取得のPRについて、`state`、`isDraft`、`latestReviews`をGitHubへ問い合わせ、
+状態とApprove数をcacheする。
 Closed / Mergedは通常の一括更新対象に含めず、個別refresh、`pr sync`、resetで再取得した場合は現在のstateへ
 更新する。この操作はcommit、PR title/body、作成／更新日時を同期しない。個別PRの
 失敗は成功分の反映を妨げず、対象とerrorを一覧へ返す。GitHub上のDraftは独立stateではなく`state=OPEN`かつ`isDraft=true`なので、
-DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。既存DBで状態が
-未取得の行はbadgeを表示せず、一括status更新または通常同期で取得した際に埋める。
+DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。`latestReviews`は
+reviewerごとの最新reviewとして扱い、`state=APPROVED`の件数をcached Approve数として保持する。既存DBで状態が
+未取得の行は状態badgeを表示せず、Approve数が未取得の行はApprove badgeを表示しない。どちらも一括status更新または
+通常同期で取得した際に埋める。
 
 ### 4.2 Local-first open
 
@@ -522,6 +526,8 @@ interface Walkthrough {
   authorLabel: string | null;
   diagramBindings: Record<string, string>; // Mermaid node ID -> reference ID
   references: CodeReference[];
+  createdAt: string;
+  updatedAt: string;
 }
 ```
 
@@ -545,6 +551,9 @@ interface Walkthrough {
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
   同じIDの最新内容とtitleへ結び直す。Explorerの一行表示はtitleを主表示とし、authorと短縮source OIDは
   native tooltipで確認できるようにする。
+- Walkthrough tabのheaderは最終更新日時をtitle上の既存labelと同じ一行へ表示し、headerの高さを増やさない。
+  `updatedAt`はpublish時に`createdAt`と同じ値で初期化し、同じIDをupdateするたびに更新する。既存行は
+  migration時に`createdAt`で補完する。
 - Walkthrough tabは本文中のtyped inline referenceとbinding済みMermaid nodeを維持するが、横または下に
   全referenceを重複表示する`Code references` indexは持たない。sidebar itemにもreference件数を表示しない。
 - `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、
@@ -1954,7 +1963,7 @@ pagination前に除外する。Open、Draft、および状態未取得のlegacy�
 github_state IS NULL`の保存済みPRだけを最大4件並列で取得する。対象がなければGitHub認証も行わない。
 成功したstatusは一つのSQLite transactionで反映し、部分失敗を結果へ含める。`attempted`、`updated`、
 `failures`は全登録件数ではなく、この同期対象についての件数と結果を表す。
-各行はPR identity、title、GitHubの作成／更新日時、未解決／解決済みcomment数、Walkthrough数、Structure数だけを持つ
+各行はPR identity、title、GitHubの作成／更新日時、cached Approve数、未解決／解決済みcomment数、Walkthrough数、Structure数だけを持つ
 SQLite専用read modelとする。Git commitを読む`getPullRequestView()`は呼ばず、先に一覧1ページを絞ってから
 その行だけのcountをaggregate queryで取得し、PRごとのN+1 queryを作らない。順序は
 `github_updated_at DESC`の後に永続IDを
@@ -1963,8 +1972,10 @@ tie-breakerとして固定する。
 ## 10. Viewer UX
 
 URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull Request一覧をworkspace入口として表示する。
-一覧は`owner/repository`、PR番号、title、未解決／解決済みcomment数、Walkthrough数、Structure数、GitHub上の作成／更新日時を
-一行にまとめ、未解決comment数は`unresolved`と表示する。PR titleは省略せず、必要な高さまで複数行に
+一覧は`owner/repository`、PR番号、title、cached Approve数、未解決／解決済みcomment数、Walkthrough数、Structure数、GitHub上の作成／更新日時を
+一行にまとめ、未解決comment数は`unresolved`と表示する。左列はPR identityを1段目、状態とApproveのbadgeを
+2段目に置く。Approve数は状態badgeの右隣にOpenと同じ色で
+`<count> Approved`と表示し、0件または未取得なら表示しない。PR titleは省略せず、必要な高さまで複数行に
 折り返して全文を表示する。GitHub更新日時の新しい順であることを明示し、
 Closed / Mergedを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。
 Openまたは状態未取得の登録済みPRのcached statusを明示的に更新するbuttonをfilterの隣へ置き、実行中、成功件数、失敗件数と

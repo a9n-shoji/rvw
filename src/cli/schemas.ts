@@ -227,6 +227,7 @@ const walkthroughOutputSchema = z
     diagramBindings: z.record(z.string(), z.string()),
     references: z.array(codeReferenceOutputSchema),
     createdAt: z.string(),
+    updatedAt: z.string(),
   })
   .strict();
 

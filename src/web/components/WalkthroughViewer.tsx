@@ -72,6 +72,14 @@ import { WalkthroughHtmlPreview } from "./WalkthroughHtmlPreview.js";
 import { WalkthroughIcon } from "./WalkthroughPanel.js";
 
 const referenceNoticeDurationMs = 2400;
+const walkthroughUpdatedAtFormatter = new Intl.DateTimeFormat("ja-JP", {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
 function codeText(content: ReactNode): string {
   return Children.toArray(content)
     .map((part) => {
@@ -1061,7 +1069,12 @@ export function WalkthroughViewer({
             <WalkthroughIcon />
           </span>
           <div className="walkthrough-viewer-heading-copy">
-            <span className="walkthrough-kicker">Agent-provided walkthrough</span>
+            <span className="walkthrough-kicker">
+              Agent-provided walkthrough · <span className="walkthrough-meta">最終更新 </span>
+              <time className="walkthrough-meta" dateTime={walkthrough.updatedAt}>
+                {walkthroughUpdatedAtFormatter.format(new Date(walkthrough.updatedAt))}
+              </time>
+            </span>
             <h2 title={walkthrough.title}>{walkthrough.title}</h2>
           </div>
         </div>

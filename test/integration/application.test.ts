@@ -30,6 +30,7 @@ class FakeGitHub implements GitHubPort {
         value: {
           state: this.pullRequest.state,
           isDraft: this.pullRequest.isDraft,
+          approvalCount: this.pullRequest.approvalCount,
         },
       })),
     );
@@ -66,6 +67,7 @@ const openPr = (baseOid: string, headOid: string): GitHubPullRequest => ({
   updatedAt: "2026-08-08T00:00:00.000Z",
   state: "OPEN",
   isDraft: false,
+  approvalCount: 2,
 });
 
 describe("RvwService commit workflow", () => {
@@ -251,7 +253,7 @@ describe("RvwService commit workflow", () => {
             reference === opened.pullRequest.url
               ? {
                   status: "fulfilled" as const,
-                  value: { state: "CLOSED" as const, isDraft: false },
+                  value: { state: "CLOSED" as const, isDraft: false, approvalCount: 3 },
                 }
               : { status: "rejected" as const, error: new Error("temporary GitHub failure") },
           ),
@@ -282,6 +284,7 @@ describe("RvwService commit workflow", () => {
       latestHeadOid: firstHead,
       githubState: "CLOSED",
       githubIsDraft: false,
+      githubApprovalCount: 3,
     });
     expect(database.getPullRequest(second.id)).toMatchObject({
       latestTitle: "Second cached title",
@@ -303,7 +306,12 @@ describe("RvwService commit workflow", () => {
     const { repository, database, service } = setup("rvw-empty-status-working-set-");
     const opened = await service.openPullRequest(undefined, repository);
     database.updatePullRequestGitHubStatuses([
-      { pullRequestId: opened.pullRequest.id, state: "CLOSED", isDraft: false },
+      {
+        pullRequestId: opened.pullRequest.id,
+        state: "CLOSED",
+        isDraft: false,
+        approvalCount: 2,
+      },
     ]);
     let githubCalled = false;
     const statusGithub: GitHubPort = {
@@ -688,6 +696,7 @@ describe("RvwService commit workflow", () => {
     expect(refreshed.pullRequest).toMatchObject({
       githubState: "MERGED",
       githubIsDraft: false,
+      githubApprovalCount: 2,
     });
     expect(saved.service.listPullRequests({ hideClosedOrMerged: false }).items[0]).toMatchObject({
       githubState: "MERGED",
@@ -1155,6 +1164,7 @@ describe("RvwService commit workflow", () => {
       sourceOid: firstHead,
       diagramBindings: { Source: "source" },
       references: [{ id: "source", startLine: 1, endLine: 2 }],
+      updatedAt: walkthrough.createdAt,
     });
     expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([
       {
@@ -1258,6 +1268,8 @@ describe("RvwService commit workflow", () => {
       diagramBindings: { Entry: "source_file" },
       references: [{ id: "source_file", startLine: null, endLine: null }],
     });
+    expect(typeof updatedWalkthrough.updatedAt).toBe("string");
+    expect(updatedWalkthrough.updatedAt >= walkthrough.updatedAt).toBe(true);
     expect(service.listWalkthroughs(opened.pullRequest.id)).toHaveLength(1);
     expect(service.getCommentByUri(walkthroughComment.ref).comment.target).toEqual({
       kind: "walkthrough",

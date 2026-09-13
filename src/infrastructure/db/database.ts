@@ -91,6 +91,7 @@ export interface PullRequestGitHubStatusUpdate {
   pullRequestId: string;
   state: GitHubPullRequestState;
   isDraft: boolean;
+  approvalCount: number;
 }
 
 export interface CommentWatchTaskAuthority {
@@ -431,6 +432,7 @@ function mapPullRequest(row: DbRow): PullRequest {
     githubUpdatedAt: stringValue(row, "github_updated_at"),
     githubState: nullableGitHubPullRequestState(row, "github_state"),
     githubIsDraft: nullableBoolean(row, "github_is_draft"),
+    githubApprovalCount: nullableNumber(row, "github_approval_count"),
     fetchedAt: stringValue(row, "fetched_at"),
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
@@ -1249,7 +1251,8 @@ export class RvwDatabase {
              github_created_at,
              github_updated_at,
              github_state,
-             github_is_draft
+             github_is_draft,
+             github_approval_count
            FROM pull_requests
            WHERE ? = 0 OR github_state IS NULL OR github_state = 'OPEN'
            ORDER BY github_updated_at DESC, id DESC
@@ -1283,6 +1286,7 @@ export class RvwDatabase {
            pr.github_updated_at,
            pr.github_state,
            pr.github_is_draft,
+           pr.github_approval_count,
            COALESCE(comment_counts.unresolved_count, 0) AS unresolved_comment_count,
            COALESCE(comment_counts.resolved_count, 0) AS resolved_comment_count,
            COALESCE(walkthrough_counts.walkthrough_count, 0) AS walkthrough_count,
@@ -1311,6 +1315,7 @@ export class RvwDatabase {
         githubUpdatedAt: stringValue(row, "github_updated_at"),
         githubState: nullableGitHubPullRequestState(row, "github_state"),
         githubIsDraft: nullableBoolean(row, "github_is_draft"),
+        githubApprovalCount: nullableNumber(row, "github_approval_count"),
         unresolvedCommentCount: numberValue(row, "unresolved_comment_count"),
         resolvedCommentCount: numberValue(row, "resolved_comment_count"),
         walkthroughCount: numberValue(row, "walkthrough_count"),
@@ -1324,7 +1329,7 @@ export class RvwDatabase {
     if (updates.length === 0) return;
     this.immediateTransaction(() => {
       const statement = this.database.prepare(
-        "UPDATE pull_requests SET github_state = ?, github_is_draft = ? WHERE id = ?",
+        "UPDATE pull_requests SET github_state = ?, github_is_draft = ?, github_approval_count = ? WHERE id = ?",
       );
       let changed = false;
       for (const update of updates) {
@@ -1336,10 +1341,19 @@ export class RvwDatabase {
             { status: 404 },
           );
         }
-        if (current.githubState === update.state && current.githubIsDraft === update.isDraft) {
+        if (
+          current.githubState === update.state &&
+          current.githubIsDraft === update.isDraft &&
+          current.githubApprovalCount === update.approvalCount
+        ) {
           continue;
         }
-        const result = statement.run(update.state, update.isDraft ? 1 : 0, update.pullRequestId);
+        const result = statement.run(
+          update.state,
+          update.isDraft ? 1 : 0,
+          update.approvalCount,
+          update.pullRequestId,
+        );
         if (Number(result.changes) !== 1) {
           throw new RvwError(
             "PR_NOT_FOUND",
@@ -1407,7 +1421,8 @@ export class RvwDatabase {
       existing.githubCreatedAt !== github.createdAt ||
       existing.githubUpdatedAt !== github.updatedAt ||
       existing.githubState !== github.state ||
-      existing.githubIsDraft !== github.isDraft;
+      existing.githubIsDraft !== github.isDraft ||
+      existing.githubApprovalCount !== github.approvalCount;
     this.database
       .prepare(
         `INSERT INTO pull_requests(
@@ -1416,9 +1431,9 @@ export class RvwDatabase {
           latest_author_login, latest_head_repository_owner, latest_head_repository_name,
           latest_title, latest_body, latest_base_ref_name, latest_head_ref_name,
           latest_base_oid, latest_head_oid, github_created_at, github_updated_at,
-          github_state, github_is_draft, fetched_at,
+          github_state, github_is_draft, github_approval_count, fetched_at,
           created_at, updated_at, latest_comparison_base_oid
-        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, 'github.com', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(host, owner, repository, number) DO UPDATE SET
           github_url = excluded.github_url,
           local_repository_path = excluded.local_repository_path,
@@ -1437,6 +1452,7 @@ export class RvwDatabase {
           github_updated_at = excluded.github_updated_at,
           github_state = excluded.github_state,
           github_is_draft = excluded.github_is_draft,
+          github_approval_count = excluded.github_approval_count,
           fetched_at = excluded.fetched_at,
           updated_at = excluded.updated_at`,
       )
@@ -1461,6 +1477,7 @@ export class RvwDatabase {
         github.updatedAt,
         github.state,
         github.isDraft ? 1 : 0,
+        github.approvalCount,
         now,
         existing?.createdAt ?? now,
         semanticChanged ? now : existing.updatedAt,
@@ -1954,6 +1971,7 @@ export class RvwDatabase {
       diagramBindings: stringRecordValue(row, "diagram_bindings_json"),
       references: this.listCodeReferences("walkthrough", id),
       createdAt: stringValue(row, "created_at"),
+      updatedAt: stringValue(row, "updated_at"),
     };
   }
 
@@ -2023,8 +2041,8 @@ export class RvwDatabase {
         .prepare(
           `INSERT INTO walkthroughs(
             id, pull_request_id, source_oid, title, body, author_label,
-            diagram_bindings_json, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            diagram_bindings_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -2034,6 +2052,7 @@ export class RvwDatabase {
           input.body,
           input.authorLabel ?? null,
           JSON.stringify(input.diagramBindings),
+          now,
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
@@ -2047,11 +2066,13 @@ export class RvwDatabase {
   }
 
   updateWalkthrough(id: string, input: Omit<NewWalkthroughInput, "pullRequestId">): Walkthrough {
+    const now = new Date().toISOString();
     this.immediateTransaction(() => {
       const result = this.database
         .prepare(
           `UPDATE walkthroughs
-           SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?
+           SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?,
+               updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -2060,6 +2081,7 @@ export class RvwDatabase {
           input.body,
           input.authorLabel ?? null,
           JSON.stringify(input.diagramBindings),
+          now,
           id,
         );
       if (Number(result.changes) === 0) {

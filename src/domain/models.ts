@@ -24,6 +24,7 @@ export interface GitHubPullRequest extends PullRequestIdentity {
   updatedAt: string;
   state: GitHubPullRequestState;
   isDraft: boolean;
+  approvalCount: number;
 }
 
 export interface PullRequest extends PullRequestIdentity {
@@ -44,6 +45,7 @@ export interface PullRequest extends PullRequestIdentity {
   githubUpdatedAt: string;
   githubState: GitHubPullRequestState | null;
   githubIsDraft: boolean | null;
+  githubApprovalCount: number | null;
   fetchedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -59,6 +61,7 @@ export interface PullRequestSummary {
   githubUpdatedAt: string;
   githubState: GitHubPullRequestState | null;
   githubIsDraft: boolean | null;
+  githubApprovalCount: number | null;
   unresolvedCommentCount: number;
   resolvedCommentCount: number;
   walkthroughCount: number;
@@ -175,6 +178,7 @@ export interface Walkthrough {
   diagramBindings: Record<string, string>;
   references: WalkthroughReference[];
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface WalkthroughSummary {

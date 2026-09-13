@@ -39,6 +39,7 @@ const pullRequest: PullRequest = {
   githubUpdatedAt: "2026-08-10T00:00:00.000Z",
   githubState: "OPEN",
   githubIsDraft: false,
+  githubApprovalCount: 2,
   fetchedAt: "2026-08-10T00:01:00.000Z",
   createdAt: "2026-08-10T00:01:00.000Z",
   updatedAt: "2026-08-10T00:01:00.000Z",
@@ -188,7 +189,7 @@ describe("CLI protocol discovery", () => {
 
     expect(readStdout()).toEqual({
       protocolVersion: 5,
-      appVersion: "0.7.1",
+      appVersion: "0.8.0",
       capabilities: [
         "agent.transport",
         "comment.create",
@@ -1493,6 +1494,7 @@ describe("CLI Walkthrough list transport parity", () => {
       updatedAt: pullRequest.githubUpdatedAt,
       state: "OPEN",
       isDraft: false,
+      approvalCount: pullRequest.githubApprovalCount ?? 0,
     };
     const stored = database.upsertPullRequest(
       githubPullRequest,

@@ -156,6 +156,7 @@ function currentPullRequest() {
           : "2026-08-08T01:00:00.000Z",
     githubState: "OPEN",
     githubIsDraft: false,
+    githubApprovalCount: 2,
     fetchedAt: "2026-08-08T02:00:00.000Z",
     createdAt: "2026-08-08T00:00:00.000Z",
     updatedAt: "2026-08-08T02:00:00.000Z",
@@ -645,6 +646,7 @@ app.get("/api/pull-requests", (context) => {
     githubUpdatedAt: pullRequest.githubUpdatedAt,
     githubState: pullRequestStatusRefreshCount > 0 ? "MERGED" : pullRequest.githubState,
     githubIsDraft: pullRequest.githubIsDraft,
+    githubApprovalCount: pullRequest.githubApprovalCount,
     unresolvedCommentCount: comments.filter((comment) => comment.resolvedAt === null).length,
     resolvedCommentCount: comments.filter((comment) => comment.resolvedAt !== null).length,
     walkthroughCount: activeWalkthroughs.length,
@@ -660,6 +662,7 @@ app.get("/api/pull-requests", (context) => {
     githubUpdatedAt: "2026-08-07T00:00:00.000Z",
     githubState: "OPEN",
     githubIsDraft: false,
+    githubApprovalCount: 0,
     unresolvedCommentCount: 0,
     resolvedCommentCount: 0,
     walkthroughCount: 0,
@@ -677,6 +680,7 @@ app.get("/api/pull-requests", (context) => {
           githubUpdatedAt: "2026-08-22T00:00:00.000Z",
           githubState: "OPEN",
           githubIsDraft: true,
+          githubApprovalCount: 1,
           unresolvedCommentCount: 1,
           resolvedCommentCount: 0,
           walkthroughCount: 1,
@@ -692,6 +696,7 @@ app.get("/api/pull-requests", (context) => {
           githubUpdatedAt: "2026-08-21T12:00:00.000Z",
           githubState: null,
           githubIsDraft: null,
+          githubApprovalCount: null,
           unresolvedCommentCount: 2,
           resolvedCommentCount: 1,
           walkthroughCount: 1,
@@ -707,6 +712,7 @@ app.get("/api/pull-requests", (context) => {
           githubUpdatedAt: "2026-08-21T00:00:00.000Z",
           githubState: "CLOSED",
           githubIsDraft: false,
+          githubApprovalCount: 3,
           unresolvedCommentCount: 2,
           resolvedCommentCount: 3,
           walkthroughCount: 0,
@@ -722,6 +728,7 @@ app.get("/api/pull-requests", (context) => {
           githubUpdatedAt: "2026-08-20T00:00:00.000Z",
           githubState: "MERGED",
           githubIsDraft: false,
+          githubApprovalCount: 4,
           unresolvedCommentCount: 0,
           resolvedCommentCount: 8,
           walkthroughCount: 2,
@@ -743,6 +750,7 @@ app.get("/api/pull-requests", (context) => {
               ? "CLOSED"
               : "OPEN",
           githubIsDraft: true,
+          githubApprovalCount: 0,
           unresolvedCommentCount: 3,
           resolvedCommentCount: 5,
           walkthroughCount: 2,
@@ -1719,6 +1727,7 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
   const input = await context.req.json();
   walkthrough.title = input.title;
   walkthrough.body = input.body;
+  walkthrough.updatedAt = new Date().toISOString();
   walkthrough.references[0].label = input.referenceLabel;
   if (typeof input.referencePath === "string") {
     walkthrough.references[0].path = input.referencePath;

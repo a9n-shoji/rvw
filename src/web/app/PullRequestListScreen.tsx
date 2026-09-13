@@ -66,6 +66,7 @@ function PullRequestRow({
   const created = datePresentation(item.githubCreatedAt, now);
   const updated = datePresentation(item.githubUpdatedAt, now);
   const status = statusPresentation(item);
+  const approvalCount = item.githubApprovalCount ?? 0;
   const url = new URL(window.location.href);
   url.hash = "";
   url.searchParams.set("pullRequestId", item.pullRequestId);
@@ -79,16 +80,30 @@ function PullRequestRow({
   return (
     <a className="pull-request-row" href={href} onClick={handleClick}>
       <span className="pull-request-row__identity">
-        <span className="pull-request-row__repository">
-          {item.owner}/{item.repository}
+        <span className="pull-request-row__reference">
+          <span className="pull-request-row__repository">
+            {item.owner}/{item.repository}
+          </span>
+          <span className="pull-request-row__number">#{item.number}</span>
         </span>
-        <span className="pull-request-row__number">#{item.number}</span>
-        {status && (
-          <span
-            className={`pull-request-status pull-request-status--${status.modifier}`}
-            aria-label={`Pull Request status: ${status.label}`}
-          >
-            {status.label}
+        {(status || approvalCount > 0) && (
+          <span className="pull-request-row__badges">
+            {status && (
+              <span
+                className={`pull-request-status pull-request-status--${status.modifier}`}
+                aria-label={`Pull Request status: ${status.label}`}
+              >
+                {status.label}
+              </span>
+            )}
+            {approvalCount > 0 && (
+              <span
+                className="pull-request-approval"
+                aria-label={`${approvalCount} approved review${approvalCount === 1 ? "" : "s"}`}
+              >
+                {approvalCount} Approved
+              </span>
+            )}
           </span>
         )}
       </span>

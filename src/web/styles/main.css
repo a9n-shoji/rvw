@@ -4267,11 +4267,18 @@ diffs-container > [slot="header-metadata"] {
   background: var(--accent-soft);
 }
 .pull-request-row__identity {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 5px;
+  font-size: 12px;
+}
+.pull-request-row__reference,
+.pull-request-row__badges {
   display: flex;
   min-width: 0;
   align-items: baseline;
   gap: 8px;
-  font-size: 12px;
 }
 .pull-request-row__repository {
   min-width: 0;
@@ -4287,7 +4294,8 @@ diffs-container > [slot="header-metadata"] {
   font-family: var(--mono);
   font-weight: 700;
 }
-.pull-request-status {
+.pull-request-status,
+.pull-request-approval {
   flex: 0 0 auto;
   padding: 2px 7px;
   border: 1px solid var(--line);
@@ -4297,7 +4305,8 @@ diffs-container > [slot="header-metadata"] {
   font: 700 9px/1.4 var(--mono);
   letter-spacing: 0.02em;
 }
-.pull-request-status--open {
+.pull-request-status--open,
+.pull-request-approval {
   border-color: color-mix(in srgb, var(--success) 45%, var(--line));
   background: color-mix(in srgb, var(--success) 10%, var(--panel));
   color: var(--success);

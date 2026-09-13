@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -72,6 +72,7 @@ const github = {
   updatedAt: "2026-08-08T00:00:00.000Z",
   state: "OPEN" as const,
   isDraft: false,
+  approvalCount: 2,
 };
 
 describe("RvwDatabase", () => {
@@ -129,6 +130,48 @@ describe("RvwDatabase", () => {
     expect(second.getThemePreference()).toBe("dark");
     expect(second.getChangeSequence()).toBe(0);
     second.close();
+  });
+
+  it("backfills existing Walkthrough update times from their creation times", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-walkthrough-updated-at-"));
+    const filePath = path.join(directory, "rvw.db");
+    const legacy = new DatabaseSync(filePath);
+    legacy.exec("PRAGMA foreign_keys = OFF");
+    const legacyMigrationFiles = readdirSync("migrations")
+      .filter((name) => /^\d+_.*\.sql$/.test(name) && Number(name.split("_")[0]) <= 20)
+      .sort();
+    for (const filename of legacyMigrationFiles) {
+      const version = Number(filename.split("_")[0]);
+      legacy.exec(readFileSync(path.join("migrations", filename), "utf8"));
+      legacy
+        .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(version, "2026-09-12T00:00:00.000Z");
+    }
+    const walkthroughId = "70000000-0000-4000-8000-000000000021";
+    const createdAt = "2026-09-12T01:23:45.000Z";
+    legacy
+      .prepare(
+        `INSERT INTO walkthroughs(
+          id, pull_request_id, source_oid, title, body, author_label,
+          diagram_bindings_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, '{}', ?)`,
+      )
+      .run(
+        walkthroughId,
+        "11111111-1111-4111-8111-111111111111",
+        "a".repeat(40),
+        "Existing walkthrough",
+        "Existing body",
+        createdAt,
+      );
+    legacy.close();
+
+    const migrated = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(migrated.getWalkthrough(walkthroughId)).toMatchObject({
+      createdAt,
+      updatedAt: createdAt,
+    });
+    migrated.close();
   });
 
   it("fences superseded watch tasks and serializes writers across generations", () => {
@@ -362,6 +405,7 @@ describe("RvwDatabase", () => {
           githubUpdatedAt: "2026-08-10T00:00:00.000Z",
           githubState: "OPEN",
           githubIsDraft: true,
+          githubApprovalCount: 2,
           unresolvedCommentCount: 1,
           resolvedCommentCount: 1,
           walkthroughCount: 1,
@@ -1081,7 +1125,9 @@ describe("RvwDatabase", () => {
 
     const raw = new DatabaseSync(filePath);
     raw
-      .prepare("UPDATE pull_requests SET github_state = NULL, github_is_draft = NULL WHERE id = ?")
+      .prepare(
+        "UPDATE pull_requests SET github_state = NULL, github_is_draft = NULL, github_approval_count = NULL WHERE id = ?",
+      )
       .run(unknown.id);
     raw.close();
 
@@ -1100,6 +1146,7 @@ describe("RvwDatabase", () => {
     expect(candidates.find(({ id }) => id === unknown.id)).toMatchObject({
       githubState: null,
       githubIsDraft: null,
+      githubApprovalCount: null,
     });
     expect(candidates.map(({ id }) => id)).not.toContain(closed.id);
     expect(candidates.map(({ id }) => id)).not.toContain(merged.id);
@@ -1123,6 +1170,8 @@ describe("RvwDatabase", () => {
       "011_comment_post_modifier.sql",
       "012_pull_request_list.sql",
       "013_pull_request_github_status.sql",
+      "021_walkthrough_updated_at.sql",
+      "022_pull_request_approval_count.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -1262,7 +1311,7 @@ describe("RvwDatabase", () => {
 
     database.upsertPullRequest(github, repository, comparisonBaseOid);
     database.updatePullRequestGitHubStatuses([
-      { pullRequestId: pullRequest.id, state: "OPEN", isDraft: false },
+      { pullRequestId: pullRequest.id, state: "OPEN", isDraft: false, approvalCount: 2 },
     ]);
     expect(database.getChangeSequence()).toBe(1);
     expect(database.getDomainRevisions()).toEqual({
@@ -1285,7 +1334,7 @@ describe("RvwDatabase", () => {
     });
 
     database.updatePullRequestGitHubStatuses([
-      { pullRequestId: pullRequest.id, state: "CLOSED", isDraft: false },
+      { pullRequestId: pullRequest.id, state: "CLOSED", isDraft: false, approvalCount: 3 },
     ]);
     expect(database.getDomainRevisions()).toMatchObject({
       pullRequests: 3,
@@ -1300,7 +1349,7 @@ describe("RvwDatabase", () => {
     });
     const beforeSync = database.getDomainRevisions();
     database.syncPullRequestAndComments(
-      { ...changedGithub, state: "CLOSED" },
+      { ...changedGithub, state: "CLOSED", approvalCount: 3 },
       repository,
       comparisonBaseOid,
       [
@@ -1319,7 +1368,7 @@ describe("RvwDatabase", () => {
     });
     const afterFirstSync = database.getDomainRevisions();
     database.syncPullRequestAndComments(
-      { ...changedGithub, state: "CLOSED" },
+      { ...changedGithub, state: "CLOSED", approvalCount: 3 },
       repository,
       comparisonBaseOid,
       [

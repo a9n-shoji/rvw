@@ -443,6 +443,7 @@ function createWalkthroughs(
       diagramBindings: { AppShell: "app", Workspace: "workspace", Service: "service", Git: "git" },
       references: viewerReferences,
       createdAt: "2026-08-20T01:10:00.000Z",
+      updatedAt: "2026-08-20T01:10:00.000Z",
     },
     {
       id: "80000000-0000-4000-8000-000000000002",
@@ -460,6 +461,7 @@ function createWalkthroughs(
       },
       references: feedbackReferences,
       createdAt: "2026-08-20T01:20:00.000Z",
+      updatedAt: "2026-08-20T01:20:00.000Z",
     },
   ];
 }
@@ -726,6 +728,7 @@ export function createDogfoodFixture(
       githubUpdatedAt: latestCommit.authoredAt,
       githubState: "OPEN" as const,
       githubIsDraft: false,
+      githubApprovalCount: 2,
       fetchedAt: latestCommit.authoredAt,
       createdAt: firstCommit.authoredAt,
       updatedAt: latestCommit.authoredAt,

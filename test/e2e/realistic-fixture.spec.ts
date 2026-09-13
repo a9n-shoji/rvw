@@ -15,6 +15,9 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   await expect(hideClosedOrMergedFilter).toBeChecked();
   await expect(rows).toHaveCount(3);
   await expect(statusBadges).toHaveText(["Open", "Draft"]);
+  await expect(rows.nth(0).getByLabel("2 approved reviews")).toHaveText("2 Approved");
+  await expect(rows.nth(1).getByLabel("1 approved review")).toHaveText("1 Approved");
+  await expect(rows.nth(2).locator(".pull-request-approval")).toHaveCount(0);
   await expect(rows.nth(2)).toContainText("Legacy: status not synchronized yet");
   await expect(rows.nth(2).locator(".pull-request-status")).toHaveCount(0);
 
