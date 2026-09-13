@@ -24,7 +24,7 @@ describe("GitHubClient Pull Request status fetching", () => {
     expect(called).toBe(false);
   });
 
-  it("requests only state and draft metadata after one authentication check", async () => {
+  it("requests state, draft, and current approval metadata after one authentication check", async () => {
     const calls: Array<{ executable: string; args: readonly string[]; options: unknown }> = [];
     const runner: typeof runProcess = (executable, args, options = {}) => {
       calls.push({ executable, args, options });
@@ -33,6 +33,14 @@ describe("GitHubClient Pull Request status fetching", () => {
           ? JSON.stringify({
               state: args[2] === pullRequestUrl ? "MERGED" : "OPEN",
               isDraft: false,
+              latestReviews:
+                args[2] === pullRequestUrl
+                  ? [
+                      { state: "APPROVED", author: { login: "first-reviewer" } },
+                      { state: "APPROVED", author: { login: "second-reviewer" } },
+                      { state: "CHANGES_REQUESTED", author: { login: "third-reviewer" } },
+                    ]
+                  : [],
             })
           : "";
       return Promise.resolve({
@@ -47,8 +55,14 @@ describe("GitHubClient Pull Request status fetching", () => {
     await expect(
       new GitHubClient(runner).getPullRequestStatuses([pullRequestUrl, secondPullRequestUrl]),
     ).resolves.toEqual([
-      { status: "fulfilled", value: { state: "MERGED", isDraft: false } },
-      { status: "fulfilled", value: { state: "OPEN", isDraft: false } },
+      {
+        status: "fulfilled",
+        value: { state: "MERGED", isDraft: false, approvalCount: 2 },
+      },
+      {
+        status: "fulfilled",
+        value: { state: "OPEN", isDraft: false, approvalCount: 0 },
+      },
     ]);
     expect(calls).toEqual([
       {
@@ -58,12 +72,12 @@ describe("GitHubClient Pull Request status fetching", () => {
       },
       {
         executable: "gh",
-        args: ["pr", "view", pullRequestUrl, "--json", "state,isDraft"],
+        args: ["pr", "view", pullRequestUrl, "--json", "state,isDraft,latestReviews"],
         options: { timeoutMs: 60_000 },
       },
       {
         executable: "gh",
-        args: ["pr", "view", secondPullRequestUrl, "--json", "state,isDraft"],
+        args: ["pr", "view", secondPullRequestUrl, "--json", "state,isDraft,latestReviews"],
         options: { timeoutMs: 60_000 },
       },
     ]);
@@ -102,7 +116,9 @@ describe("GitHubClient Pull Request status fetching", () => {
         pendingRequests.push(() => {
           activeRequests -= 1;
           resolve({
-            stdout: Buffer.from(JSON.stringify({ state: "OPEN", isDraft: false })),
+            stdout: Buffer.from(
+              JSON.stringify({ state: "OPEN", isDraft: false, latestReviews: [] }),
+            ),
             stderr: Buffer.alloc(0),
             exitCode: 0,
             stdoutTruncated: false,

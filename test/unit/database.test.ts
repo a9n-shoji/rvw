@@ -72,6 +72,7 @@ const github = {
   updatedAt: "2026-08-08T00:00:00.000Z",
   state: "OPEN" as const,
   isDraft: false,
+  approvalCount: 2,
 };
 
 describe("RvwDatabase", () => {
@@ -404,6 +405,7 @@ describe("RvwDatabase", () => {
           githubUpdatedAt: "2026-08-10T00:00:00.000Z",
           githubState: "OPEN",
           githubIsDraft: true,
+          githubApprovalCount: 2,
           unresolvedCommentCount: 1,
           resolvedCommentCount: 1,
           walkthroughCount: 1,
@@ -1123,7 +1125,9 @@ describe("RvwDatabase", () => {
 
     const raw = new DatabaseSync(filePath);
     raw
-      .prepare("UPDATE pull_requests SET github_state = NULL, github_is_draft = NULL WHERE id = ?")
+      .prepare(
+        "UPDATE pull_requests SET github_state = NULL, github_is_draft = NULL, github_approval_count = NULL WHERE id = ?",
+      )
       .run(unknown.id);
     raw.close();
 
@@ -1142,6 +1146,7 @@ describe("RvwDatabase", () => {
     expect(candidates.find(({ id }) => id === unknown.id)).toMatchObject({
       githubState: null,
       githubIsDraft: null,
+      githubApprovalCount: null,
     });
     expect(candidates.map(({ id }) => id)).not.toContain(closed.id);
     expect(candidates.map(({ id }) => id)).not.toContain(merged.id);
@@ -1166,6 +1171,7 @@ describe("RvwDatabase", () => {
       "012_pull_request_list.sql",
       "013_pull_request_github_status.sql",
       "021_walkthrough_updated_at.sql",
+      "022_pull_request_approval_count.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -1305,7 +1311,7 @@ describe("RvwDatabase", () => {
 
     database.upsertPullRequest(github, repository, comparisonBaseOid);
     database.updatePullRequestGitHubStatuses([
-      { pullRequestId: pullRequest.id, state: "OPEN", isDraft: false },
+      { pullRequestId: pullRequest.id, state: "OPEN", isDraft: false, approvalCount: 2 },
     ]);
     expect(database.getChangeSequence()).toBe(1);
     expect(database.getDomainRevisions()).toEqual({
@@ -1328,7 +1334,7 @@ describe("RvwDatabase", () => {
     });
 
     database.updatePullRequestGitHubStatuses([
-      { pullRequestId: pullRequest.id, state: "CLOSED", isDraft: false },
+      { pullRequestId: pullRequest.id, state: "CLOSED", isDraft: false, approvalCount: 3 },
     ]);
     expect(database.getDomainRevisions()).toMatchObject({
       pullRequests: 3,
@@ -1343,7 +1349,7 @@ describe("RvwDatabase", () => {
     });
     const beforeSync = database.getDomainRevisions();
     database.syncPullRequestAndComments(
-      { ...changedGithub, state: "CLOSED" },
+      { ...changedGithub, state: "CLOSED", approvalCount: 3 },
       repository,
       comparisonBaseOid,
       [
@@ -1362,7 +1368,7 @@ describe("RvwDatabase", () => {
     });
     const afterFirstSync = database.getDomainRevisions();
     database.syncPullRequestAndComments(
-      { ...changedGithub, state: "CLOSED" },
+      { ...changedGithub, state: "CLOSED", approvalCount: 3 },
       repository,
       comparisonBaseOid,
       [

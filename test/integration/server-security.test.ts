@@ -62,6 +62,7 @@ function registerPullRequest(
       updatedAt: options.updatedAt ?? "2026-08-21T00:00:00.000Z",
       state: options.state ?? "OPEN",
       isDraft: false,
+      approvalCount: 2,
     },
     {
       localRepositoryPath: owner === "acme" ? "/repo" : `/${owner}`,
@@ -98,6 +99,7 @@ describe("local HTTP security", () => {
         updatedAt: "2026-08-21T00:00:00.000Z",
         state: "OPEN",
         isDraft: false,
+        approvalCount: 2,
       },
       {
         localRepositoryPath: repositoryContext.worktreePath,
@@ -212,7 +214,7 @@ describe("local HTTP security", () => {
         return Promise.resolve(
           references.map(() => ({
             status: "fulfilled" as const,
-            value: { state: "MERGED" as const, isDraft: false },
+            value: { state: "MERGED" as const, isDraft: false, approvalCount: 3 },
           })),
         );
       },
@@ -240,6 +242,7 @@ describe("local HTTP security", () => {
     expect(database.getPullRequest(pullRequestId)).toMatchObject({
       githubState: "MERGED",
       githubIsDraft: false,
+      githubApprovalCount: 3,
       latestTitle: "Review",
     });
     database.close();
