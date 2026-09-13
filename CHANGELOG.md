@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-13
+
+### Added
+
+- 保存済みWalkthroughをCLIから一覧・取得し、対象の説明を再発見できる操作を追加
+- Pull Request一覧に承認数を表示し、review状況を一覧上で確認できるようにした
+
+### Changed
+
+- Walkthroughヘッダーに最終更新日時を表示
+- code参照を開いた後、元の選択範囲へ戻れる導線を追加
+- Honoを4.13.7、Vitestを4.1.11へ更新し、該当する依存関係のsecurity advisoryを解消
+
 ## [0.7.1] - 2026-09-09
 
 ### Changed
