@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -129,6 +129,48 @@ describe("RvwDatabase", () => {
     expect(second.getThemePreference()).toBe("dark");
     expect(second.getChangeSequence()).toBe(0);
     second.close();
+  });
+
+  it("backfills existing Walkthrough update times from their creation times", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-walkthrough-updated-at-"));
+    const filePath = path.join(directory, "rvw.db");
+    const legacy = new DatabaseSync(filePath);
+    legacy.exec("PRAGMA foreign_keys = OFF");
+    const legacyMigrationFiles = readdirSync("migrations")
+      .filter((name) => /^\d+_.*\.sql$/.test(name) && Number(name.split("_")[0]) <= 20)
+      .sort();
+    for (const filename of legacyMigrationFiles) {
+      const version = Number(filename.split("_")[0]);
+      legacy.exec(readFileSync(path.join("migrations", filename), "utf8"));
+      legacy
+        .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(version, "2026-09-12T00:00:00.000Z");
+    }
+    const walkthroughId = "70000000-0000-4000-8000-000000000021";
+    const createdAt = "2026-09-12T01:23:45.000Z";
+    legacy
+      .prepare(
+        `INSERT INTO walkthroughs(
+          id, pull_request_id, source_oid, title, body, author_label,
+          diagram_bindings_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, NULL, '{}', ?)`,
+      )
+      .run(
+        walkthroughId,
+        "11111111-1111-4111-8111-111111111111",
+        "a".repeat(40),
+        "Existing walkthrough",
+        "Existing body",
+        createdAt,
+      );
+    legacy.close();
+
+    const migrated = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(migrated.getWalkthrough(walkthroughId)).toMatchObject({
+      createdAt,
+      updatedAt: createdAt,
+    });
+    migrated.close();
   });
 
   it("fences superseded watch tasks and serializes writers across generations", () => {
@@ -1123,6 +1165,7 @@ describe("RvwDatabase", () => {
       "011_comment_post_modifier.sql",
       "012_pull_request_list.sql",
       "013_pull_request_github_status.sql",
+      "021_walkthrough_updated_at.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),

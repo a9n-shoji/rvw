@@ -1893,6 +1893,7 @@ export function createRealisticFixture() {
         title: "Review route: authenticated order placement",
         authorLabel: "Acme Orders Team",
         createdAt: "2026-07-14T17:10:00.000Z",
+        updatedAt: "2026-07-14T17:10:00.000Z",
         references: placementReferences,
         diagramBindings: {
           Route: "placement-route",
@@ -1921,6 +1922,7 @@ export function createRealisticFixture() {
         title: "Failure route: retries and payment recovery",
         authorLabel: "Acme Orders Team",
         createdAt: "2026-07-14T17:20:00.000Z",
+        updatedAt: "2026-07-14T17:20:00.000Z",
         references: recoveryReferences,
         diagramBindings: {
           Retry: "recovery-idempotency",
@@ -1949,6 +1951,7 @@ export function createRealisticFixture() {
         title: "Delivery route: transactional outbox operations",
         authorLabel: "Acme Orders Team",
         createdAt: "2026-07-14T17:30:00.000Z",
+        updatedAt: "2026-07-14T17:30:00.000Z",
         references: deliveryReferences,
         diagramBindings: {
           Transaction: "delivery-transaction",

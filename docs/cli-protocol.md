@@ -519,7 +519,8 @@ complete replacement rather than a patch. Omitting `authorLabel` preserves the c
 or `null` replaces it. Commit, document, line, Markdown-link, and diagram-binding validation is identical
 to publication.
 
-Success returns the updated Walkthrough with the same ID, URI, and `createdAt`. No previous body,
+Success returns the updated Walkthrough with the same ID, URI, and `createdAt`, and advances its
+`updatedAt`. No previous body,
 reference set, source OID, or update revision is retained. Existing whole-Walkthrough comments resolve
 to the current body and references; line comments are re-anchored from their bounded quoted text or reported
 Outdated. Updating remains passive and does not control a viewer.

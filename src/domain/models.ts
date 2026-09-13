@@ -175,6 +175,7 @@ export interface Walkthrough {
   diagramBindings: Record<string, string>;
   references: WalkthroughReference[];
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface WalkthroughSummary {
