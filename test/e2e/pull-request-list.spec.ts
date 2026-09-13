@@ -24,7 +24,27 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   await expect(rows.first()).toContainText("#7");
   await expect(rows.first()).toContainText(/Fixture review/);
   await expect(rows.first().getByLabel("Pull Request status: Open")).toBeVisible();
+  await expect(rows.first().getByLabel("2 approved reviews")).toHaveText("2 Approved");
   await expect(rows.nth(1).getByLabel("Pull Request status: Draft")).toBeVisible();
+  await expect(rows.nth(1).locator(".pull-request-approval")).toHaveCount(0);
+  const identityLayout = await rows.evaluateAll((elements) =>
+    elements.map((element) => ({
+      rowHeight: element.getBoundingClientRect().height,
+      identityHeight:
+        element.querySelector(".pull-request-row__identity")?.getBoundingClientRect().height ?? 0,
+      titleHeight:
+        element.querySelector(".pull-request-row__title")?.getBoundingClientRect().height ?? 0,
+      referenceTop:
+        element.querySelector(".pull-request-row__reference")?.getBoundingClientRect().top ?? 0,
+      badgesTop:
+        element.querySelector(".pull-request-row__badges")?.getBoundingClientRect().top ?? 0,
+    })),
+  );
+  expect(identityLayout[0]?.rowHeight).toBe(76);
+  expect(identityLayout[1]?.identityHeight).toBeLessThan(identityLayout[1]?.titleHeight ?? 0);
+  expect(identityLayout.every(({ badgesTop, referenceTop }) => badgesTop > referenceTop)).toBe(
+    true,
+  );
   const longTitle = rows.nth(1).locator(".pull-request-row__title");
   await expect(longTitle).toHaveText(
     "Older fixture review with a deliberately long Pull Request title that must wrap onto multiple lines without being truncated",

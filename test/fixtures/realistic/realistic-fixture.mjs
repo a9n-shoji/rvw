@@ -2735,6 +2735,7 @@ export function createRealisticFixture() {
       githubUpdatedAt: commits.at(-1).authoredAt,
       githubState: "OPEN",
       githubIsDraft: false,
+      githubApprovalCount: 2,
       fetchedAt: commits.at(-1).authoredAt,
       createdAt: commits[0].authoredAt,
       updatedAt: commits.at(-1).authoredAt,

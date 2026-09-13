@@ -112,6 +112,7 @@ test("watch startup, auto-ack, and final replacement stay on the fast path", asy
       updatedAt: "2026-08-20T00:00:00.000Z",
       state: "OPEN",
       isDraft: false,
+      approvalCount: 0,
     },
     { localRepositoryPath: process.cwd(), gitCommonDir: path.resolve(".git") },
     baseOid,
