@@ -24,6 +24,7 @@ export interface GitHubPort {
 export interface GitHubPullRequestStatus {
   state: GitHubPullRequest["state"];
   isDraft: boolean;
+  approvalCount: number;
 }
 
 export type GitHubPullRequestStatusResult =
@@ -47,12 +48,18 @@ const ghPullRequestSchema = z.object({
   headRefName: z.string().min(1),
   headRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   createdAt: z.string(),
+  latestReviews: z.array(z.object({ state: z.string() })),
 });
 
 const ghPullRequestStatusSchema = z.object({
   state: z.enum(["OPEN", "CLOSED", "MERGED"]),
   isDraft: z.boolean(),
+  latestReviews: z.array(z.object({ state: z.string() })),
 });
+
+function approvalCount(latestReviews: Array<{ state: string }>): number {
+  return latestReviews.filter((review) => review.state === "APPROVED").length;
+}
 
 export function parsePullRequestUrl(url: string): {
   owner: string;
@@ -93,7 +100,7 @@ export class GitHubClient implements GitHubPort {
     try {
       const result = await this.processRunner(
         "gh",
-        ["pr", "view", reference, "--json", "state,isDraft"],
+        ["pr", "view", reference, "--json", "state,isDraft,latestReviews"],
         { timeoutMs: 60_000 },
       );
       output = result.stdout.toString("utf8").trimEnd();
@@ -121,7 +128,11 @@ export class GitHubClient implements GitHubPort {
         details: parsed.error.flatten(),
       });
     }
-    return parsed.data;
+    return {
+      state: parsed.data.state,
+      isDraft: parsed.data.isDraft,
+      approvalCount: approvalCount(parsed.data.latestReviews),
+    };
   }
 
   async getPullRequestStatuses(
@@ -185,6 +196,7 @@ export class GitHubClient implements GitHubPort {
       "headRefOid",
       "headRepository",
       "headRepositoryOwner",
+      "latestReviews",
     ].join(",");
     const args = ["pr", "view"];
     if (reference !== undefined && reference.length > 0) args.push(reference);
@@ -234,6 +246,7 @@ export class GitHubClient implements GitHubPort {
       updatedAt: parsed.data.updatedAt,
       state: parsed.data.state,
       isDraft: parsed.data.isDraft,
+      approvalCount: approvalCount(parsed.data.latestReviews),
     };
   }
 

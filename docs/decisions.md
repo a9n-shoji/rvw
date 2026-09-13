@@ -3574,3 +3574,28 @@ discovery was unavailable; the composer and single-Artifact producer boundaries 
   while stable ID is the deterministic tie-break.
 - Historical source OIDs can describe stale or still-useful explanations. The list reports them without
   deciding validity; only get plus source inspection can establish whether the subject should be reused.
+
+## 2026-09-13: Cache the current Pull Request approval count for the workspace index
+
+### Problem
+
+The workspace index showed local review artifacts and GitHub lifecycle status, but not whether a Pull
+Request already had approving GitHub reviews. Fetching reviews while rendering each row would violate
+the index's offline and bounded-read guarantees, while counting every historical `APPROVED` review would
+over-count reviewers whose latest review changed.
+
+### Choice
+
+Request GitHub CLI's `latestReviews` field during normal Pull Request synchronization and the existing
+explicit bulk status refresh. Count entries whose latest state is `APPROVED`, cache the non-negative count
+in nullable `pull_requests.github_approval_count`, and expose it through the SQLite-only summary model.
+Existing rows remain `NULL` until a successful synchronization. The index renders a green
+`<count> Approved` badge immediately after the lifecycle badge only when the cached count is greater than
+zero.
+
+### Trade-offs
+
+- Approval counts remain available offline but describe the last successful synchronization.
+- Zero approvals and not-yet-synchronized legacy rows intentionally have the same absence of a badge.
+- The bulk status refresh retrieves one additional bounded GitHub field but preserves its existing
+  candidate set and maximum concurrency of four.
