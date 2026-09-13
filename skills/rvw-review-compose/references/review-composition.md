@@ -97,9 +97,11 @@ describes the absence of side effects; it does not prohibit an authorized contex
 
 - A request to assess, recommend, plan, audit, or explain a composition is read-only. Return proposed
   surfaces, unproduced briefs, and direct-code entrypoints without publishing or updating Artifacts. A
-  matching producer may perform the normal read operation for an explicitly supplied existing URI. For
-  the required PR-wide file map, `rvw-structure` may also use the existing `structure list` discovery
-  contract and read a plausible candidate before deciding whether it already satisfies the role.
+  matching producer may perform the normal read operation for an explicitly supplied existing URI.
+  When existing Walkthroughs affect the decision, `rvw-walkthrough` may page through `walkthrough list`
+  and read plausible candidates. For the required PR-wide file map, `rvw-structure` may use the existing
+  `structure list` discovery contract and read a plausible candidate before deciding whether it already
+  satisfies the role.
 - A request to create, publish, produce, or update the selected Artifacts authorizes the corresponding
   producer handoffs, subject to each producer's full preview, identity, and mutation contract.
 - An explicitly supplied Artifact URI authorizes reading it as composition context, not updating it.
@@ -428,21 +430,20 @@ Artifact's central question; otherwise name an exact direct-code check in the fi
 ## Existing-Artifact boundary
 
 When an existing URI is explicitly supplied and transport is available, read its current value through
-the matching producer and prefer an in-place same-subject update over a duplicate publication. For the
-required file map, use `structure list` to inspect candidate summaries, then have `rvw-structure` read a
-plausible map and independently verify its subject, source coordinate, file responsibilities, relations,
-and boundary before treating it as satisfying the current composition. Reuse a valid current map. In an
-authorized production run, update a stale same-subject map in place; publish a new map only when no
-verified candidate fits or the subject is genuinely different. A URI or summary alone is not evidence
-of the Artifact's current subject or contents. If transport is unavailable, the main Skill's preflight
-diagnostic wins and the read cannot occur. Never rewrite an Artifact into a different subject. Never
-delete an existing Artifact merely because the new composition omits it; normal preview and explicit
-deletion authorization still apply.
-
-Use only existing CLI discovery. `structure list` can enumerate Structure summaries, but there is no
-general Walkthrough list command. State the resulting uncertainty instead of reading the database,
-inventing identity, or publishing an unconditional "revised" duplicate. Do not claim that no duplicate
-exists beyond what the available discovery and current-value reads establish.
+the matching producer and skip an unnecessary list. When no Walkthrough URI is supplied and existing
+work affects the decision, have `rvw-walkthrough` page through `walkthrough list`, following `hasMore`
+and `nextOffset` for exhaustive discovery, and read each plausible candidate with `walkthrough get`.
+Never choose a same-subject update by title alone. For the required file map, use `structure list` to
+inspect candidate summaries, then have `rvw-structure` read a plausible map and independently verify its
+subject, source coordinate, file responsibilities, relations, and boundary before treating it as
+satisfying the current composition. Reuse a valid current Artifact. In an authorized production run,
+update a stale same-subject Artifact in place; publish a new one only when no verified candidate fits or
+the subject is genuinely different. List and get are separate reads rather than a fixed snapshot, and
+neither grants mutation authority. If transport is unavailable, the main Skill's preflight diagnostic
+wins and the read cannot occur. Never rewrite an Artifact into a different subject or delete one merely
+because the new composition omits it; normal preview and explicit deletion authorization still apply.
+Use only public list/get commands, never SQLite, internal file paths, remembered URIs, or invented
+identity.
 
 ## Completion response
 

@@ -26,7 +26,7 @@ function truncateUtf8(value: string, maxBytes: number): { value: string; truncat
   return { value: result, truncated: true };
 }
 
-function formatPullRequest(
+export function formatPullRequest(
   pullRequest: PullRequest,
   options: { includeBody?: boolean } = {},
 ): CommentGetOutput["pullRequest"] {

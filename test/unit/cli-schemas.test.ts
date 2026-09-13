@@ -7,6 +7,7 @@ import {
   pullRequestSyncInputSchema,
   structurePublishInputSchema,
   structureUpdateInputSchema,
+  walkthroughListOptionsSchema,
   walkthroughPublishInputSchema,
   walkthroughUpdateInputSchema,
 } from "../../src/cli/schemas.js";
@@ -17,6 +18,14 @@ import {
 } from "../../src/shared/constants.js";
 
 describe("CLI input schemas", () => {
+  it("normalizes Walkthrough list paging options", () => {
+    expect(walkthroughListOptionsSchema.parse({})).toEqual({ limit: 50, offset: 0 });
+    expect(walkthroughListOptionsSchema.parse({ limit: "100", offset: "12" })).toEqual({
+      limit: 100,
+      offset: 12,
+    });
+  });
+
   it("accepts an exact repository comment target and normalizes omitted lines", () => {
     expect(
       commentCreateInputSchema.parse({
