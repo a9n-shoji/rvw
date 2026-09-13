@@ -317,6 +317,7 @@ export const walkthroughs = [
     title: "注文作成フロー：HTTPからtransactional outboxまで",
     authorLabel: "Codex · implementation walkthrough",
     createdAt: "2026-08-09T04:24:00.000Z",
+    updatedAt: "2026-08-09T04:24:00.000Z",
     references: mainReferences,
     diagramBindings: {
       Route: "route",
@@ -387,6 +388,7 @@ export const walkthroughs = [
     title: "障害とretry：どこまで自動回復できるか",
     authorLabel: "Codex · failure analysis",
     createdAt: "2026-08-09T04:26:00.000Z",
+    updatedAt: "2026-08-09T04:26:00.000Z",
     references: recoveryReferences,
     diagramBindings: {
       Retry: "idempotency",
@@ -425,6 +427,7 @@ export const walkthroughs = [
     title: "認証・認可境界：actorが注文に到達するまで",
     authorLabel: "Codex · security walkthrough",
     createdAt: "2026-08-09T04:28:00.000Z",
+    updatedAt: "2026-08-09T04:28:00.000Z",
     references: authReferences,
     diagramBindings: {
       Route: "route",
@@ -457,6 +460,7 @@ export const walkthroughs = [
     title: "テストマップ：各層で何を保証しているか",
     authorLabel: "Codex · class diagram",
     createdAt: "2026-08-09T04:30:00.000Z",
+    updatedAt: "2026-08-09T04:30:00.000Z",
     references: testReferences,
     diagramBindings: {
       OrderApiContract: "contract_shape",
@@ -509,6 +513,7 @@ export const walkthroughs = [
     title: "Markdown表現デモ：レビューコメントのショーケース",
     authorLabel: "Codex · Markdown showcase",
     createdAt: "2026-08-11T06:30:00.000Z",
+    updatedAt: "2026-08-11T06:30:00.000Z",
     references: showcaseReferences,
     diagramBindings: {
       Request: "route",
@@ -612,6 +617,7 @@ export const walkthroughs = [
     title: "Mermaid binding対応図種",
     authorLabel: "Codex · Mermaid binding contract",
     createdAt: "2026-08-30T06:30:00.000Z",
+    updatedAt: "2026-08-30T06:30:00.000Z",
     references: mermaidBindingReferences,
     diagramBindings: {
       service: "route",

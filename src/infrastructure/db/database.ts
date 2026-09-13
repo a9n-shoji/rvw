@@ -1954,6 +1954,7 @@ export class RvwDatabase {
       diagramBindings: stringRecordValue(row, "diagram_bindings_json"),
       references: this.listCodeReferences("walkthrough", id),
       createdAt: stringValue(row, "created_at"),
+      updatedAt: stringValue(row, "updated_at"),
     };
   }
 
@@ -2023,8 +2024,8 @@ export class RvwDatabase {
         .prepare(
           `INSERT INTO walkthroughs(
             id, pull_request_id, source_oid, title, body, author_label,
-            diagram_bindings_json, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            diagram_bindings_json, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           id,
@@ -2034,6 +2035,7 @@ export class RvwDatabase {
           input.body,
           input.authorLabel ?? null,
           JSON.stringify(input.diagramBindings),
+          now,
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
@@ -2047,11 +2049,13 @@ export class RvwDatabase {
   }
 
   updateWalkthrough(id: string, input: Omit<NewWalkthroughInput, "pullRequestId">): Walkthrough {
+    const now = new Date().toISOString();
     this.immediateTransaction(() => {
       const result = this.database
         .prepare(
           `UPDATE walkthroughs
-           SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?
+           SET source_oid = ?, title = ?, body = ?, author_label = ?, diagram_bindings_json = ?,
+               updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -2060,6 +2064,7 @@ export class RvwDatabase {
           input.body,
           input.authorLabel ?? null,
           JSON.stringify(input.diagramBindings),
+          now,
           id,
         );
       if (Number(result.changes) === 0) {

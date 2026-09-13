@@ -522,6 +522,8 @@ interface Walkthrough {
   authorLabel: string | null;
   diagramBindings: Record<string, string>; // Mermaid node ID -> reference ID
   references: CodeReference[];
+  createdAt: string;
+  updatedAt: string;
 }
 ```
 
@@ -545,6 +547,9 @@ interface Walkthrough {
   bindingは人間がWalkthrough tabを開いた時に取得する。CLI更新をpollで検出した場合は、開いているtabも
   同じIDの最新内容とtitleへ結び直す。Explorerの一行表示はtitleを主表示とし、authorと短縮source OIDは
   native tooltipで確認できるようにする。
+- Walkthrough tabのheaderは最終更新日時をtitle上の既存labelと同じ一行へ表示し、headerの高さを増やさない。
+  `updatedAt`はpublish時に`createdAt`と同じ値で初期化し、同じIDをupdateするたびに更新する。既存行は
+  migration時に`createdAt`で補完する。
 - Walkthrough tabは本文中のtyped inline referenceとbinding済みMermaid nodeを維持するが、横または下に
   全referenceを重複表示する`Code references` indexは持たない。sidebar itemにもreference件数を表示しない。
 - `language-mermaid` code blockはstrict security設定でSVG化する。bundled Mermaidが扱うflowchart、

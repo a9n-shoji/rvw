@@ -1155,6 +1155,7 @@ describe("RvwService commit workflow", () => {
       sourceOid: firstHead,
       diagramBindings: { Source: "source" },
       references: [{ id: "source", startLine: 1, endLine: 2 }],
+      updatedAt: walkthrough.createdAt,
     });
     expect(service.listWalkthroughs(opened.pullRequest.id)).toEqual([
       {
@@ -1258,6 +1259,8 @@ describe("RvwService commit workflow", () => {
       diagramBindings: { Entry: "source_file" },
       references: [{ id: "source_file", startLine: null, endLine: null }],
     });
+    expect(typeof updatedWalkthrough.updatedAt).toBe("string");
+    expect(updatedWalkthrough.updatedAt >= walkthrough.updatedAt).toBe(true);
     expect(service.listWalkthroughs(opened.pullRequest.id)).toHaveLength(1);
     expect(service.getCommentByUri(walkthroughComment.ref).comment.target).toEqual({
       kind: "walkthrough",

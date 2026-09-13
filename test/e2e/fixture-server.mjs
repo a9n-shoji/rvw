@@ -1719,6 +1719,7 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
   const input = await context.req.json();
   walkthrough.title = input.title;
   walkthrough.body = input.body;
+  walkthrough.updatedAt = new Date().toISOString();
   walkthrough.references[0].label = input.referenceLabel;
   if (typeof input.referencePath === "string") {
     walkthrough.references[0].path = input.referencePath;

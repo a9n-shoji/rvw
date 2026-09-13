@@ -120,7 +120,11 @@ test("keeps agent explanation passive until a human opens a current code referen
     page.getByRole("img", { name: "画像: External walkthrough（自動読み込み停止）" }),
   ).toBeVisible();
   await expect(page.locator('img[src="https://example.invalid/walkthrough.png"]')).toHaveCount(0);
-  await expect(page.locator(".walkthrough-viewer-header .walkthrough-meta")).toHaveCount(0);
+  const initialWalkthroughHeader = page.locator(".walkthrough-viewer-header");
+  const walkthroughUpdatedAt = initialWalkthroughHeader.locator("time.walkthrough-meta");
+  await expect(initialWalkthroughHeader).toContainText("最終更新");
+  await expect(walkthroughUpdatedAt).toHaveAttribute("datetime", "2026-08-09T04:24:00.000Z");
+  expect((await initialWalkthroughHeader.boundingBox())?.height).toBe(74);
   await expect(page.getByText("Code references", { exact: true })).toHaveCount(0);
   await expect(page.locator(".document-tabs").getByRole("tab")).toHaveCount(2);
   await expect(page.locator(".walkthrough-diagram svg")).toBeVisible();
@@ -2357,6 +2361,10 @@ test("refreshes a Walkthrough in place and marks its open reference stale", asyn
     "aria-selected",
     "true",
   );
+  const originalUpdatedAt = await page
+    .locator(".walkthrough-viewer-header time.walkthrough-meta")
+    .getAttribute("datetime");
+  expect(originalUpdatedAt).toBe("2026-08-09T04:26:00.000Z");
   await page
     .locator(".walkthrough-inline-reference")
     .filter({ hasText: "PostgresIdempotencyStore.run" })
@@ -2415,6 +2423,9 @@ test("refreshes a Walkthrough in place and marks its open reference stale", asyn
   await expect(
     page.getByRole("heading", { name: "利用者フィードバックを反映した障害説明" }),
   ).toBeVisible();
+  await expect(
+    page.locator(".walkthrough-viewer-header time.walkthrough-meta"),
+  ).not.toHaveAttribute("datetime", originalUpdatedAt!);
   await expect(
     page.locator(".walkthrough-inline-reference").filter({ hasText: updatedReferenceLabel }),
   ).toBeVisible();
