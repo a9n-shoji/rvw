@@ -326,7 +326,7 @@ empty fileは従来どおり明示的に扱う。
   開く。操作元やfocused paneは文書を開く先へ影響させない。tab clickはそのtabが属するpaneをactivateし、
   同一Markdown内の見出しlinkは表示中pane内を移動する。新しい右paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。
-- Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
+- Walkthrough reference、repository Markdownの相対link、comment target、comment内code referenceを開いても、repository全体の
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceはclick時に
   `sourceOid + path + line range`から最新`latestHeadOid`へ直接解決し、成功すれば最新commit、失敗すれば
   `sourceOid`を対象にする。全文では対象commitのfull fileを表示する。latest解決後の変更表示は
@@ -334,8 +334,11 @@ empty fileは従来どおり明示的に扱う。
   `effectiveOldOid → selectedOid`を使う。global比較がhistorical commitで終わる場合はlatestで解決したpathと
   lineを別revisionへ適用せず、そのpaneだけlatest全文を表示して理由を明示する。anchor fallbackだけは
   参照時点を明示したうえでsource commitの比較を使う。現在の全文／変更とstacked / split設定は切り替えず、
-  global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
-  そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
+  global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。comment targetとcomment内code
+  referenceはclick時にexact sourceからglobalな`selectedOid`へ配置し、同一pathまたは明確なrename先があり、
+  file全体または変更されていない一意な連続rangeとして配置できれば、対象paneへglobal比較のdocumentを直接開く。
+  削除、内容変更、曖昧な対応、配置取得失敗ではretained exact sourceへfallbackする。repository Markdownの
+  通常の相対linkはglobal表示が変更でも、そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
   `参照時点のコード · <short SHA>`と最新で対応位置を確実に特定できなかったことを明示し、同一pathまたは明確なrename先が
   存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。このactionはglobal比較の
   `selectedOid`がtargetのlatest OIDと一致する場合だけ変更表示を使い、historical範囲ではtarget latestの
@@ -1192,8 +1195,9 @@ comment code referenceはWalkthroughと同じ`CodeReference` schema、ID/path/li
 buttonを再利用する。各postは一つの`related_commit_oid`と0〜200件のreferenceを所有し、referenceが
 ある場合は関連commitを必須とする。全宣言はそのpost本文のMarkdown linkから使われ、全linkは宣言済み
 IDへ一致しなければならない。referenceはthread内で継承せず、Mermaid bindingにも使わない。通常clickは
-related commitのexact sourceを左paneへ、modifier clickは右paneへ開き、globalなcommit範囲を
-変えない。作成・reply・edit成功前に関連commitをimmutable refで保持する。
+globalな`selectedOid`へ安全に配置できれば現在の比較documentを左paneへ、modifier clickは右paneへ開く。
+配置できなければrelated commitのexact sourceへfallbackし、いずれもglobalなcommit範囲を変えない。
+作成・reply・edit成功前に関連commitをimmutable refで保持する。
 同梱Skillは、finding、調査結果、実装内容、test結果について具体的なcode上のclaimを投稿するとき、
 reviewerがexact evidenceを開く価値があればtyped referenceを既定で付ける。comment target自身が同じ
 exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価値がない限り重複させない。code evidenceが
@@ -1202,8 +1206,9 @@ exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価
 repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
 Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
 target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは左pane、
-`Cmd` / `Ctrl`+clickは操作元にかかわらず右paneへexact source全文を開き、
-globalなcommit範囲や表示modeを変更しない。replyは任意の`related_commit_oid`を持てる。
+`Cmd` / `Ctrl`+clickは操作元にかかわらず右paneへ開く。通常のrepository内linkはexact source全文、typedな
+comment code referenceは前述のglobal配置またはexact source fallbackを使い、globalなcommit範囲や表示modeを
+変更しない。replyは任意の`related_commit_oid`を持てる。
 Agent batch syncのreplyは同期後のGitHub headへ自動的に関連付ける。
 人間はviewerから、明示的に依頼された外部AgentはCLIから、同じtarget validationを通して新しいroot
 commentを作成できる。Agent作成commentも通常の未解決threadであり、専用stateや自動resolveを持たない。
@@ -1274,9 +1279,9 @@ outdatedまたはfailureなら仮の行表示を残さない。
   Walkthrough summaryのtitleを導出する。titleだけの更新でもpoll後のsidebar表示をcurrent値へ揃える。
 - Diff内のresolved threadは既定で一行に折りたたみ、展開すればpost、reply欄、reopen actionを表示する。
 - 参照copy、post編集、削除は各postの`...` menuへ格納し、resolve/reopenはthread actionとする。
-- commentからexact source documentを開ける。force-push前のrepository sourceも保持refから開く。
-  このnavigationはglobalなreview scopeを変更せず、対象paneだけcomment時点の全文を表示する。参照元commitが
-  対象commitと異なる場合はshort SHAを表示する。
+- comment targetはclick時にglobalな`selectedOid`へ安全に配置できれば現在の比較documentを開き、配置できない
+  場合はexact source documentへfallbackする。force-push前のrepository sourceも保持refから開く。このnavigationは
+  globalなreview scopeを変更しない。exact sourceへfallbackし、参照元commitが対象commitと異なる場合はshort SHAを表示する。
 - 一件、表示中の一覧すべて、複数選択したcommentの`rvw://comment/<uuid>`をコピーできる。
 - copy textはSkill利用を依頼する短い文とURIだけで構成し、comment本文や巨大promptを埋め込まない。
 - どのcomment集合をいつcopyしたかは永続化しない。

@@ -1842,16 +1842,24 @@ function fixtureCommentPlacement(comment, destination) {
     range &&
     comment.target.documentKind === "repository-file" &&
     destinationOid &&
-    targetPath === comment.target.path &&
-    repositoryFixture?.resolveLineRangeAt
+    targetPath === comment.target.path
   ) {
-    range = repositoryFixture.resolveLineRangeAt(
-      comment.target.sourceOid,
-      comment.target.path,
-      range.startLine,
-      range.endLine,
-      destinationOid,
-    );
+    range = repositoryFixture?.resolveLineRangeAt
+      ? repositoryFixture.resolveLineRangeAt(
+          comment.target.sourceOid,
+          comment.target.path,
+          range.startLine,
+          range.endLine,
+          destinationOid,
+        )
+      : findUniqueQuotedLineRange(
+          selectedLineText(
+            repositoryDocumentText(comment.target.sourceOid, comment.target.path),
+            range.startLine,
+            range.endLine,
+          ),
+          repositoryDocumentText(destinationOid, targetPath),
+        );
     targetOutdated = range === null;
   }
   if (comment.target.documentKind === "pull-request-markdown" && range) {
@@ -1911,6 +1919,41 @@ app.post("/api/pull-requests/:id/comment-placements/resolve", async (context) =>
         : [];
     }),
     missingCommentIds: uniqueIds.filter((commentId) => !found.has(commentId)),
+  });
+});
+
+app.post("/api/pull-requests/:id/code-reference-placement", async (context) => {
+  const input = await context.req.json();
+  const destinationPath = repositoryFixture?.resolvePathAt
+    ? repositoryFixture.resolvePathAt(input.sourceOid, input.reference.path, input.destinationOid)
+    : repositoryPathsAt(input.destinationOid).includes(input.reference.path)
+      ? input.reference.path
+      : null;
+  if (destinationPath === null) {
+    return context.json({
+      ok: true,
+      placement: { outdated: true, range: null, path: input.reference.path },
+    });
+  }
+  if (input.reference.startLine === null) {
+    return context.json({
+      ok: true,
+      placement: { outdated: false, range: null, path: destinationPath },
+    });
+  }
+  const sourceText = repositoryDocumentText(input.sourceOid, input.reference.path);
+  const destinationText = repositoryDocumentText(input.destinationOid, destinationPath);
+  const quotedText = selectedLineText(
+    sourceText,
+    input.reference.startLine,
+    input.reference.endLine,
+  );
+  const range = findUniqueQuotedLineRange(quotedText, destinationText);
+  return context.json({
+    ok: true,
+    placement: range
+      ? { outdated: false, range, path: destinationPath }
+      : { outdated: true, range: null, path: destinationPath },
   });
 });
 

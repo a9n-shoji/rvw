@@ -2873,6 +2873,101 @@ test("opens a comment reference to the same file in the right pane", async ({ pa
   await expect(leftPane.locator("diffs-container")).toHaveAttribute("data-search-target-line", "1");
 });
 
+test("opens placeable comment targets and code references at the globally selected commit", async ({
+  page,
+  request,
+}) => {
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const view = (await viewResponse.json()) as {
+    headOid: string;
+    commits: Array<{ oid: string; subject: string }>;
+  };
+  const firstCommit = view.commits[0]!;
+  expect(view.headOid).not.toBe(firstCommit.oid);
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: view.headOid,
+        path: "src/fixture.ts",
+        startLine: null,
+        endLine: null,
+      },
+      body: "Inspect [the stable fixture line](rvw-ref:stable-line).",
+      relatedCommitOid: view.headOid,
+      references: [
+        {
+          id: "stable-line",
+          label: "Stable fixture line",
+          path: "src/fixture.ts",
+          startLine: 5,
+          endLine: 5,
+          description: "A line that is unchanged across both commits",
+        },
+      ],
+      authorLabel: "Codex · Global placement",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+
+  try {
+    await page.reload();
+    const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+    const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+    await commitPicker.click();
+    await page
+      .getByRole("dialog", { name: "対象commitを選択" })
+      .getByRole("option", { name: new RegExp(firstCommit.subject) })
+      .click();
+    await expect(commitPicker).toHaveAccessibleName(new RegExp(firstCommit.subject));
+
+    await openCommentsSidebar(page);
+    const sidebarComment = page.locator(
+      `.comment-list-item:has([data-comment-id="${comment.id}"])`,
+    );
+    await expect(sidebarComment).toBeVisible();
+    await sidebarComment.getByRole("button", { name: "コメント対象を開く" }).click();
+
+    const leftPane = page.locator('.document-pane[data-pane="left"]');
+    await expect(leftPane.getByRole("tab", { name: "src/fixture.ts" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect(leftPane.getByText("return value.toString();", { exact: true })).toBeVisible();
+    await expect(leftPane.getByText("return value.trim();", { exact: true })).toHaveCount(0);
+    await expect(leftPane.getByRole("button", { name: "参照表示", exact: true })).toHaveCount(0);
+
+    const placementRequest = page.waitForRequest((outgoing) =>
+      outgoing.url().endsWith(`/api/pull-requests/${pullRequestId}/code-reference-placement`),
+    );
+    await sidebarComment.getByRole("button", { name: "the stable fixture line" }).click();
+    const placementBody = (await placementRequest).postDataJSON() as { destinationOid: string };
+    expect(placementBody.destinationOid).toBe(firstCommit.oid);
+    await expect(leftPane.locator("diffs-container")).toHaveAttribute(
+      "data-search-target-line",
+      "5",
+    );
+    await expect(leftPane.getByText("return value.toString();", { exact: true })).toBeVisible();
+    await expect(leftPane.getByRole("button", { name: "参照表示", exact: true })).toHaveCount(0);
+  } finally {
+    const deleted = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleted.ok()).toBe(true);
+  }
+});
+
 test("renders safe context-bound Markdown in sidebar and inline comment posts", async ({
   page,
   request,

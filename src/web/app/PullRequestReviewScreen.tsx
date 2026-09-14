@@ -39,12 +39,14 @@ import {
   ApiError,
   type ChangedFilesResponse,
   type ChangeSequenceResponse,
+  type CodeReferencePlacementResponse,
   type CommentsResponse,
   documentUrl,
   type DocumentResponse,
   jsonRequest,
   type PullRequestRefreshResponse,
   type PullRequestResponse,
+  resolveCommentPlacements,
   type SearchResponse,
   type StructureSourceResolutionResponse,
   type StructureResponse,
@@ -2236,11 +2238,11 @@ export function PullRequestReviewScreen({
     const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
     navigateToDocument(document, targetPane, { kind: "line", line: result.line }, resetHorizontal);
   };
-  const openCommentTarget = (
+  const openCommentTarget = async (
     comment: ReviewComment,
     placement: CommentPlacement | null,
     openInRightPane: boolean,
-  ): void => {
+  ): Promise<void> => {
     const target = comment.target;
     const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
     const navigate = (
@@ -2281,13 +2283,58 @@ export function PullRequestReviewScreen({
       navigate(document, startLine, endLine);
       return;
     }
-    const document: ActiveDocument = {
-      kind: "repository-file",
-      path: target.path,
-      sourceOid: target.sourceOid,
-      comparisonPolicy: "exact-source",
-    };
-    navigate(document, startLine, endLine);
+    let selectedPlacement = placement;
+    if (
+      target.sourceOid !== selectedOid &&
+      selectedPlacement === null &&
+      pullRequestId &&
+      selectedOid
+    ) {
+      codeReferenceRequestSequence.current[targetPane] += 1;
+      const requestSequence = codeReferenceRequestSequence.current[targetPane];
+      const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
+      try {
+        const resolved = await resolveCommentPlacements(
+          pullRequestId,
+          [comment.id],
+          [{ kind: "commit", oid: selectedOid }],
+        );
+        selectedPlacement = resolved.comments[0]?.placements[0]?.placement ?? null;
+      } catch {
+        // The retained exact source remains the conservative fallback when placement cannot be read.
+      }
+      if (
+        requestSequence !== codeReferenceRequestSequence.current[targetPane] ||
+        documentWorkspaceRef.current.navigationRevision[targetPane] !== targetNavigationRevision
+      ) {
+        return;
+      }
+    }
+    if (
+      target.sourceOid === selectedOid ||
+      (selectedPlacement && !selectedPlacement.outdated && selectedPlacement.path)
+    ) {
+      const selectedPath = target.sourceOid === selectedOid ? target.path : selectedPlacement?.path;
+      if (selectedPath) {
+        const selectedRange = target.sourceOid === selectedOid ? null : selectedPlacement?.range;
+        navigate(
+          { kind: "repository-file", path: selectedPath },
+          selectedRange?.startLine ?? target.startLine,
+          selectedRange?.endLine ?? target.endLine,
+        );
+        return;
+      }
+    }
+    navigate(
+      {
+        kind: "repository-file",
+        path: target.path,
+        sourceOid: target.sourceOid,
+        comparisonPolicy: "exact-source",
+      },
+      target.startLine,
+      target.endLine,
+    );
   };
   const openWalkthrough = useCallback(
     (walkthrough: WalkthroughSummary, openInRightPane = false): void => {
@@ -2366,7 +2413,7 @@ export function PullRequestReviewScreen({
       sourceOid: string,
       reference: CodeReference,
       targetPane: DocumentPaneId,
-      comparisonPolicy: "exact-source" | "selected-range",
+      destinationOid: string,
     ): Promise<string | null> => {
       codeReferenceRequestSequence.current[targetPane] += 1;
       const requestSequence = codeReferenceRequestSequence.current[targetPane];
@@ -2374,6 +2421,60 @@ export function PullRequestReviewScreen({
       const requestIsCurrent = (): boolean =>
         requestSequence === codeReferenceRequestSequence.current[targetPane] &&
         documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
+      const navigateReference = (
+        document: ActiveDocument,
+        range: { startLine: number | null; endLine: number | null },
+      ): void => {
+        const documentKey = documentTabKey(document);
+        const activeTarget = documentWorkspaceRef.current.active[targetPane];
+        navigateToDocument(
+          document,
+          targetPane,
+          {
+            kind: "line",
+            line: range.startLine,
+            ...(range.endLine === null ? {} : { endLine: range.endLine }),
+          },
+          !activeTarget || documentTabKey(activeTarget) !== documentKey,
+        );
+      };
+      if (sourceOid === destinationOid) {
+        navigateReference({ kind: "repository-file", path: reference.path }, reference);
+        return null;
+      }
+      try {
+        const { placement } = await queryClient.fetchQuery({
+          queryKey: [
+            "code-reference-placement",
+            pullRequestId,
+            sourceOid,
+            destinationOid,
+            reference.path,
+            reference.startLine,
+            reference.endLine,
+          ],
+          queryFn: async () =>
+            await api<CodeReferencePlacementResponse>(
+              `/api/pull-requests/${pullRequestId}/code-reference-placement`,
+              jsonRequest({ sourceOid, destinationOid, reference }),
+            ),
+          staleTime: Number.POSITIVE_INFINITY,
+        });
+        if (!requestIsCurrent()) return null;
+        if (!placement.outdated && placement.path) {
+          navigateReference(
+            { kind: "repository-file", path: placement.path },
+            {
+              startLine: placement.range?.startLine ?? null,
+              endLine: placement.range?.endLine ?? null,
+            },
+          );
+          return null;
+        }
+      } catch {
+        // A placement failure must not hide the retained exact source.
+      }
+
       const ref: DocumentRef = {
         kind: "repository-file",
         pullRequestId,
@@ -2399,24 +2500,14 @@ export function PullRequestReviewScreen({
           ? `リンク切れ · ${reference.path}`
           : `参照先を開けません · ${reference.path}`;
       }
-      const document: ActiveDocument = {
-        kind: "repository-file",
-        path: reference.path,
-        sourceOid,
-        comparisonPolicy,
-      };
-      const documentKey = documentTabKey(document);
-      const activeTarget = documentWorkspaceRef.current.active[targetPane];
-      const resetHorizontal = !activeTarget || documentTabKey(activeTarget) !== documentKey;
-      navigateToDocument(
-        document,
-        targetPane,
+      navigateReference(
         {
-          kind: "line",
-          line: reference.startLine,
-          ...(reference.endLine === null ? {} : { endLine: reference.endLine }),
+          kind: "repository-file",
+          path: reference.path,
+          sourceOid,
+          comparisonPolicy: "exact-source",
         },
-        resetHorizontal,
+        reference,
       );
       return null;
     },
@@ -2548,12 +2639,12 @@ export function PullRequestReviewScreen({
       reference: CodeReference,
       targetPane: DocumentPaneId,
     ): Promise<string | null> => {
-      if (!pullRequestId) {
+      if (!pullRequestId || !selectedOid) {
         return Promise.resolve(`参照先を開けません · ${reference.path}`);
       }
-      return openCodeReference(pullRequestId, sourceOid, reference, targetPane, "exact-source");
+      return openCodeReference(pullRequestId, sourceOid, reference, targetPane, selectedOid);
     },
-    [openCodeReference, pullRequestId],
+    [openCodeReference, pullRequestId, selectedOid],
   );
   const openCommentCodeReferenceFromInteraction = useCallback(
     (sourceOid: string, reference: CodeReference, openInRightPane: boolean) =>
@@ -3470,7 +3561,9 @@ export function PullRequestReviewScreen({
                 themePreference={themePreference}
                 onCommentActiveChange={handleCommentActiveChange}
                 onOpenCodeReference={openCommentCodeReferenceFromInteraction}
-                onOpenTarget={openCommentTarget}
+                onOpenTarget={(comment, placement, openInRightPane) => {
+                  void openCommentTarget(comment, placement, openInRightPane);
+                }}
                 onOpenRepositoryLink={openRepositoryMarkdownLinkFromInteraction}
               />
             </div>
