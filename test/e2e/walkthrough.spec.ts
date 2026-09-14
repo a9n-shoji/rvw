@@ -23,6 +23,23 @@ async function openCommentsSidebar(page: Page): Promise<void> {
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+async function settleNavigation(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+}
+
 async function selectMappedText(locator: Locator, firstCharacterOnly = false): Promise<void> {
   await expect(locator).toBeVisible();
   await locator.evaluate((element) => {
@@ -2963,6 +2980,255 @@ test("opens placeable comment targets and code references at the globally select
     await expect(leftPane.getByText("return value.toString();", { exact: true })).toBeVisible();
     await expect(leftPane.getByRole("button", { name: "参照表示", exact: true })).toHaveCount(0);
   } finally {
+    const deleted = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleted.ok()).toBe(true);
+  }
+});
+
+test("discards delayed comment navigation after a manual global commit change", async ({
+  page,
+  request,
+}) => {
+  const initialRefresh = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return (
+      response.request().method() === "POST" &&
+      url.pathname === `/api/pull-requests/${pullRequestId}/refresh`
+    );
+  });
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  await initialRefresh;
+  const viewResponse = await request.get(`/api/pull-requests/${pullRequestId}`);
+  expect(viewResponse.ok()).toBe(true);
+  const view = (await viewResponse.json()) as {
+    headOid: string;
+    commits: Array<{ oid: string; subject: string }>;
+  };
+  const firstCommit = view.commits[0]!;
+  const latestCommit = view.commits.find(({ oid }) => oid === view.headOid)!;
+  expect(latestCommit.oid).not.toBe(firstCommit.oid);
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: view.headOid,
+        path: "src/fixture.ts",
+        startLine: null,
+        endLine: null,
+      },
+      body: "Inspect [the stable fixture line](rvw-ref:stable-line).",
+      relatedCommitOid: view.headOid,
+      references: [
+        {
+          id: "stable-line",
+          label: "Stable fixture line",
+          path: "src/fixture.ts",
+          startLine: 5,
+          endLine: 5,
+          description: null,
+        },
+      ],
+      authorLabel: "Codex · Delayed placement",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+
+  let delayTargetPlacement = false;
+  const targetPlacementGate = deferred();
+  const targetPlacementStarted = deferred();
+  const targetPlacementFinished = deferred();
+  let delayedTargetRequestCount = 0;
+  await page.route(
+    `**/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    async (route) => {
+      const body = route.request().postDataJSON() as { commentIds?: string[] };
+      if (!delayTargetPlacement || !body.commentIds?.includes(comment.id)) {
+        await route.fallback();
+        return;
+      }
+      delayedTargetRequestCount += 1;
+      const directTargetRequest = delayedTargetRequestCount === 2;
+      const response = await route.fetch();
+      if (directTargetRequest) {
+        delayTargetPlacement = false;
+        targetPlacementStarted.resolve();
+      }
+      await targetPlacementGate.promise;
+      try {
+        await route.fulfill({ response });
+      } catch {
+        // A global commit change may cancel the sidebar placement request.
+      } finally {
+        if (directTargetRequest) targetPlacementFinished.resolve();
+      }
+    },
+  );
+
+  let delayCodePlacement = false;
+  const codePlacementGate = deferred();
+  const codePlacementStarted = deferred();
+  const codePlacementFinished = deferred();
+  await page.route(
+    `**/api/pull-requests/${pullRequestId}/code-reference-placement`,
+    async (route) => {
+      if (!delayCodePlacement) {
+        await route.fallback();
+        return;
+      }
+      delayCodePlacement = false;
+      const response = await route.fetch();
+      codePlacementStarted.resolve();
+      await codePlacementGate.promise;
+      try {
+        await route.fulfill({ response });
+      } finally {
+        codePlacementFinished.resolve();
+      }
+    },
+  );
+
+  const selectCommit = async (subject: string): Promise<void> => {
+    const reviewScope = page.getByRole("region", { name: "レビュー範囲", exact: true });
+    const commitPicker = reviewScope.getByRole("button", { name: /^対象commit:/ });
+    await commitPicker.click();
+    await page
+      .getByRole("dialog", { name: "対象commitを選択" })
+      .getByRole("option", { name: new RegExp(subject) })
+      .click();
+    await expect(commitPicker).toHaveAccessibleName(new RegExp(subject));
+  };
+
+  try {
+    await page.reload();
+    await selectCommit(firstCommit.subject);
+    delayTargetPlacement = true;
+    await openCommentsSidebar(page);
+    const sidebarComment = page.locator(
+      `.comment-list-item:has([data-comment-id="${comment.id}"])`,
+    );
+    await expect(sidebarComment).toBeVisible();
+    await sidebarComment
+      .getByRole("button", { name: "コメント対象を開く" })
+      .click({ modifiers: ["Meta"] });
+    await targetPlacementStarted.promise;
+    await selectCommit(latestCommit.subject);
+    targetPlacementGate.resolve();
+    await targetPlacementFinished.promise;
+    await settleNavigation(page);
+    const rightPane = page.locator('.document-pane[data-pane="right"]');
+    await expect(rightPane).toHaveCount(0);
+
+    await selectCommit(firstCommit.subject);
+    delayCodePlacement = true;
+    await sidebarComment
+      .getByRole("button", { name: "the stable fixture line" })
+      .click({ modifiers: ["Meta"] });
+    await codePlacementStarted.promise;
+    await selectCommit(latestCommit.subject);
+    codePlacementGate.resolve();
+    await codePlacementFinished.promise;
+    await settleNavigation(page);
+    await expect(rightPane).toHaveCount(0);
+  } finally {
+    targetPlacementGate.resolve();
+    codePlacementGate.resolve();
+    const deleted = await request.delete(`/api/comments/${comment.id}`, { data: {} });
+    expect(deleted.ok()).toBe(true);
+  }
+});
+
+test("discards delayed code reference placement after automatic HEAD following", async ({
+  page,
+  request,
+}) => {
+  const resetSync = await request.post("/api/test/reset-sync-stage", { data: {} });
+  expect(resetSync.ok()).toBe(true);
+  const firstHead = "b".repeat(40);
+  const latestHead = "c".repeat(40);
+  const createResponse = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: { kind: "pull-request" },
+      body: "Inspect [the stable fixture line](rvw-ref:stable-line).",
+      relatedCommitOid: latestHead,
+      references: [
+        {
+          id: "stable-line",
+          label: "Stable fixture line",
+          path: "src/fixture.ts",
+          startLine: 5,
+          endLine: 5,
+          description: null,
+        },
+      ],
+      authorLabel: "Codex · HEAD follow placement",
+    },
+  });
+  expect(createResponse.ok()).toBe(true);
+  const { comment } = (await createResponse.json()) as { comment: { id: string } };
+
+  const refreshGate = deferred();
+  const refreshStarted = deferred();
+  const refreshFinished = deferred();
+  await page.route(`**/api/pull-requests/${pullRequestId}/refresh`, async (route) => {
+    const response = await route.fetch();
+    refreshStarted.resolve();
+    await refreshGate.promise;
+    try {
+      await route.fulfill({ response });
+    } finally {
+      refreshFinished.resolve();
+    }
+  });
+
+  const placementGate = deferred();
+  const placementStarted = deferred();
+  const placementFinished = deferred();
+  await page.route(
+    `**/api/pull-requests/${pullRequestId}/code-reference-placement`,
+    async (route) => {
+      const body = route.request().postDataJSON() as { destinationOid?: string };
+      expect(body.destinationOid).toBe(firstHead);
+      const response = await route.fetch();
+      placementStarted.resolve();
+      await placementGate.promise;
+      try {
+        await route.fulfill({ response });
+      } finally {
+        placementFinished.resolve();
+      }
+    },
+  );
+
+  try {
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await refreshStarted.promise;
+    await openCommentsSidebar(page);
+    const sidebarComment = page.locator(
+      `.comment-list-item:has([data-comment-id="${comment.id}"])`,
+    );
+    await expect(sidebarComment).toBeVisible();
+    await sidebarComment
+      .getByRole("button", { name: "the stable fixture line" })
+      .click({ modifiers: ["Meta"] });
+    await placementStarted.promise;
+
+    refreshGate.resolve();
+    await refreshFinished.promise;
+    const commitPicker = page
+      .getByRole("region", { name: "レビュー範囲", exact: true })
+      .getByRole("button", { name: /^対象commit:/ });
+    await expect(commitPicker).toHaveAccessibleName(/Trim fixture input/);
+    placementGate.resolve();
+    await placementFinished.promise;
+    await settleNavigation(page);
+    await expect(page.locator('.document-pane[data-pane="right"]')).toHaveCount(0);
+  } finally {
+    refreshGate.resolve();
+    placementGate.resolve();
     const deleted = await request.delete(`/api/comments/${comment.id}`, { data: {} });
     expect(deleted.ok()).toBe(true);
   }

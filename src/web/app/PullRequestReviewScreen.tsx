@@ -588,7 +588,12 @@ export function PullRequestReviewScreen({
   onNavigateToList: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [selectedOidState, setSelectedOid] = useState<string | null>(null);
+  const [selectedOidState, setSelectedOidState] = useState<string | null>(null);
+  const selectedOidRef = useRef<string | null>(null);
+  const setSelectedOid = useCallback((oid: string | null): void => {
+    selectedOidRef.current = oid;
+    setSelectedOidState(oid);
+  }, []);
   const [rangeStartOid, setRangeStartOid] = useState<string | null>(null);
   const [documentDisplayMode, setDocumentDisplayMode] = useState<DocumentDisplayMode>("full");
   const [diffStyle, setDiffStyle] = useState<"unified" | "split">("unified");
@@ -1342,6 +1347,7 @@ export function PullRequestReviewScreen({
       : latestHeadOid && commits.some((commit) => commit.oid === latestHeadOid)
         ? latestHeadOid
         : null;
+  selectedOidRef.current = selectedOid;
 
   useEffect(() => {
     const pullRequest = pullRequestQuery.data?.pullRequest;
@@ -1412,7 +1418,7 @@ export function PullRequestReviewScreen({
       );
     }
     observedLatestHead.current = latestHeadOid;
-  }, [commits, latestHeadOid, rangeStartOid, selectedOidState]);
+  }, [commits, latestHeadOid, rangeStartOid, selectedOidState, setSelectedOid]);
   useEffect(() => {
     if (!rangeStartValid) {
       setRangeStartOid(defaultRangeStartOid);
@@ -2283,12 +2289,13 @@ export function PullRequestReviewScreen({
       navigate(document, startLine, endLine);
       return;
     }
+    const destinationOid = selectedOid;
     let selectedPlacement = placement;
     if (
-      target.sourceOid !== selectedOid &&
+      target.sourceOid !== destinationOid &&
       selectedPlacement === null &&
       pullRequestId &&
-      selectedOid
+      destinationOid
     ) {
       codeReferenceRequestSequence.current[targetPane] += 1;
       const requestSequence = codeReferenceRequestSequence.current[targetPane];
@@ -2297,7 +2304,7 @@ export function PullRequestReviewScreen({
         const resolved = await resolveCommentPlacements(
           pullRequestId,
           [comment.id],
-          [{ kind: "commit", oid: selectedOid }],
+          [{ kind: "commit", oid: destinationOid }],
         );
         selectedPlacement = resolved.comments[0]?.placements[0]?.placement ?? null;
       } catch {
@@ -2305,18 +2312,20 @@ export function PullRequestReviewScreen({
       }
       if (
         requestSequence !== codeReferenceRequestSequence.current[targetPane] ||
-        documentWorkspaceRef.current.navigationRevision[targetPane] !== targetNavigationRevision
+        documentWorkspaceRef.current.navigationRevision[targetPane] !== targetNavigationRevision ||
+        selectedOidRef.current !== destinationOid
       ) {
         return;
       }
     }
     if (
-      target.sourceOid === selectedOid ||
+      target.sourceOid === destinationOid ||
       (selectedPlacement && !selectedPlacement.outdated && selectedPlacement.path)
     ) {
-      const selectedPath = target.sourceOid === selectedOid ? target.path : selectedPlacement?.path;
+      const selectedPath =
+        target.sourceOid === destinationOid ? target.path : selectedPlacement?.path;
       if (selectedPath) {
-        const selectedRange = target.sourceOid === selectedOid ? null : selectedPlacement?.range;
+        const selectedRange = target.sourceOid === destinationOid ? null : selectedPlacement?.range;
         navigate(
           { kind: "repository-file", path: selectedPath },
           selectedRange?.startLine ?? target.startLine,
@@ -2420,7 +2429,8 @@ export function PullRequestReviewScreen({
       const targetNavigationRevision = documentWorkspaceRef.current.navigationRevision[targetPane];
       const requestIsCurrent = (): boolean =>
         requestSequence === codeReferenceRequestSequence.current[targetPane] &&
-        documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision;
+        documentWorkspaceRef.current.navigationRevision[targetPane] === targetNavigationRevision &&
+        selectedOidRef.current === destinationOid;
       const navigateReference = (
         document: ActiveDocument,
         range: { startLine: number | null; endLine: number | null },

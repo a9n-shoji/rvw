@@ -338,7 +338,8 @@ empty fileは従来どおり明示的に扱う。
   referenceはclick時にexact sourceからglobalな`selectedOid`へ配置し、同一pathまたは明確なrename先があり、
   file全体または変更されていない一意な連続rangeとして配置できれば、対象paneへglobal比較のdocumentを直接開く。
   削除、内容変更、曖昧な対応、配置取得失敗ではretained exact sourceへfallbackする。repository Markdownの
-  通常の相対linkはglobal表示が変更でも、そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
+  通常の相対linkはglobal表示が変更でも、そのpaneだけretained exact sourceの全文を表示する。配置取得中に
+  globalな`selectedOid`または対象paneのnavigationが変わった場合は、古い配置結果を適用しない。Walkthrough referenceのfallbackでは
   `参照時点のコード · <short SHA>`と最新で対応位置を確実に特定できなかったことを明示し、同一pathまたは明確なrename先が
   存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。このactionはglobal比較の
   `selectedOid`がtargetのlatest OIDと一致する場合だけ変更表示を使い、historical範囲ではtarget latestの
