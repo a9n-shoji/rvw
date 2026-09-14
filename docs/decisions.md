@@ -3612,7 +3612,9 @@ in that connection even though GitHub still considers the Pull Request approved.
 ### Choice
 
 Resolve the Pull Request through `gh pr view` as before, request its node ID, and use authenticated
-`gh api graphql` calls to read every page of `latestOpinionatedReviews`. Count entries whose state is
+`gh api graphql --hostname github.com` calls to read every page of `latestOpinionatedReviews`. The
+explicit hostname keeps `GH_HOST` for a GitHub Enterprise account from redirecting the follow-up
+request away from the github.com Pull Request. Count entries whose state is
 `APPROVED` and use that count for normal synchronization and explicit bulk status refresh. Reject a
 missing node, malformed response, or invalid pagination cursor instead of caching a partial count.
 

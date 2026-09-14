@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitHubClient } from "../../src/infrastructure/github/github-client.js";
 import type { runProcess } from "../../src/infrastructure/process/run-process.js";
 import {
@@ -11,6 +11,10 @@ import { RvwError } from "../../src/shared/errors.js";
 const attachmentUrl =
   "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";
 const pullRequestUrl = "https://github.com/acme/review-repo/pull/7";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function jsonProcessResult(value: unknown) {
   return {
@@ -52,7 +56,8 @@ describe("GitHubClient Pull Request status fetching", () => {
     expect(called).toBe(false);
   });
 
-  it("counts current opinionated approvals after one authentication check", async () => {
+  it("pins status approval GraphQL requests to github.com when GH_HOST selects Enterprise", async () => {
+    vi.stubEnv("GH_HOST", "github.enterprise.example");
     const calls: Array<{ executable: string; args: readonly string[]; options: unknown }> = [];
     const runner: typeof runProcess = (executable, args, options = {}) => {
       calls.push({ executable, args, options });
@@ -110,6 +115,11 @@ describe("GitHubClient Pull Request status fetching", () => {
     ]);
     const graphqlCalls = calls.filter((call) => call.args[0] === "api");
     expect(graphqlCalls).toHaveLength(2);
+    expect(
+      graphqlCalls.every(
+        (call) => call.args.slice(0, 4).join(" ") === "api graphql --hostname github.com",
+      ),
+    ).toBe(true);
     expect(graphqlCalls.map((call) => call.args)).toEqual(
       expect.arrayContaining([
         expect.arrayContaining(["api", "graphql", "id=PR_first"]),
@@ -216,10 +226,13 @@ describe("GitHubClient Pull Request status fetching", () => {
     expect(peakRequests).toBe(4);
   });
 
-  it("uses opinionated approvals during full Pull Request synchronization", async () => {
+  it("pins full-sync approval GraphQL requests to github.com when GH_HOST selects Enterprise", async () => {
+    vi.stubEnv("GH_HOST", "github.enterprise.example");
+    const graphqlArgs: string[][] = [];
     const runner: typeof runProcess = (_executable, args) => {
       if (args[0] === "auth") return Promise.resolve(jsonProcessResult({}));
       if (args[0] === "api") {
+        graphqlArgs.push([...args]);
         return Promise.resolve(
           jsonProcessResult(opinionatedReviewsPage(["APPROVED", "CHANGES_REQUESTED"])),
         );
@@ -253,6 +266,8 @@ describe("GitHubClient Pull Request status fetching", () => {
       state: "OPEN",
       approvalCount: 1,
     });
+    expect(graphqlArgs).toHaveLength(1);
+    expect(graphqlArgs[0]?.slice(0, 4)).toEqual(["api", "graphql", "--hostname", "github.com"]);
   });
 });
 

@@ -127,6 +127,8 @@ export class GitHubClient implements GitHubPort {
       const args = [
         "api",
         "graphql",
+        "--hostname",
+        "github.com",
         "-f",
         `query=${opinionatedReviewsQuery}`,
         "-f",

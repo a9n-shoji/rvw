@@ -157,7 +157,7 @@ gh pr view <PR> --json \
   baseRefName,baseRefOid,headRefName,headRefOid,\
   headRepository,headRepositoryOwner
 
-gh api graphql # Pull Request IDからlatestOpinionatedReviewsを全page取得
+gh api graphql --hostname github.com # Pull Request IDからlatestOpinionatedReviewsを全page取得
 ```
 
 Phase 1の新規登録は`github.com`のopen/draft PRを対象とする。保存済みPRのsync、refresh、
