@@ -153,10 +153,11 @@ GitHub CLIの既存認証を使用する。独自OAuthを持たない。
 
 ```bash
 gh pr view <PR> --json \
-  author,number,url,title,body,createdAt,updatedAt,state,isDraft,\
-  latestReviews,\
+  id,author,number,url,title,body,createdAt,updatedAt,state,isDraft,\
   baseRefName,baseRefOid,headRefName,headRefOid,\
   headRepository,headRepositoryOwner
+
+gh api graphql # Pull Request IDからlatestOpinionatedReviewsを全page取得
 ```
 
 Phase 1の新規登録は`github.com`のopen/draft PRを対象とする。保存済みPRのsync、refresh、
@@ -165,13 +166,13 @@ live確認、resetはClosed/Merged後もGitHub metadataを取得し、最後に�
 `createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
 ローカル登録日時で補わず`NULL`のまま表示し、次回の通常同期でだけ埋める。一覧表示を契機にGitHubへ
 一括問い合わせしない。利用者が一覧の一括更新buttonを押した場合だけ、保存済みPRのうち最後に成功した
-syncで`state=OPEN`または状態未取得のPRについて、`state`、`isDraft`、`latestReviews`をGitHubへ問い合わせ、
+syncで`state=OPEN`または状態未取得のPRについて、`state`、`isDraft`、`latestOpinionatedReviews`をGitHubへ問い合わせ、
 状態とApprove数をcacheする。
 Closed / Mergedは通常の一括更新対象に含めず、個別refresh、`pr sync`、resetで再取得した場合は現在のstateへ
 更新する。この操作はcommit、PR title/body、作成／更新日時を同期しない。個別PRの
 失敗は成功分の反映を妨げず、対象とerrorを一覧へ返す。GitHub上のDraftは独立stateではなく`state=OPEN`かつ`isDraft=true`なので、
-DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。`latestReviews`は
-reviewerごとの最新reviewとして扱い、`state=APPROVED`の件数をcached Approve数として保持する。既存DBで状態が
+DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。`latestOpinionatedReviews`は
+comment-only reviewを除いたreviewerごとの最新判断として扱い、全pageの`state=APPROVED`件数をcached Approve数として保持する。既存DBで状態が
 未取得の行は状態badgeを表示せず、Approve数が未取得の行はApprove badgeを表示しない。どちらも一括status更新または
 通常同期で取得した際に埋める。
 

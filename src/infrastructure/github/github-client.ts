@@ -33,6 +33,7 @@ export type GitHubPullRequestStatusResult =
 type ProcessRunner = typeof runProcess;
 
 const ghPullRequestSchema = z.object({
+  id: z.string().min(1),
   author: z.object({ login: z.string().min(1) }).nullable(),
   headRepository: z.object({ name: z.string().min(1) }).nullable(),
   headRepositoryOwner: z.object({ login: z.string().min(1) }).nullable(),
@@ -48,18 +49,40 @@ const ghPullRequestSchema = z.object({
   headRefName: z.string().min(1),
   headRefOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
   createdAt: z.string(),
-  latestReviews: z.array(z.object({ state: z.string() })),
 });
 
 const ghPullRequestStatusSchema = z.object({
+  id: z.string().min(1),
   state: z.enum(["OPEN", "CLOSED", "MERGED"]),
   isDraft: z.boolean(),
-  latestReviews: z.array(z.object({ state: z.string() })),
 });
 
-function approvalCount(latestReviews: Array<{ state: string }>): number {
-  return latestReviews.filter((review) => review.state === "APPROVED").length;
-}
+const ghOpinionatedReviewsSchema = z.object({
+  data: z.object({
+    node: z
+      .object({
+        latestOpinionatedReviews: z.object({
+          nodes: z.array(z.object({ state: z.string() })),
+          pageInfo: z.object({
+            hasNextPage: z.boolean(),
+            endCursor: z.string().nullable(),
+          }),
+        }),
+      })
+      .nullable(),
+  }),
+});
+
+const opinionatedReviewsQuery = `query PullRequestOpinionatedReviews($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on PullRequest {
+      latestOpinionatedReviews(first: 100, after: $after) {
+        nodes { state }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`;
 
 export function parsePullRequestUrl(url: string): {
   owner: string;
@@ -95,12 +118,79 @@ export class GitHubClient implements GitHubPort {
     }
   }
 
+  private async getApprovalCount(pullRequestId: string): Promise<number> {
+    let approvalCount = 0;
+    let after: string | null = null;
+    const seenCursors = new Set<string>();
+    let hasNextPage = true;
+    while (hasNextPage) {
+      const args = [
+        "api",
+        "graphql",
+        "-f",
+        `query=${opinionatedReviewsQuery}`,
+        "-f",
+        `id=${pullRequestId}`,
+      ];
+      if (after !== null) args.push("-f", `after=${after}`);
+      let output: string;
+      try {
+        const result = await this.processRunner("gh", args, { timeoutMs: 60_000 });
+        output = result.stdout.toString("utf8").trimEnd();
+      } catch (error) {
+        if (error instanceof RvwError && error.code === "PROCESS_FAILED") {
+          throw new RvwError(
+            "GITHUB_ERROR",
+            "Pull RequestのApprove数をGitHubから取得できませんでした。",
+            {
+              cause: error,
+              details: error.details,
+              suggestions: ["PRの閲覧権限とgh認証を確認してください。"],
+            },
+          );
+        }
+        throw error;
+      }
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(output);
+      } catch (error) {
+        throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request review応答が不正です。", {
+          cause: error,
+        });
+      }
+      const parsed = ghOpinionatedReviewsSchema.safeParse(decoded);
+      if (!parsed.success || parsed.data.data.node === null) {
+        throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request review応答が不正です。", {
+          details: parsed.success ? { pullRequestId } : parsed.error.flatten(),
+        });
+      }
+      const reviews = parsed.data.data.node.latestOpinionatedReviews;
+      approvalCount += reviews.nodes.filter((review) => review.state === "APPROVED").length;
+      hasNextPage = reviews.pageInfo.hasNextPage;
+      if (!hasNextPage) break;
+      const nextCursor = reviews.pageInfo.endCursor;
+      if (nextCursor === null || seenCursors.has(nextCursor)) {
+        throw new RvwError(
+          "GITHUB_ERROR",
+          "GitHub CLIのPull Request review pagination応答が不正です。",
+          {
+            details: { pullRequestId },
+          },
+        );
+      }
+      seenCursors.add(nextCursor);
+      after = nextCursor;
+    }
+    return approvalCount;
+  }
+
   private async getPullRequestStatus(reference: string): Promise<GitHubPullRequestStatus> {
     let output: string;
     try {
       const result = await this.processRunner(
         "gh",
-        ["pr", "view", reference, "--json", "state,isDraft,latestReviews"],
+        ["pr", "view", reference, "--json", "id,state,isDraft"],
         { timeoutMs: 60_000 },
       );
       output = result.stdout.toString("utf8").trimEnd();
@@ -131,7 +221,7 @@ export class GitHubClient implements GitHubPort {
     return {
       state: parsed.data.state,
       isDraft: parsed.data.isDraft,
-      approvalCount: approvalCount(parsed.data.latestReviews),
+      approvalCount: await this.getApprovalCount(parsed.data.id),
     };
   }
 
@@ -181,6 +271,7 @@ export class GitHubClient implements GitHubPort {
   ): Promise<GitHubPullRequest> {
     await this.assertAuthenticated();
     const fields = [
+      "id",
       "author",
       "number",
       "url",
@@ -196,14 +287,14 @@ export class GitHubClient implements GitHubPort {
       "headRefOid",
       "headRepository",
       "headRepositoryOwner",
-      "latestReviews",
     ].join(",");
     const args = ["pr", "view"];
     if (reference !== undefined && reference.length > 0) args.push(reference);
     args.push("--json", fields);
     let output: string;
     try {
-      output = await runText("gh", args, { cwd, timeoutMs: 60_000 });
+      const result = await this.processRunner("gh", args, { cwd, timeoutMs: 60_000 });
+      output = result.stdout.toString("utf8").trimEnd();
     } catch (error) {
       if (error instanceof RvwError && error.code === "PROCESS_FAILED") {
         throw new RvwError("GITHUB_ERROR", "Pull Request情報をGitHubから取得できませんでした。", {
@@ -246,7 +337,7 @@ export class GitHubClient implements GitHubPort {
       updatedAt: parsed.data.updatedAt,
       state: parsed.data.state,
       isDraft: parsed.data.isDraft,
-      approvalCount: approvalCount(parsed.data.latestReviews),
+      approvalCount: await this.getApprovalCount(parsed.data.id),
     };
   }
 

@@ -12,6 +12,34 @@ const attachmentUrl =
   "https://github.com/user-attachments/assets/37948111-1227-4cdb-a76d-dc8eb469ae5c";
 const pullRequestUrl = "https://github.com/acme/review-repo/pull/7";
 
+function jsonProcessResult(value: unknown) {
+  return {
+    stdout: Buffer.from(JSON.stringify(value)),
+    stderr: Buffer.alloc(0),
+    exitCode: 0,
+    stdoutTruncated: false,
+  };
+}
+
+function opinionatedReviewsPage(
+  states: string[],
+  pageInfo: { hasNextPage: boolean; endCursor: string | null } = {
+    hasNextPage: false,
+    endCursor: null,
+  },
+) {
+  return {
+    data: {
+      node: {
+        latestOpinionatedReviews: {
+          nodes: states.map((state) => ({ state })),
+          pageInfo,
+        },
+      },
+    },
+  };
+}
+
 describe("GitHubClient Pull Request status fetching", () => {
   it("does not check authentication when there are no status refresh candidates", async () => {
     let called = false;
@@ -24,31 +52,30 @@ describe("GitHubClient Pull Request status fetching", () => {
     expect(called).toBe(false);
   });
 
-  it("requests state, draft, and current approval metadata after one authentication check", async () => {
+  it("counts current opinionated approvals after one authentication check", async () => {
     const calls: Array<{ executable: string; args: readonly string[]; options: unknown }> = [];
     const runner: typeof runProcess = (executable, args, options = {}) => {
       calls.push({ executable, args, options });
-      const stdout =
-        args[0] === "pr"
-          ? JSON.stringify({
-              state: args[2] === pullRequestUrl ? "MERGED" : "OPEN",
-              isDraft: false,
-              latestReviews:
-                args[2] === pullRequestUrl
-                  ? [
-                      { state: "APPROVED", author: { login: "first-reviewer" } },
-                      { state: "APPROVED", author: { login: "second-reviewer" } },
-                      { state: "CHANGES_REQUESTED", author: { login: "third-reviewer" } },
-                    ]
-                  : [],
-            })
-          : "";
-      return Promise.resolve({
-        stdout: Buffer.from(stdout),
-        stderr: Buffer.alloc(0),
-        exitCode: 0,
-        stdoutTruncated: false,
-      });
+      if (args[0] === "pr") {
+        const first = args[2] === pullRequestUrl;
+        return Promise.resolve(
+          jsonProcessResult({
+            id: first ? "PR_first" : "PR_second",
+            state: first ? "MERGED" : "OPEN",
+            isDraft: false,
+          }),
+        );
+      }
+      if (args[0] === "api") {
+        return Promise.resolve(
+          jsonProcessResult(
+            args.includes("id=PR_first")
+              ? opinionatedReviewsPage(["APPROVED", "APPROVED", "CHANGES_REQUESTED"])
+              : opinionatedReviewsPage([]),
+          ),
+        );
+      }
+      return Promise.resolve(jsonProcessResult({}));
     };
 
     const secondPullRequestUrl = "https://github.com/acme/review-repo/pull/8";
@@ -64,23 +91,73 @@ describe("GitHubClient Pull Request status fetching", () => {
         value: { state: "OPEN", isDraft: false, approvalCount: 0 },
       },
     ]);
-    expect(calls).toEqual([
+    expect(calls[0]).toEqual({
+      executable: "gh",
+      args: ["auth", "status", "--hostname", "github.com"],
+      options: { allowExitCodes: [1] },
+    });
+    expect(calls.filter((call) => call.args[0] === "pr")).toEqual([
       {
         executable: "gh",
-        args: ["auth", "status", "--hostname", "github.com"],
-        options: { allowExitCodes: [1] },
-      },
-      {
-        executable: "gh",
-        args: ["pr", "view", pullRequestUrl, "--json", "state,isDraft,latestReviews"],
+        args: ["pr", "view", pullRequestUrl, "--json", "id,state,isDraft"],
         options: { timeoutMs: 60_000 },
       },
       {
         executable: "gh",
-        args: ["pr", "view", secondPullRequestUrl, "--json", "state,isDraft,latestReviews"],
+        args: ["pr", "view", secondPullRequestUrl, "--json", "id,state,isDraft"],
         options: { timeoutMs: 60_000 },
       },
     ]);
+    const graphqlCalls = calls.filter((call) => call.args[0] === "api");
+    expect(graphqlCalls).toHaveLength(2);
+    expect(graphqlCalls.map((call) => call.args)).toEqual(
+      expect.arrayContaining([
+        expect.arrayContaining(["api", "graphql", "id=PR_first"]),
+        expect.arrayContaining(["api", "graphql", "id=PR_second"]),
+      ]),
+    );
+    expect(
+      graphqlCalls.every((call) => call.args.join(" ").includes("latestOpinionatedReviews")),
+    ).toBe(true);
+    expect(graphqlCalls.map((call) => call.options)).toEqual([
+      { timeoutMs: 60_000 },
+      { timeoutMs: 60_000 },
+    ]);
+  });
+
+  it("paginates opinionated reviews instead of caching a partial approval count", async () => {
+    const graphqlArgs: string[][] = [];
+    const runner: typeof runProcess = (_executable, args) => {
+      if (args[0] === "auth") return Promise.resolve(jsonProcessResult({}));
+      if (args[0] === "pr") {
+        return Promise.resolve(
+          jsonProcessResult({ id: "PR_paginated", state: "OPEN", isDraft: false }),
+        );
+      }
+      graphqlArgs.push([...args]);
+      return Promise.resolve(
+        jsonProcessResult(
+          args.includes("after=cursor-1")
+            ? opinionatedReviewsPage(["APPROVED"])
+            : opinionatedReviewsPage(["APPROVED", "CHANGES_REQUESTED"], {
+                hasNextPage: true,
+                endCursor: "cursor-1",
+              }),
+        ),
+      );
+    };
+
+    await expect(
+      new GitHubClient(runner).getPullRequestStatuses([pullRequestUrl]),
+    ).resolves.toEqual([
+      {
+        status: "fulfilled",
+        value: { state: "OPEN", isDraft: false, approvalCount: 2 },
+      },
+    ]);
+    expect(graphqlArgs).toHaveLength(2);
+    expect(graphqlArgs[0]).not.toContain("after=cursor-1");
+    expect(graphqlArgs[1]).toContain("after=cursor-1");
   });
 
   it("limits concurrent Pull Request status requests to four", async () => {
@@ -98,12 +175,10 @@ describe("GitHubClient Pull Request status fetching", () => {
     });
     const runner: typeof runProcess = (_executable, args) => {
       if (args[0] === "auth") {
-        return Promise.resolve({
-          stdout: Buffer.alloc(0),
-          stderr: Buffer.alloc(0),
-          exitCode: 0,
-          stdoutTruncated: false,
-        });
+        return Promise.resolve(jsonProcessResult({}));
+      }
+      if (args[0] === "api") {
+        return Promise.resolve(jsonProcessResult(opinionatedReviewsPage([])));
       }
       const reference = args[2];
       if (!reference) return Promise.reject(new Error("missing Pull Request reference"));
@@ -115,14 +190,7 @@ describe("GitHubClient Pull Request status fetching", () => {
       return new Promise((resolve) => {
         pendingRequests.push(() => {
           activeRequests -= 1;
-          resolve({
-            stdout: Buffer.from(
-              JSON.stringify({ state: "OPEN", isDraft: false, latestReviews: [] }),
-            ),
-            stderr: Buffer.alloc(0),
-            exitCode: 0,
-            stdoutTruncated: false,
-          });
+          resolve(jsonProcessResult({ id: `PR_${reference}`, state: "OPEN", isDraft: false }));
         });
       });
     };
@@ -146,6 +214,45 @@ describe("GitHubClient Pull Request status fetching", () => {
     await expect(resultPromise).resolves.toHaveLength(5);
     expect(activeRequests).toBe(0);
     expect(peakRequests).toBe(4);
+  });
+
+  it("uses opinionated approvals during full Pull Request synchronization", async () => {
+    const runner: typeof runProcess = (_executable, args) => {
+      if (args[0] === "auth") return Promise.resolve(jsonProcessResult({}));
+      if (args[0] === "api") {
+        return Promise.resolve(
+          jsonProcessResult(opinionatedReviewsPage(["APPROVED", "CHANGES_REQUESTED"])),
+        );
+      }
+      return Promise.resolve(
+        jsonProcessResult({
+          id: "PR_full",
+          author: { login: "octocat" },
+          headRepository: { name: "review-repo" },
+          headRepositoryOwner: { login: "acme" },
+          number: 7,
+          url: pullRequestUrl,
+          title: "Review opinionated state",
+          body: "Body",
+          updatedAt: "2026-09-14T00:00:00Z",
+          state: "OPEN",
+          isDraft: false,
+          baseRefName: "main",
+          baseRefOid: "a".repeat(40),
+          headRefName: "feature",
+          headRefOid: "b".repeat(40),
+          createdAt: "2026-09-13T00:00:00Z",
+        }),
+      );
+    };
+
+    await expect(
+      new GitHubClient(runner).getPullRequest(pullRequestUrl, "/repo"),
+    ).resolves.toMatchObject({
+      url: pullRequestUrl,
+      state: "OPEN",
+      approvalCount: 1,
+    });
   });
 });
 

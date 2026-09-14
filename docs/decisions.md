@@ -3599,3 +3599,33 @@ zero.
 - Zero approvals and not-yet-synchronized legacy rows intentionally have the same absence of a badge.
 - The bulk status refresh retrieves one additional bounded GitHub field but preserves its existing
   candidate set and maximum concurrency of four.
+
+## 2026-09-14: Count the latest opinionated review instead of the latest review event
+
+### Problem
+
+GitHub exposes both `latestReviews` and `latestOpinionatedReviews`. The former returns each reviewer's
+latest review event, so a `COMMENTED` review submitted after an `APPROVED` review replaces the approval
+in that connection even though GitHub still considers the Pull Request approved. Counting
+`APPROVED` entries in `latestReviews` could therefore cache zero for a currently approved Pull Request.
+
+### Choice
+
+Resolve the Pull Request through `gh pr view` as before, request its node ID, and use authenticated
+`gh api graphql` calls to read every page of `latestOpinionatedReviews`. Count entries whose state is
+`APPROVED` and use that count for normal synchronization and explicit bulk status refresh. Reject a
+missing node, malformed response, or invalid pagination cursor instead of caching a partial count.
+
+This supersedes the `latestReviews` field choice in “Cache the current Pull Request approval count for
+the workspace index.” The nullable SQLite cache, synchronization triggers, bulk candidate set,
+maximum concurrency, and badge presentation remain unchanged.
+
+### Trade-offs
+
+- Each synchronized Pull Request requires at least one additional `gh api graphql` process, but this
+  preserves `gh pr view` reference resolution, including repository redirects, while using GitHub's
+  purpose-built current-opinion connection.
+- Pagination removes the previous implicit 100-reviewer ceiling at the cost of additional calls for
+  unusually large review sets.
+- Comment-only and pending reviews no longer erase a current approval from the cached count; dismissed
+  or superseded opinions continue to follow GitHub's own connection semantics.
