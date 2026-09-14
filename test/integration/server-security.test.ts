@@ -73,6 +73,56 @@ function registerPullRequest(
 }
 
 describe("local HTTP security", () => {
+  it("resolves a code reference placement through the local API", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const service = new RvwService(database, new GitClient(), github);
+    const placement = {
+      outdated: false as const,
+      range: { startLine: 8, endLine: 9 },
+      path: "src/renamed.ts",
+    };
+    const placeCodeReference = vi
+      .spyOn(service, "placeCodeReferenceAtCommit")
+      .mockResolvedValue(placement);
+    const app = createApp(service, {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const pullRequestId = "11111111-1111-4111-8111-111111111111";
+    const sourceOid = "a".repeat(40);
+    const destinationOid = "b".repeat(40);
+    const reference = {
+      id: "stable-range",
+      label: "Stable range",
+      path: "src/original.ts",
+      startLine: 7,
+      endLine: 8,
+      description: null,
+    };
+
+    const response = await app.request(
+      `http://127.0.0.1:4321/api/pull-requests/${pullRequestId}/code-reference-placement`,
+      {
+        method: "POST",
+        headers: {
+          host: "127.0.0.1:4321",
+          origin: "http://127.0.0.1:4321",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ sourceOid, destinationOid, reference }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, placement });
+    expect(placeCodeReference).toHaveBeenCalledWith(
+      pullRequestId,
+      sourceOid,
+      reference,
+      destinationOid,
+    );
+    database.close();
+  });
+
   it("preserves single-placement error semantics when a comment source commit is missing", async () => {
     const repository = createGitRepository("rvw-single-placement-");
     const headOid = git(repository, "rev-parse", "HEAD");

@@ -135,3 +135,9 @@ export const resolveCommentPlacementsSchema = z.object({
     .min(1)
     .max(4),
 });
+
+export const resolveCodeReferencePlacementSchema = z.object({
+  sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+  destinationOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
+  reference: codeReferenceInputSchema,
+});
