@@ -1,4 +1,9 @@
 import {
+  MarkdownCommentContainer,
+  MarkdownCommentContainerContext,
+  type RenderMarkdownCommentContainer,
+} from "./MarkdownCommentContainer.js";
+import {
   File,
   FileDiff,
   type DiffFileInput,
@@ -698,7 +703,7 @@ function renderRepositoryMarkdown({
   selectedRange: MarkdownSourceRange | null;
   navigationRange: MarkdownSourceRange | null;
   composerOpen: boolean;
-  markdownDiv: NonNullable<Components["div"]>;
+  markdownDiv: RenderMarkdownCommentContainer;
   sourceRef: DocumentRef;
   selectedOid: string;
   pullRequestId: string;
@@ -751,7 +756,7 @@ function renderRepositoryMarkdown({
       ]}
       remarkPlugins={pullRequestMarkdown ? [remarkGfm, remarkBreaks] : [remarkGfm]}
       components={{
-        div: markdownDiv,
+        div: MarkdownCommentContainer,
         table: PreviewMarkdownTable,
         h1: ({ children, node: _node, ...props }) => (
           <h1
@@ -940,7 +945,9 @@ function renderRepositoryMarkdown({
   );
   return (
     <RepositoryMermaidRenderContext.Provider value={mermaidContext}>
-      {markdown}
+      <MarkdownCommentContainerContext.Provider value={markdownDiv}>
+        {markdown}
+      </MarkdownCommentContainerContext.Provider>
     </RepositoryMermaidRenderContext.Provider>
   );
 }
@@ -1860,7 +1867,7 @@ export function DocumentViewer({
     [markdownComments],
   );
   const optimisticCommentId = optimisticComment?.comment.id;
-  const markdownDiv: NonNullable<Components["div"]> = useCallback(
+  const markdownDiv: RenderMarkdownCommentContainer = useCallback(
     ({ node, children, ...props }: ComponentPropsWithoutRef<"div"> & { node?: unknown }) => {
       const commentIds = markdownCommentAnchorIds(node);
       if (commentIds.length === 0) return <div {...props}>{children}</div>;
