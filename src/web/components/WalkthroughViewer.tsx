@@ -1,3 +1,8 @@
+import {
+  MarkdownCommentContainer,
+  MarkdownCommentContainerContext,
+  type RenderMarkdownCommentContainer,
+} from "./MarkdownCommentContainer.js";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Children,
@@ -572,7 +577,7 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
       ),
     [markdownPlacedComments],
   );
-  const markdownDiv: NonNullable<Components["div"]> = useCallback(
+  const markdownDiv: RenderMarkdownCommentContainer = useCallback(
     ({ node, children, ...props }: ComponentPropsWithoutRef<"div"> & { node?: unknown }) => {
       const commentIds = markdownCommentAnchorIds(node);
       if (commentIds.length === 0) return <div {...props}>{children}</div>;
@@ -635,56 +640,58 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
         draftScope,
       }}
     >
-      <article className="walkthrough-markdown">
-        <ReactMarkdown
-          rehypePlugins={[
-            rehypeRaw,
-            [rehypeSanitize, codeReferenceMarkdownSanitizeSchema],
-            [
-              rehypeRvwSourceMap,
-              {
-                annotations,
-                activeCommentId,
-                selectedRange,
-                composerOpen: selectionComposerOpen,
+      <MarkdownCommentContainerContext.Provider value={markdownDiv}>
+        <article className="walkthrough-markdown">
+          <ReactMarkdown
+            rehypePlugins={[
+              rehypeRaw,
+              [rehypeSanitize, codeReferenceMarkdownSanitizeSchema],
+              [
+                rehypeRvwSourceMap,
+                {
+                  annotations,
+                  activeCommentId,
+                  selectedRange,
+                  composerOpen: selectionComposerOpen,
+                },
+              ],
+            ]}
+            remarkPlugins={[remarkGfm]}
+            urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
+            components={{
+              div: MarkdownCommentContainer,
+              table: PreviewMarkdownTable,
+              a: ({ href, children, node: _node, ...props }) => {
+                const referenceId = codeReferenceIdFromHref(href);
+                const reference = referenceId ? references.get(referenceId) : undefined;
+                return reference ? (
+                  <CodeReferenceLink
+                    reference={reference}
+                    className="walkthrough-inline-reference"
+                    onOpen={onOpenReference}
+                  >
+                    {children}
+                  </CodeReferenceLink>
+                ) : (
+                  <a {...markdownSourceDataAttributes(_node)} {...props} href={href}>
+                    {children}
+                  </a>
+                );
               },
-            ],
-          ]}
-          remarkPlugins={[remarkGfm]}
-          urlTransform={(url) => (url.startsWith("rvw-ref:") ? url : defaultUrlTransform(url))}
-          components={{
-            div: markdownDiv,
-            table: PreviewMarkdownTable,
-            a: ({ href, children, node: _node, ...props }) => {
-              const referenceId = codeReferenceIdFromHref(href);
-              const reference = referenceId ? references.get(referenceId) : undefined;
-              return reference ? (
-                <CodeReferenceLink
-                  reference={reference}
-                  className="walkthrough-inline-reference"
-                  onOpen={onOpenReference}
-                >
-                  {children}
-                </CodeReferenceLink>
-              ) : (
-                <a {...markdownSourceDataAttributes(_node)} {...props} href={href}>
-                  {children}
-                </a>
-              );
-            },
-            img: ({ alt, title, node }) => (
-              <MarkdownImagePlaceholder
-                alt={alt}
-                title={title}
-                sourceAttributes={markdownSourceDataAttributes(node)}
-              />
-            ),
-            pre: WalkthroughMarkdownPre,
-          }}
-        >
-          {body}
-        </ReactMarkdown>
-      </article>
+              img: ({ alt, title, node }) => (
+                <MarkdownImagePlaceholder
+                  alt={alt}
+                  title={title}
+                  sourceAttributes={markdownSourceDataAttributes(node)}
+                />
+              ),
+              pre: WalkthroughMarkdownPre,
+            }}
+          >
+            {body}
+          </ReactMarkdown>
+        </article>
+      </MarkdownCommentContainerContext.Provider>
     </MermaidMarkdownRenderContext.Provider>
   );
 });
