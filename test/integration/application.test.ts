@@ -417,6 +417,40 @@ describe("RvwService commit workflow", () => {
     expect((await service.getResetPreview(opened.pullRequest.id)).counts.gitRefs).toBe(1);
   });
 
+  it("places a code reference at a selected commit only while its range remains unchanged", async () => {
+    const { repository, firstHead, service } = setup("rvw-code-reference-placement-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const shiftedHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nsecond\n",
+      "shift referenced line",
+    );
+    const reference = {
+      path: "src.txt",
+      startLine: 2,
+      endLine: 2,
+    };
+
+    await expect(
+      service.placeCodeReferenceAtCommit(opened.pullRequest.id, firstHead, reference, shiftedHead),
+    ).resolves.toEqual({
+      outdated: false,
+      range: { startLine: 3, endLine: 3 },
+      path: "src.txt",
+    });
+
+    const changedHead = commitFile(
+      repository,
+      "src.txt",
+      "inserted\nfirst\nchanged\n",
+      "change referenced line",
+    );
+    await expect(
+      service.placeCodeReferenceAtCommit(opened.pullRequest.id, firstHead, reference, changedHead),
+    ).resolves.toEqual({ outdated: true, range: null, path: "src.txt" });
+  });
+
   it("resolves 100 comment placements with request-scoped Git and document caches", async () => {
     const { repository, firstHead, fake, service } = setup("rvw-placement-batch-");
     const opened = await service.openPullRequest(undefined, repository);

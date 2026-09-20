@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   commentTargetSchema,
+  resolveCodeReferencePlacementSchema,
   resolveCommentPlacementsSchema,
   viewerReleaseSchema,
 } from "../../src/server/schemas.js";
@@ -52,6 +53,25 @@ describe("resolveCommentPlacementsSchema", () => {
       resolveCommentPlacementsSchema.safeParse({
         commentIds,
         destinations: [{ kind: "commit", oid: "a".repeat(40) }],
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("resolveCodeReferencePlacementSchema", () => {
+  it("accepts an exact source reference and destination commit", () => {
+    expect(
+      resolveCodeReferencePlacementSchema.safeParse({
+        sourceOid: "a".repeat(40),
+        destinationOid: "b".repeat(40),
+        reference: {
+          id: "stable-line",
+          label: "Stable line",
+          path: "src/fixture.ts",
+          startLine: 5,
+          endLine: 5,
+          description: null,
+        },
       }).success,
     ).toBe(true);
   });

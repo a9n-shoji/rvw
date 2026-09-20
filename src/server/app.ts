@@ -25,6 +25,7 @@ import {
   openPullRequestSchema,
   pullRequestListQuerySchema,
   replySchema,
+  resolveCodeReferencePlacementSchema,
   resolveCommentPlacementsSchema,
   resetSchema,
   structureDeleteSchema,
@@ -586,6 +587,19 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
         input.destinations,
         input.expectedPullRequestContentFingerprint,
       )),
+    });
+  });
+
+  app.post("/api/pull-requests/:pullRequestId/code-reference-placement", async (context) => {
+    const input = resolveCodeReferencePlacementSchema.parse(await context.req.json());
+    return context.json({
+      ok: true,
+      placement: await service.placeCodeReferenceAtCommit(
+        context.req.param("pullRequestId"),
+        input.sourceOid,
+        input.reference,
+        input.destinationOid,
+      ),
     });
   });
 

@@ -13,15 +13,15 @@ internalize at one time. Include the complexity inside a surface, the cost of jo
 cost of coupling hidden by a false decomposition. More Artifacts, fewer Artifacts, more coverage, and
 more polish are not quality by themselves.
 
-The target is an iterative loop of small, verifiable mental models: begin with a concrete question,
-inspect a small explanation, verify it in committed code, place the result among responsibilities and
-dependencies, and follow the next question back into source. The target is not a complete explanation
+The target is an iterative loop of small, verifiable mental models: understand the local situation, inspect one case or
+relationship, verify it in committed code, connect the result to its callers and consumers, and follow
+the next question back into source. A concrete question alone may still assume unfamiliar context. The target is not a complete explanation
 set, a substitute for code reading, or a route that guarantees review completion.
 
 Use this complexity budget as judgment, not a numeric hard limit:
 
 - Every Artifact needs one central question. The file map asks where the files that matter to this
-  change live, what each is responsible for, and which direct dependencies connect them. Reconsider an
+  change live, what each defines, reads, changes, or passes on, and which direct dependencies connect them. Reconsider an
   Artifact's scope when its question cannot be stated.
 - Do not put multiple independent behaviors into one Artifact.
 - Do not repeat the same question and explanation once as a Walkthrough and again as a Structure. The
@@ -49,23 +49,23 @@ read-only composition it remains an explicitly unproduced brief. In an authorize
 valid existing same-subject map may satisfy the requirement; otherwise update it in place or publish a
 new map through `rvw-structure`.
 
-The file map answers: "Which repository files carry the responsibilities needed to understand this
-change, and what concrete, source-verifiable dependencies connect them?" It is neither an architecture
+The file map answers: "Which files define or process the data in this change, and what does another file
+call, read, register, or test?" It is neither an architecture
 overview nor a list of every changed file. Its boundary is the resulting PR software, so investigate
 unchanged callers, consumers, contract or type owners, state owners, wiring, settings, tests,
-migrations, and documentation when they materially locate responsibility or establish a relationship.
+migrations, and documentation when they materially locate that processing or establish a relationship.
 Do not include any of those categories mechanically, and do not turn the result into a repository-wide
 import graph.
 
 Use one real file per candidate Node and one candidate Node per path. A candidate Node has a file-level
-source anchor and a short statement of that file's responsibility for understanding this PR. If a file
-mixes responsibilities, say so rather than inventing a cleaner module boundary. Candidate Edges use a
+source anchor and a short account of its relevant definitions and processing. If a file both checks input
+and saves state, say so; do not replace these facts with a label such as “validation layer.” Candidate Edges use a
 short concrete predicate and identify the source evidence the producer must verify. An import proves an
 import, not a runtime call, state owner, execution order, or data flow. Distinguish type use, runtime
 use, registration, callback invocation, configuration, and test verification.
 
 The composer proposes these as claims, not facts. `rvw-structure` independently verifies the final
-Node/path one-to-one rule, file-level anchors, responsibilities, direct relations, Edge evidence,
+Node/path one-to-one rule, file-level anchors, described processing, direct relations, Edge evidence,
 `sourceOid`, origin, and connectedness. Do not introduce a new Node kind, notation, public field, or
 Artifact type to mark the role.
 
@@ -134,9 +134,52 @@ required sections.
 Also identify important coupling between those difficulties. In complex changes, a boundary may be
 more important than either side in isolation.
 
-For a PR-wide composition, keep two analyses distinct: the physical file responsibility/dependency
-areas that the required map must locate, and the behavior, state, interaction, or contract questions
+For a PR-wide composition, keep two analyses distinct: the files and direct dependencies that locate
+the relevant definitions and processing, and the behavior, state, interaction, or contract questions
 that may deserve a Walkthrough or normal Structure. Do not treat the file map as answering both.
+
+## Design the entry and the case before splitting
+
+Assume the reader understands programming and the stack, but has not read the PR body, a file map,
+another Artifact, or local documentation. Investigate missing context in source and available PR
+information first. Do not invent business intent when neither supplies it. The recommended first
+surface must stand on its own: before its first code link, the reader should be able to say what
+mechanism this is, what situation is being considered, and why that code is worth checking. Supply
+only the context needed for that check; introduce internal terms when first needed, not in a long
+glossary. For a Structure, use its existing scope, thesis when useful, and entry descriptions; do not
+turn the map into an ordered story. For direct code, give a short situation and verification question.
+
+For behavior or data-flow subjects, choose one operation, input, record, event, or concrete failure to
+follow. Establish its starting conditions and the outcome that is enough to understand the question.
+Investigate how that case reaches each important stop: what is received or read, which condition or
+transformation matters, what state or output changes, and how the next consumer obtains it. The same
+case may become a request, a stored record, then a later read; preserve that correspondence rather than
+requiring one object identity. Follow relevant events, jobs, persistence, re-fetches, or callbacks,
+including unchanged code. Stop at a meaningful endpoint; a complete UI-to-database-to-UI tour is not a
+requirement. A list of controller, service, and storage descriptions does not establish this chain.
+
+Treat an important variant as a changed condition of the case: identify the common prefix, divergence,
+skipped or replacement effect, and rejoin or termination. The main case can be a conflict or failure;
+there is no success-first rule. Keep only variants that change the model. Tie a test to the case or
+branch it asserts, not to a separate testing tour.
+
+Do not equate topic categories with independently useful surfaces. If async handling and cleanup are
+needed to explain where this one request ends, splitting them adds reconstruction work. Conversely,
+independent questions need not share a large Walkthrough. When splitting, carry consistent names and
+assumptions, identify shared context in the briefs, and give each surface the short local footing it
+needs. Do not duplicate a long introduction or assume the reader studied the shared file map.
+
+Reading order is not execution order. A representative trace is not an always-valid schedule. Keep
+concurrency, waiting, retries, and unresolved ordering visible. Label illustrative values as examples,
+not observed IDs or test results. Distinguish source evidence, a test assertion, an executed result,
+inference, and unknowns. Proposed cases and handoffs remain producer verification candidates.
+
+Explain with concrete actions and data, not abstract module labels. For example, “reads the selected
+items, rejects an ineligible status, then saves the updated status” gives the reader something to
+verify. A design recommendation needs a concrete change scenario: which callers or consumers change,
+which check would be duplicated, or which data could disagree. Defer the recommendation if that
+support is missing. Once the case is established, summarize the common rule or dependency it supports;
+there is no need to paraphrase every line of code.
 
 ## Form bounded understanding units only when useful
 
@@ -158,7 +201,7 @@ misleading:
 - writers of the same state are distributed across boundaries;
 - lifecycle and network behavior are inseparable;
 - multiple sources of truth update each other;
-- cleanup responsibility crosses components; or
+- one component starts work that another must cancel or release; or
 - understanding one behavior would require several Artifacts to remain open at the same time.
 
 Treat difficulty of decomposition as a meaningful property of the implementation. Do not create a
@@ -174,7 +217,7 @@ explanation into one overloaded Artifact.
 
 ### File-map Structure
 
-Use the required file-map Structure to locate physical implementation responsibility and direct
+Use the required file-map Structure to locate processing and definitions in physical files and their direct
 file-to-file dependencies for a bounded PR change area. Its Nodes are files, not functions, concepts,
 subsystems, or the Pull Request. It does not replace a normal Structure whose independently useful
 question concerns state ownership, contracts, or side effects within or across those files.
@@ -197,11 +240,10 @@ independently useful ownership maps or every concept in the Pull Request.
 
 ### Normal behavior Structure
 
-Choose a Structure when the reviewer needs to explore a bounded behavior through responsibilities,
-ownership, dependencies, contracts, or side effects from a factual code origin. It may contain factual
+Choose a Structure when the reviewer needs to explore which code reads or writes state, consumes a
+contract, or triggers side effects from a factual code origin. It may contain factual
 direction and may use an authorial thesis, attention start, optional connected exact-relation primary
-backbone of at most 12 derived Nodes and 16 Edges, and stable named comprehension Regions with responsibility
-summaries and disjoint membership to shape its canonical spatial overview. Presentation guides attention
+backbone of at most 12 derived Nodes and 16 Edges, and stable named comprehension Regions with summaries of the processing or definitions they connect and disjoint membership to shape its canonical spatial overview. Presentation guides attention
 and a new Viewer session's initial focus; it does not alter factual
 direction or turn the Structure into a reading sequence. Do not use it for a sequence whose meaning
 depends on prose between stops, route transitions, or a required ending.
@@ -229,7 +271,7 @@ Walkthrough, a normal Structure, or code.
 Use these shape checks as counterexamples, not a template or required scenario list:
 
 - A linear request → service → repository route is a Walkthrough only when causal transitions or the
-  ending carry the meaning; use a Structure when the question is instead responsibility or dependency
+  ending carry the meaning; use a Structure when the question is instead which callers use a contract or which code changes shared state
   around the entrypoint.
 - A hub/fan-out or convergence is usually a Structure when simultaneous branches and their joins are
   the useful shape. It can have a star or converging backbone, Regions, or only a start; do not invent a
@@ -254,7 +296,11 @@ it as a new CLI schema, persist it, publish it, or imply that rvw understands it
 Use a flexible note, not a public form. Every brief identifies its Artifact role, central question,
 scope and exclusions, claims to verify, shared facts and terminology, and the explanation another
 surface owns and should not be duplicated. The examples below are prompts rather than a CLI schema; omit
-irrelevant optional detail and add subject-specific context when it helps enforce the boundary. Keep
+irrelevant optional detail and add subject-specific context when it helps enforce the boundary. Carry the reader assumptions and missing entry context into the producer handoff, rather than
+leaving them in the composer’s private analysis. For a behavioral subject also carry the case, starting
+conditions, indispensable handoffs, intended endpoint, and important conditions to vary. Omit these
+case notes for a local or relationship question when they add no explanatory value. They are not new
+fields in a published Artifact or a requirement to print a form. Keep
 `mustEstablish` limited to candidate claims needed for the central review question rather than using it
 as a coverage checklist for the Pull Request.
 
@@ -263,7 +309,7 @@ Separate two kinds of input in every brief:
 - **Authoring authority:** the Artifact role, subject, review question, purpose or behavior boundary, scope,
   inclusions, exclusions, emphasis, and requested spatial presentation decide what the producer
   investigates, how the Artifact is bounded, and how verified claims should first be presented.
-- **Claims to verify:** `mustEstablish`, a suggested origin, relationship, invariant, and any other
+- **Claims to verify:** `mustEstablish`, a suggested origin, relationship, invariant, proposed case conditions or handoffs, and any other
   assertion about the implementation are candidates the producer must independently verify in
   committed source, tests, or source-controlled contracts before presenting them as facts.
 - **Composition coordination:** pass the source-supported facts and terminology established so far, plus
@@ -294,6 +340,9 @@ reviewQuestion: the question this path helps the reviewer answer
 purpose: why an ordered path reduces comprehension cost
 scope.include: facts and paths needed for that question
 scope.exclude: adjacent concerns the producer must not absorb
+readerContext: known stack concepts, unfamiliar local terms, and the situation to establish at the entry
+case: chosen input or event, starting conditions, essential handoffs to verify, and meaningful endpoint
+variants: important condition changes and proposed divergence or rejoin points to verify
 mustEstablish: candidate claims the producer must independently verify and ground in source
 diagramQuestion: optional relationship, state, ordering, interaction, or branch question that a diagram could make easier to answer
 diagramCandidate: optional promising diagram family, never a requirement or an assertion that its participants, states, transitions, branches, or ordering exist
@@ -308,11 +357,11 @@ A file-map Structure brief should make these decisions explicit when relevant:
 ```text
 role: structure:file-map
 subject: one bounded PR change area and its physical implementation location
-reviewQuestion: which files carry the responsibilities needed to understand this area and what direct dependencies connect them
+reviewQuestion: which files define or process the relevant data and what another file calls, reads, registers, or tests
 originCandidate: a real file from which source verification of this limited relation set could begin, not an assumed common runtime entrypoint
-scope.include: changed and unchanged files materially needed to locate responsibility, ownership, contracts, wiring, configuration, or verification
+scope.include: changed and unchanged files materially needed to locate reads, writes, contracts, wiring, configuration, or verification
 scope.exclude: incidental changed files, repository-wide inventory, independent areas, and details left to direct code
-mustEstablish: candidate file responsibilities, one-file-per-Node paths, direct Edge predicates, evidence, boundaries, and source-coordinate claims for independent verification
+mustEstablish: candidate descriptions of file contents, one-file-per-Node paths, direct Edge predicates, evidence, boundaries, and source-coordinate claims for independent verification
 shared: source-supported facts and terminology to keep consistent
 doNotDuplicate: behavior, sequence, state, or contract explanation another surface owns
 presentation: optional semantic presentation request; never a fake backbone or Region added to make the map look complete
@@ -327,7 +376,7 @@ subject: one bounded behavior
 reviewQuestion: the relationship question the map helps answer
 behavior: the concrete PR-relevant behavior being verified
 originCandidate: possible code entrypoint for the producer to verify rather than assume
-scope.include: responsibilities and relations needed for the question
+scope.include: reads, writes, calls, definitions, and relations needed for the question
 scope.exclude: adjacent behaviors or inventories to omit
 mustEstablish: candidate node, relation, and boundary claims to verify from source evidence
 shared: source-supported facts and terminology to keep consistent
@@ -339,8 +388,8 @@ existingArtifact: optional explicitly supplied URI for the same subject
 
 For a new Structure, describe presentation semantically rather than drafting its protocol payload.
 State a meaningful thesis and semantic attention-start concept; describe the verified relationship
-claims that should be considered for one compact backbone, and each comprehension chunk's meaning,
-responsibility, and contribution to the thesis. The composer does not choose a new `startNodeId`,
+claims that should be considered for one compact backbone, and the processing or definitions each chunk connects
+and how they support the thesis. The composer does not choose a new `startNodeId`,
 `edgeIds`, `nodeIds`, or Region `id`. The Structure producer owns graph identity: after building and
 verifying the graph, it resolves the attention-start concept to one current Node ID, backbone claims to
 exact current Edge IDs, and accepted chunk concepts to exact Node membership. It assigns each new Region
@@ -374,7 +423,8 @@ the scope or manufacturing a connection.
 
 ## Re-evaluate the whole composition
 
-Apply these checks after drafting and again after producer feedback.
+Apply these checks to the proposed briefs and any available bodies before finalizing, and again after
+producer feedback. A brief check does not establish the readability of an unproduced explanation.
 
 These checks may discard or rescope an unpublished candidate. They never authorize deletion of a
 published Artifact, including one created during the current composition; use the matching producer's
@@ -390,6 +440,33 @@ The required file map does not force this sequence to start with the map. Produc
 verified answer most constrains the remaining briefs, and never present production order as human
 reading order.
 
+### Entry, continuity, and transfer
+
+For a recommendation-only surface with no body, inspect the brief: does it carry the reader's needed
+entry context and, for a behavioral path, the chosen case, initial conditions, essential connections,
+endpoint, and useful condition changes? Preserve these in the proposed handoff and report body
+readability as unverified. Do not generate a content candidate merely to satisfy this check. This is
+also the completion path for a source-only recommendation when transport is unavailable: report the
+transport diagnostic and that existing Artifacts were not evaluated, without trying to read them.
+
+For a produced body or an existing body readable under the preflight and contextual-read rules,
+inspect the actual explanation, not just the composition plan. Read its opening without other
+Artifacts: can a newcomer explain the situation and the first code check? At each important handoff,
+identify what the same case has become, what changed, and how it reaches the next stop. Check whether
+changing one condition lets the reader name the likely divergence and code to inspect; a generic
+“explore errors next” does not do this. If needed facts appear only in the brief, repair an unpublished
+draft within the authorized production scope. For existing Artifacts, report the gap and recommend a
+correction unless the user has authorized that update; inspection itself never grants update authority.
+Compare alternative wording at similar length where useful: more prose is not evidence of a better
+connection. Contract wording, valid anchors, diagrams, and a tidy brief do not measure understanding.
+
+For a separate evaluation of generation quality, use the same target commit and reader assumptions for old and new instructions, retain
+at least one complete content candidate, and separate first-reading assessment from source checking.
+A fresh reader context should see only the candidate and stated prior knowledge before source audit.
+Record whether judgments came from an Agent or a human; neither schema checks nor Agent judgments
+establish measured human comprehension. Keep content-only evaluation distinct from publication and
+native-host handoff acceptance.
+
 ### Detailed overlap
 
 Compare the central questions and explanations across Artifacts. Shared paths and source anchors are not
@@ -399,7 +476,7 @@ lower comprehension cost. Keep only the minimum orientation needed to reveal a c
 
 ### Terminology consistency
 
-Use the same name for the same state, boundary, responsibility, and concept across all Artifacts and
+Use the same name for the same state, operation, and concept across all Artifacts and
 the final response. When the explanatory name differs from the code identifier, state the mapping.
 Avoid making the reviewer remember a separate vocabulary for every surface.
 
@@ -435,7 +512,7 @@ work affects the decision, have `rvw-walkthrough` page through `walkthrough list
 and `nextOffset` for exhaustive discovery, and read each plausible candidate with `walkthrough get`.
 Never choose a same-subject update by title alone. For the required file map, use `structure list` to
 inspect candidate summaries, then have `rvw-structure` read a plausible map and independently verify its
-subject, source coordinate, file responsibilities, relations, and boundary before treating it as
+subject, source coordinate, file contents, relations, and boundary before treating it as
 satisfying the current composition. Reuse a valid current Artifact. In an authorized production run,
 update a stale same-subject Artifact in place; publish a new one only when no verified candidate fits or
 the subject is genuinely different. List and get are separate reads rather than a fixed snapshot, and

@@ -5,7 +5,15 @@ and chooses diagrams by the question rather than by a diagram-count target. It s
 source, Mermaid syntax/rendering, binding, producer-generation, and qualitative claims. None of these
 examples was published into an rvw review environment.
 
-## Current instruction revision (2026-09-08)
+## Entry and continuity comparison (2026-09-20)
+
+The [composition evaluation](review-composition-evaluation.md#entry-and-continuous-case-evaluation-2026-09-20)
+retains complete old/new content candidates for the same historical runtime change, independent
+artifact-only first readings, instruction hashes, and separate source/schema/render checks. The
+examples below remain outputs of their recorded 2026-09-08 instructions; they were not regenerated or
+relabeled as current output for the entry-and-continuity revision.
+
+## Recorded instruction revision (2026-09-08)
 
 The implementation baseline was `2a2d9dcd4da7b227db4ebc71f297a1e45ba86787`; the evaluated
 authoring instruction content was:

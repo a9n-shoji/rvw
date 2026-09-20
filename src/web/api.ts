@@ -219,6 +219,10 @@ export interface PlacementResponse {
   placement: CommentPlacement;
 }
 
+export interface CodeReferencePlacementResponse {
+  placement: CommentPlacement;
+}
+
 export type CommentPlacementBatchResponse = CommentPlacementBatchResult;
 
 export async function resolveCommentPlacements(

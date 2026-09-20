@@ -153,10 +153,11 @@ GitHub CLIの既存認証を使用する。独自OAuthを持たない。
 
 ```bash
 gh pr view <PR> --json \
-  author,number,url,title,body,createdAt,updatedAt,state,isDraft,\
-  latestReviews,\
+  id,author,number,url,title,body,createdAt,updatedAt,state,isDraft,\
   baseRefName,baseRefOid,headRefName,headRefOid,\
   headRepository,headRepositoryOwner
+
+gh api graphql --hostname github.com # Pull Request IDからlatestOpinionatedReviewsを全page取得
 ```
 
 Phase 1の新規登録は`github.com`のopen/draft PRを対象とする。保存済みPRのsync、refresh、
@@ -165,13 +166,13 @@ live確認、resetはClosed/Merged後もGitHub metadataを取得し、最後に�
 `createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
 ローカル登録日時で補わず`NULL`のまま表示し、次回の通常同期でだけ埋める。一覧表示を契機にGitHubへ
 一括問い合わせしない。利用者が一覧の一括更新buttonを押した場合だけ、保存済みPRのうち最後に成功した
-syncで`state=OPEN`または状態未取得のPRについて、`state`、`isDraft`、`latestReviews`をGitHubへ問い合わせ、
+syncで`state=OPEN`または状態未取得のPRについて、`state`、`isDraft`、`latestOpinionatedReviews`をGitHubへ問い合わせ、
 状態とApprove数をcacheする。
 Closed / Mergedは通常の一括更新対象に含めず、個別refresh、`pr sync`、resetで再取得した場合は現在のstateへ
 更新する。この操作はcommit、PR title/body、作成／更新日時を同期しない。個別PRの
 失敗は成功分の反映を妨げず、対象とerrorを一覧へ返す。GitHub上のDraftは独立stateではなく`state=OPEN`かつ`isDraft=true`なので、
-DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。`latestReviews`は
-reviewerごとの最新reviewとして扱い、`state=APPROVED`の件数をcached Approve数として保持する。既存DBで状態が
+DBでも別々に保持し、一覧ではOpen / Draft / Closed / Mergedの一つへ合成して表示する。`latestOpinionatedReviews`は
+comment-only reviewを除いたreviewerごとの最新判断として扱い、全pageの`state=APPROVED`件数をcached Approve数として保持する。既存DBで状態が
 未取得の行は状態badgeを表示せず、Approve数が未取得の行はApprove badgeを表示しない。どちらも一括status更新または
 通常同期で取得した際に埋める。
 
@@ -326,7 +327,7 @@ empty fileは従来どおり明示的に扱う。
   開く。操作元やfocused paneは文書を開く先へ影響させない。tab clickはそのtabが属するpaneをactivateし、
   同一Markdown内の見出しlinkは表示中pane内を移動する。新しい右paneを初めて作る場合も、code
   referenceの選択範囲を描画完了後にviewport中央へfocusする。
-- Walkthrough reference、repository Markdownの相対link、comment targetを開いても、repository全体の
+- Walkthrough reference、repository Markdownの相対link、comment target、comment内code referenceを開いても、repository全体の
   commit範囲、全文／変更、stacked / split、tree modeを変更しない。Walkthrough referenceはclick時に
   `sourceOid + path + line range`から最新`latestHeadOid`へ直接解決し、成功すれば最新commit、失敗すれば
   `sourceOid`を対象にする。全文では対象commitのfull fileを表示する。latest解決後の変更表示は
@@ -334,8 +335,12 @@ empty fileは従来どおり明示的に扱う。
   `effectiveOldOid → selectedOid`を使う。global比較がhistorical commitで終わる場合はlatestで解決したpathと
   lineを別revisionへ適用せず、そのpaneだけlatest全文を表示して理由を明示する。anchor fallbackだけは
   参照時点を明示したうえでsource commitの比較を使う。現在の全文／変更とstacked / split設定は切り替えず、
-  global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。repository Markdownの相対linkとcomment targetはglobal表示が変更でも、
-  そのpaneだけretained exact sourceの全文を表示する。Walkthrough referenceのfallbackでは
+  global比較でfileに差分がなければ通常の`差分なし · 全文表示`を使う。comment targetとcomment内code
+  referenceはclick時にexact sourceからglobalな`selectedOid`へ配置し、同一pathまたは明確なrename先があり、
+  file全体または変更されていない一意な連続rangeとして配置できれば、対象paneへglobal比較のdocumentを直接開く。
+  削除、内容変更、曖昧な対応、配置取得失敗ではretained exact sourceへfallbackする。repository Markdownの
+  通常の相対linkはglobal表示が変更でも、そのpaneだけretained exact sourceの全文を表示する。配置取得中に
+  globalな`selectedOid`または対象paneのnavigationが変わった場合は、古い配置結果を適用しない。Walkthrough referenceのfallbackでは
   `参照時点のコード · <short SHA>`と最新で対応位置を確実に特定できなかったことを明示し、同一pathまたは明確なrename先が
   存在するときだけ、line対応を保証しない`最新のファイルを見る`を提供する。このactionはglobal比較の
   `selectedOid`がtargetのlatest OIDと一致する場合だけ変更表示を使い、historical範囲ではtarget latestの
@@ -1192,8 +1197,9 @@ comment code referenceはWalkthroughと同じ`CodeReference` schema、ID/path/li
 buttonを再利用する。各postは一つの`related_commit_oid`と0〜200件のreferenceを所有し、referenceが
 ある場合は関連commitを必須とする。全宣言はそのpost本文のMarkdown linkから使われ、全linkは宣言済み
 IDへ一致しなければならない。referenceはthread内で継承せず、Mermaid bindingにも使わない。通常clickは
-related commitのexact sourceを左paneへ、modifier clickは右paneへ開き、globalなcommit範囲を
-変えない。作成・reply・edit成功前に関連commitをimmutable refで保持する。
+globalな`selectedOid`へ安全に配置できれば現在の比較documentを左paneへ、modifier clickは右paneへ開く。
+配置できなければrelated commitのexact sourceへfallbackし、いずれもglobalなcommit範囲を変えない。
+作成・reply・edit成功前に関連commitをimmutable refで保持する。
 同梱Skillは、finding、調査結果、実装内容、test結果について具体的なcode上のclaimを投稿するとき、
 reviewerがexact evidenceを開く価値があればtyped referenceを既定で付ける。comment target自身が同じ
 exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価値がない限り重複させない。code evidenceが
@@ -1202,8 +1208,9 @@ exact sourceを既に開ける場合は、別のlabel付きrangeにnavigation価
 repository内linkと画像の基準commitは、postの`related_commit_oid`、repository targetの`source_oid`、
 Walkthrough targetのcurrent `sourceOid`、`comments.created_head_oid`の順に選ぶ。repository targetでは
 target fileのdirectory、それ以外ではrepository rootを相対pathの起点にする。通常clickは左pane、
-`Cmd` / `Ctrl`+clickは操作元にかかわらず右paneへexact source全文を開き、
-globalなcommit範囲や表示modeを変更しない。replyは任意の`related_commit_oid`を持てる。
+`Cmd` / `Ctrl`+clickは操作元にかかわらず右paneへ開く。通常のrepository内linkはexact source全文、typedな
+comment code referenceは前述のglobal配置またはexact source fallbackを使い、globalなcommit範囲や表示modeを
+変更しない。replyは任意の`related_commit_oid`を持てる。
 Agent batch syncのreplyは同期後のGitHub headへ自動的に関連付ける。
 人間はviewerから、明示的に依頼された外部AgentはCLIから、同じtarget validationを通して新しいroot
 commentを作成できる。Agent作成commentも通常の未解決threadであり、専用stateや自動resolveを持たない。
@@ -1274,9 +1281,9 @@ outdatedまたはfailureなら仮の行表示を残さない。
   Walkthrough summaryのtitleを導出する。titleだけの更新でもpoll後のsidebar表示をcurrent値へ揃える。
 - Diff内のresolved threadは既定で一行に折りたたみ、展開すればpost、reply欄、reopen actionを表示する。
 - 参照copy、post編集、削除は各postの`...` menuへ格納し、resolve/reopenはthread actionとする。
-- commentからexact source documentを開ける。force-push前のrepository sourceも保持refから開く。
-  このnavigationはglobalなreview scopeを変更せず、対象paneだけcomment時点の全文を表示する。参照元commitが
-  対象commitと異なる場合はshort SHAを表示する。
+- comment targetはclick時にglobalな`selectedOid`へ安全に配置できれば現在の比較documentを開き、配置できない
+  場合はexact source documentへfallbackする。force-push前のrepository sourceも保持refから開く。このnavigationは
+  globalなreview scopeを変更しない。exact sourceへfallbackし、参照元commitが対象commitと異なる場合はshort SHAを表示する。
 - 一件、表示中の一覧すべて、複数選択したcommentの`rvw://comment/<uuid>`をコピーできる。
 - copy textはSkill利用を依頼する短い文とURIだけで構成し、comment本文や巨大promptを埋め込まない。
 - どのcomment集合をいつcopyしたかは永続化しない。
@@ -2346,7 +2353,7 @@ boundedなlocal subjectのcompositionではArtifact 0件を引き続き許容す
 
 このfile-map constraintの中でも、最少Artifact数ではなく、各surface内部の複雑さ、
 surface間のjoin、分割で隠れるcouplingを含むreviewerのtotal comprehension costを最小化する。各単位についてordered lifecycle / causalityなら
-Walkthrough、responsibility / ownership / dependency / contractなら通常Structure、局所的な条件や実装詳細なら
+Walkthrough、どのcodeが状態を読み書きしcontractを利用するかという関係なら通常Structure、局所的な条件や実装詳細なら
 直接code readingを選ぶ。意味のあるbehavior changeには原則Walkthroughを用意する一方、local changeでは直接code
 readingだけを組み合わせられ、通常Structureはfile mapと別の関係質問に独立した価値がある場合だけ含める。
 Walkthroughと通常Structureを常にpairにしない。file mapはoverview予習ではなく、どの入口から読んでも途中で
@@ -2354,10 +2361,25 @@ physical implementationへ位置付け直せる土台である。Overview / Stat
 単位ごとのArtifact作成、完全な説明set、file-map-first invocationまたはreading orderを要求せず、最小の外部表現で
 mental-model loadを下げ、重要なcouplingを隠さないことをqualityとする。
 
+最初に勧める入口は、一般的なprogrammingとstackを知るがPR固有の背景・用語・状態modelを知らない読者が、
+PR本文、file map、他Artifactを読まずに開始できるものとする。最初のcode参照を開く前に、対象の仕組み、
+想定状況、そのcodeで確かめることが分かる局所的な文脈を補い、巨大な導入や用語集は要求しない。
+behavior / data flowが中心なら、構成段階で追う一件、初期条件、必要な受け渡し、意味のある終了点を決める。
+入力から別の型、保存、後続の読取りへ変わっても同じ一件との対応を説明し、非同期の待機・競合・再試行を
+説明の都合で直列化しない。例外や別patternは、その一件の条件を変えた場合の分岐点、変わる結果、合流または
+終了として扱う。失敗や競合を中心のcaseにしてよく、全分岐やUIからDBへの完全経路は要求しない。
+state / async / error / testという話題別の分類だけでArtifactを分けず、同じ一件を再接続する負担を判断する。
+局所的変更・機械的変更・関係中心の問いは、短い比較、Structure、直接codeを使い、実行物語を強制しない。
+file mapでは各fileの処理・定義と、別fileが何を呼ぶ・読む・登録するかをsourceで確認し、抽象labelだけで
+説明を終えない。設計判断にも、どの呼出元・利用先が変わるか、どの判定が重複するか等の具体的根拠を求める。
+
 composerは各producerへ渡す前に、subject、review question、scopeのinclusion / exclusion、Structureならfile mapか
 通常Structureかというauthoring role、他Artifactと共有すべきfact / terminology、重複させないquestion / explanation、
 `mustEstablish`、emphasisを持つ内部Artifact briefを用意する。Walkthrough briefは図が理解を助ける中心的な問いも
 示し、必要ならdiagram種別候補を渡せるが、未検証のstate、order、concurrency、transitionを強制しない。
+briefには必要な読者前提、入口で補う文脈、一件と条件、切れない接続、終了点、変える重要条件も引き継ぐ。
+固定formや公開fieldにはせず、関係中心の問いへ不要なcase項目を埋めない。複数Artifactの用語と前提は揃え、
+各入口には短い局所文脈を置く。composerのcase条件と経路もproducerが独立に検証するcandidate claimである。
 このうちsubject、question、purpose / behavior boundary、scope、inclusion /
 exclusion、emphasisはauthoring boundaryのauthorityであり、`mustEstablish`、suggested origin / relationship /
 invariantその他の実装assertionはproducerがcommit済みsourceから独立に検証するcandidate claimである。composerの事前
@@ -2370,6 +2392,11 @@ mandatoryなreview planや完了保証にはせず、通常のAgent responseで�
 永続Artifactにしない。
 
 composerへのassess / recommend / plan / audit依頼はread-onlyで、未productionのbriefとdirect-code entrypointだけを返す。
+本文のない提案はbriefに必要な入口の文脈と、振る舞いを追う場合の一件・初期条件・接続・終了点・条件変更が
+引き継がれているかを確認し、本文の読みやすさは未検証と報告して終了できる。検査のためだけの内容候補生成は要求しない。
+transport unavailableでもsourceのみからこの提案を返せるが、diagnosticと既存Artifact未評価を報告し、Artifactは読まない。
+制作済み本文やpreflightとcontextual-read契約に従って読める既存本文があれば実物を検査する。既存本文の問題発見は
+update許可ではなく、許可がなければ問題と修正案を報告する。
 producerを起動してpublish / updateするのはcreate / publish / produce / updateが明示された場合だけとし、既存URIの提示は
 read権限であってupdate権限ではない。production時はproducerをbatch起動せず、独立に有用で他候補を最も制約するsurfaceから
 順に実行する。成功時のclaim refinementを含む各producer結果の後に、残る未publish briefのoverlap、scope、terminology、
@@ -2394,7 +2421,7 @@ SQLite、内部path、会話で記憶したURIを通常のdiscoveryに使わな�
 作る。上位briefを含む明示されたsubject、review question、scope、inclusion / exclusion、emphasisを優先して
 未指定部分だけを既定guideで補い、PR全体のArtifact数やStructureとの役割分担を決めない。説明の見出し、順序、
 粒度はrequestとsubjectへ適応し、固定の文書templateを要求しない。未指定の場合は具体的な問いとcode入口から
-small explanation / diagram、source確認、理解更新、次の問いへ進むpathを作る。複数actor、state、condition、order、
+局所文脈、small explanation / diagram、同じ一件の変化と受け渡し、source確認、理解更新へ進むpathを作る。複数actor、state、condition、order、
 branch、lifecycleをproseから再構築させる場合は問いに合うMermaid図を標準的に実際に使い、local changeで不要なら
 図を作らない。diagram数やfieldは必須化せず、一図一中心質問、source claimの独立検証、binding非対応Edgeの近接
 `rvw-ref:` evidenceを要求する。ordered pathが有用でなければ
@@ -2435,8 +2462,11 @@ surface shape、central question、scope / exclusion、direct-code choice、over
 file-map presence / accuracy、briefのauthoring authorityとcandidate claimの分離を確認し、planning-only評価をhost
 invocation / publish成功とは扱わない。Walkthroughはdiagram数ではなく、問いへの適合、認知負荷の低減、図法選択、
 sourceとの意味整合、diagram size / label readability、文章との非重複、code確認への接続、binding accuracy、図なし判断を
-評価する。読解品質は具体的code入口への速さ、file responsibilityへの再定位、behavior / state owner / interactionの説明、
-条件変更時の探索可能性、unknownと次のcode理由、Artifact間joinのworking-memory costを評価する。
+評価する。読解品質は入口だけで状況と検証目的が分かるか、一件の状態・表現・非同期の受け渡しが途切れないか、code参照の
+理由、条件変更時の分岐と探索先、処理・data・依存の具体性を、生成した本文で評価する。同じ対象commitと読者前提で
+旧指示・新指示の内容候補を比較し、構成案や文章量だけで改善としない。可能なら成果物と明示前提だけを渡すfresh
+contextで読解を先に評価し、その後sourceと照合する。Agent評価、人間の読解評価、schema / source / render検証を
+区別する。内容候補はpublish済みArtifactではなく、未実施のhost連携を成功扱いしない。
 結果は`docs/review-composition-evaluation.md`へ記録する。
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、

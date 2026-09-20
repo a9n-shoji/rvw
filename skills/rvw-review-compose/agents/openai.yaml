@@ -1,4 +1,4 @@
 interface:
   display_name: "rvw Review Compose"
   short_description: "Compose a PR file map and adaptive review paths"
-  default_prompt: "Use $rvw-review-compose to analyze this Pull Request and recommend its required PR-scoped file responsibility and dependency map plus only the additional rvw review surfaces that materially lower total comprehension cost; produce Artifacts only when I explicitly request production."
+  default_prompt: "Use $rvw-review-compose to analyze this Pull Request and recommend its required PR-scoped map of relevant code and file dependencies plus only the additional rvw review surfaces that materially lower total comprehension cost; produce Artifacts only when I explicitly request production."

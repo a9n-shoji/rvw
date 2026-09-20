@@ -3317,6 +3317,29 @@ export class RvwService {
     );
   }
 
+  async placeCodeReferenceAtCommit(
+    pullRequestId: string,
+    sourceOid: string,
+    reference: Pick<CodeReference, "path" | "startLine" | "endLine">,
+    destinationOid: string,
+  ): Promise<CommentPlacement> {
+    assertCodeReferencePath(reference.path);
+    return await this.placeCommentAtCommit(
+      {
+        pullRequestId,
+        target: {
+          kind: "document",
+          documentKind: "repository-file",
+          sourceOid,
+          path: reference.path,
+          startLine: reference.startLine,
+          endLine: reference.endLine,
+        },
+      },
+      destinationOid,
+    );
+  }
+
   async resolveCommentPlacements(
     pullRequestId: string,
     commentIds: readonly string[],

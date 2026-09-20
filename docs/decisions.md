@@ -3600,6 +3600,73 @@ zero.
 - The bulk status refresh retrieves one additional bounded GitHub field but preserves its existing
   candidate set and maximum concurrency of four.
 
+## 2026-09-14: Count the latest opinionated review instead of the latest review event
+
+### Problem
+
+GitHub exposes both `latestReviews` and `latestOpinionatedReviews`. The former returns each reviewer's
+latest review event, so a `COMMENTED` review submitted after an `APPROVED` review replaces the approval
+in that connection even though GitHub still considers the Pull Request approved. Counting
+`APPROVED` entries in `latestReviews` could therefore cache zero for a currently approved Pull Request.
+
+### Choice
+
+Resolve the Pull Request through `gh pr view` as before, request its node ID, and use authenticated
+`gh api graphql --hostname github.com` calls to read every page of `latestOpinionatedReviews`. The
+explicit hostname keeps `GH_HOST` for a GitHub Enterprise account from redirecting the follow-up
+request away from the github.com Pull Request. Count entries whose state is
+`APPROVED` and use that count for normal synchronization and explicit bulk status refresh. Reject a
+missing node, malformed response, or invalid pagination cursor instead of caching a partial count.
+
+This supersedes the `latestReviews` field choice in “Cache the current Pull Request approval count for
+the workspace index.” The nullable SQLite cache, synchronization triggers, bulk candidate set,
+maximum concurrency, and badge presentation remain unchanged.
+
+### Trade-offs
+
+- Each synchronized Pull Request requires at least one additional `gh api graphql` process, but this
+  preserves `gh pr view` reference resolution, including repository redirects, while using GitHub's
+  purpose-built current-opinion connection.
+- Pagination removes the previous implicit 100-reviewer ceiling at the cost of additional calls for
+  unusually large review sets.
+- Comment-only and pending reviews no longer erase a current approval from the cached count; dismissed
+  or superseded opinions continue to follow GitHub's own connection semantics.
+
+## 2026-09-20: Preserve one case from composition through explanation
+
+### Problem
+
+The composer already minimized joins and passed bounded questions, but its brief could omit the
+reader's missing context and the input or event to follow. The Walkthrough guide could accept a
+sequence of individually concrete questions without explaining how the output at one stop reaches
+the next. Earlier evaluations checked planning, exact anchors, and diagrams; these do not establish
+that a first-time reader can follow the case or predict a changed condition.
+
+### Choice
+
+Choose local entry context, a case with starting conditions, essential handoffs, and a meaningful
+endpoint before splitting a behavioral subject. Pass those decisions to the producer as flexible
+internal authoring notes. Proposed conditions and paths still require independent source verification.
+Follow the same case across requests, saved state, callbacks, and later reads; describe important
+variants as changes to its conditions. A failure or conflict may be the main case. Explain design
+choices with concrete effects on callers, checks, consumers, or saved data.
+
+Use the existing body, scope, descriptions, references, and diagrams. No Artifact type, public field,
+DB model, CLI/API, or Viewer behavior changes. PR-wide file maps, contextual-read authority, explicit
+production intent, sequential recomposition, source exactness, and producer rejection remain intact.
+A relation question can remain a Structure and a local change direct code. This refines the existing
+Skill strategy, not the product architecture.
+
+### Validation and trade-offs
+
+Compare content candidates from old and revised instructions at the same committed target and reader
+assumptions, including fresh-context reading before source audit. Record generation, reader judgments,
+schema/source/render checks, and native-host publication separately in
+[the evaluation record](review-composition-evaluation.md). Additional context can increase length;
+check the connections it adds rather than treating length or vocabulary as quality. Do not add a
+fixed introduction or mandatory execution narrative. Reader navigation after opening source remains
+a Viewer concern and is not resolved by these authoring instructions.
+
 ## 2026-09-20: Complete Agent pushes with PR synchronization
 
 ### Problem
