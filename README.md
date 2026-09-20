@@ -1,34 +1,35 @@
 # rvw
 
-rvwは、GitHubのPull Requestを手元のブラウザで読むためのツールです。
-差分だけでは変更後の動きが分かりにくいときに、ファイル全文や、変更されていない呼び出し元・テストも開けます。
+rvwは、GitHubのPull Requestを、差分と**その時点のコードベース全体**を行き来しながら読むためのツールです。
+PR内のコミットを選び、変更された行からファイル全文、変更されていない呼び出し元やテストまで、手元のブラウザで確認できます。
 
-Codex / Claude Codeと使う場合は、Agentにコードへのリンク付きの説明を作ってもらい、説明と実装を並べて読めます。
-疑問はコードの行にコメントとして残し、Agentへ渡して調査や修正を頼めます。Agentを使わずにコードを読むこともできます。
+説明やコメントの**参照リンクから、根拠となるコードの行を開けます**。
+説明を残したまま横にコードを並べ、書かれた条件や処理を自分で確かめられます。
+Codex / Claude Codeには、この参照リンク付きの説明を作ってもらえます。Agentを使わず、コードから読み始めることもできます。
 
-![決済承認後の注文保存失敗について、説明と根拠のコードへのリンクを読んでいるrvwの画面](https://raw.githubusercontent.com/a9n-shoji/rvw/main/docs/images/review-evidence.png)
+![決済承認後の注文保存失敗について、説明と根拠のコードへのリンクを読んでいるrvwの画面](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-evidence.png)
 
 同梱デモの注文サービスPRを開いた画面です。決済の承認後に注文を保存できなかった場合の説明から、復旧処理のコードへ移動できます。
 
 <details>
 <summary>説明からコメントまでの操作GIFを見る（13秒）</summary>
 
-![日本語の説明を読み、決済の復旧コードを開き、再試行について質問を入力して投稿する4場面のGIF](https://raw.githubusercontent.com/a9n-shoji/rvw/main/docs/images/review-flow.gif)
+![日本語の説明を読み、決済の復旧コードを開き、再試行について質問を入力して投稿する4場面のGIF](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-flow.gif)
 
 実際に操作した「説明 → コード → 質問の入力 → 投稿」の4場面を順に表示します。
 
 </details>
 
-## 説明からコードを開く
+## 参照リンクからコードを確かめる
 
-コードへのリンクが付いた説明を **Walkthrough** と呼びます。
+コードへの参照リンクが付いた説明を **Walkthrough** と呼びます。リンクを選ぶと、対象のファイルを開いて該当する行を強調表示します。
 このデモでは「決済承認後に注文を保存できなかったら」を開き、次の順に読みます。
 
 1. 説明内の **決済の復旧処理** を `Cmd` / `Ctrl`＋クリックして、右ペインにコードを開きます。
 2. 注文がある場合は終了し、決済状態が `voidable` の場合に取り消すことを確認します。
 3. さらに読むと、`pending` や `unknown` の場合は `retry-later` を返しています。再試行の期限が分からなければ、その行に質問を残します。
 
-![決済状態が確定しない場合のretry-laterを読み、再試行の期限についてコード行に日本語のコメントを残した画面](https://raw.githubusercontent.com/a9n-shoji/rvw/main/docs/images/review-comment.png)
+![決済状態が確定しない場合のretry-laterを読み、再試行の期限についてコード行に日本語のコメントを残した画面](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-comment.png)
 
 コメントは手元のrvwに保存されます。参照をコピーしてAgentへ渡すと、対象のコードと質問を読んで返信できます。
 
@@ -68,14 +69,16 @@ rvw open https://github.com/owner/repository/pull/123
 
 ## 最初のレビューを進める
 
-### Agentなしで読む
+### 差分からコードベース全体を読む
 
 1. 開いた `Pull Request.md` で変更の目的を確認します。
-2. 左のファイル一覧から一つ選び、上部の **変更** で差分、**全文** で変更後のコードを読みます。
-3. **変更のないファイルも表示** をオンにし、呼び出し元やテストも開きます。ファイル名で絞り込めます。
-4. 疑問のあるコード行にマウスを置き、行番号横の **＋** からコメントします。複数行は＋からドラッグして選べます。
+2. 上部の **対象commit** で、PR全体または確認したいコミットを選びます。
+3. 左のファイル一覧から一つ選び、**変更** で差分、**全文** でその時点のコードを読みます。
+4. **変更のないファイルも表示** をオンにし、呼び出し元やテストも開きます。`Cmd` / `Ctrl`＋クリックすると右ペインに並べられます。
+5. 疑問のあるコード行にマウスを置き、行番号横の **＋** からコメントします。変更のない行にもコメントでき、複数行は＋からドラッグして選べます。
 
-ここまでにAgentやSkillは必要ありません。表示するのはGitにコミットされたコードで、作業中の未コミット変更ではありません。
+ファイル一覧や検索では、選択範囲の最後のコミット時点のリポジトリ全体を辿れます。表示するのはGitにコミットされたコードで、作業中の未コミット変更ではありません。
+ここまでにAgentやSkillは必要ありません。
 
 ### Agentの説明から読み始める
 
@@ -114,7 +117,7 @@ rvw Skillを使って、次のコメントについて調査し、rvwの同じ�
 
 返信とリンク先のコードを確認し、疑問が解消したら **解決** を押します。
 修正を依頼する場合や、PR全体の説明の構成を任せる場合は、
-[利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)へ進んでください。
+[利用ガイド](docs/usage.md)へ進んでください。
 
 ## 使う前に知っておくこと
 
@@ -129,16 +132,16 @@ rvw Skillを使って、次のコメントについて調査し、rvwの同じ�
   rvw自身はコード編集、テスト実行、commit、pushを行いません。
 - PRタイトルと本文は、常に**最後に成功したGitHub同期時点の内容**です。過去のコミットを選んでも過去のPR本文には戻りません。
 
-保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)にまとめています。
+保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](docs/usage.md)にまとめています。
 
 ## デモと関連文書
 
 ソースから `pnpm demo` を起動すると、上の画面と同じ注文サービスPRを試せます。
-GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md#デモで同じ疑問を追う)を参照してください。
+GitHub認証やAgentは不要です。[デモの起動と操作手順](docs/usage.md#デモで同じ疑問を追う)を参照してください。
 
-- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)：PRを読む、説明を頼む、コメントを渡す、修正後を確認する。
-- [CLI protocol](https://github.com/a9n-shoji/rvw/blob/main/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
-- [実装仕様](https://github.com/a9n-shoji/rvw/blob/main/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/main/docs/architecture.md)：参照解決、保存、描画などの保証。
-- [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/main/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/main/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/main/SECURITY.md)。
+- [利用ガイド](docs/usage.md)：PRを読む、説明を頼む、コメントを渡す、修正後を確認する。
+- [CLI protocol](docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
+- [実装仕様](docs/implementation-spec.md) / [設計](docs/architecture.md)：参照解決、保存、描画などの保証。
+- [開発・問い合わせ](CONTRIBUTING.md) / [互換性](docs/compatibility.md) / [セキュリティ](SECURITY.md)。
 
-ライセンスは[MIT](https://github.com/a9n-shoji/rvw/blob/main/LICENSE)です。
+ライセンスは[MIT](LICENSE)です。

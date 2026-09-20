@@ -146,9 +146,10 @@ python3 scripts/compose-readme-gif.py /tmp/rvw-readme-frames
 `docs/images/review-flow.gif` を出力します。4枚のPNGは一時ディレクトリに残るので、全場面を開いて確認できます。
 
 画像更新時は静止画とGIFの全場面を実際に開き、README相当の幅で読めること、本文・alt・画像が一致することを確認してください。
-READMEの文書リンクはGitHubの `blob/main`、画像は `raw.githubusercontent.com/.../main` の絶対URLです。
-`package.json` の配布対象に詳細文書や画像は含めず、npm表示からも同じ公開文書へ辿れるようにしています。
-新規ファイルのURLはmainへ反映されるまで公開先では解決しません。作業ツリーのレビューではローカルの同じパスを使って確認します。
+READMEの画像URLは、画像を含むpush済みコミットの完全なSHAで固定します。再撮影した画像をcommit・pushしてから、そのSHAへURLを更新してください。未マージの画像を `main` のURLで参照しないでください。
+READMEからの文書リンクも、案内する文書を含むpush済みコミットへの絶対URLにします。文書の更新時は、そのリンク先のSHAも見直してください。
+詳細文書や画像はパッケージへ同梱せず、GitHub・npmとも同じ公開URLを参照します。
+確認はローカルファイルの存在だけで済ませず、画像URLのHTTP応答と、GitHubで描画されたREADMEの画像・文書リンクも確かめてください。
 
 参照解決、図の描画・ID・座標、コメント追跡、runtime・保存先の細則は
 [実装仕様](implementation-spec.md)、[設計](architecture.md)、[CLI protocol](cli-protocol.md)を参照してください。
