@@ -117,7 +117,7 @@ rvw Skillを使って、次のコメントについて調査し、rvwの同じ�
 
 返信とリンク先のコードを確認し、疑問が解消したら **解決** を押します。
 修正を依頼する場合や、PR全体の説明の構成を任せる場合は、
-[利用ガイド](docs/usage.md)へ進んでください。
+[利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)へ進んでください。
 
 ## 使う前に知っておくこと
 
@@ -132,16 +132,16 @@ rvw Skillを使って、次のコメントについて調査し、rvwの同じ�
   rvw自身はコード編集、テスト実行、commit、pushを行いません。
 - PRタイトルと本文は、常に**最後に成功したGitHub同期時点の内容**です。過去のコミットを選んでも過去のPR本文には戻りません。
 
-保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](docs/usage.md)にまとめています。
+保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)にまとめています。
 
 ## デモと関連文書
 
 ソースから `pnpm demo` を起動すると、上の画面と同じ注文サービスPRを試せます。
-GitHub認証やAgentは不要です。[デモの起動と操作手順](docs/usage.md#デモで同じ疑問を追う)を参照してください。
+GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md#デモで同じ疑問を追う)を参照してください。
 
-- [利用ガイド](docs/usage.md)：PRを読む、説明を頼む、コメントを渡す、修正後を確認する。
-- [CLI protocol](docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
-- [実装仕様](docs/implementation-spec.md) / [設計](docs/architecture.md)：参照解決、保存、描画などの保証。
-- [開発・問い合わせ](CONTRIBUTING.md) / [互換性](docs/compatibility.md) / [セキュリティ](SECURITY.md)。
+- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)：PRを読む、説明を頼む、コメントを渡す、修正後を確認する。
+- [CLI protocol](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
+- [実装仕様](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/architecture.md)：参照解決、保存、描画などの保証。
+- [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/SECURITY.md)。
 
-ライセンスは[MIT](LICENSE)です。
+ライセンスは[MIT](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/LICENSE)です。
