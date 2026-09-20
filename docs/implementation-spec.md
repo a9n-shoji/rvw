@@ -2335,7 +2335,7 @@ boundedなlocal subjectのcompositionではArtifact 0件を引き続き許容す
 
 このfile-map constraintの中でも、最少Artifact数ではなく、各surface内部の複雑さ、
 surface間のjoin、分割で隠れるcouplingを含むreviewerのtotal comprehension costを最小化する。各単位についてordered lifecycle / causalityなら
-Walkthrough、responsibility / ownership / dependency / contractなら通常Structure、局所的な条件や実装詳細なら
+Walkthrough、どのcodeが状態を読み書きしcontractを利用するかという関係なら通常Structure、局所的な条件や実装詳細なら
 直接code readingを選ぶ。意味のあるbehavior changeには原則Walkthroughを用意する一方、local changeでは直接code
 readingだけを組み合わせられ、通常Structureはfile mapと別の関係質問に独立した価値がある場合だけ含める。
 Walkthroughと通常Structureを常にpairにしない。file mapはoverview予習ではなく、どの入口から読んでも途中で
@@ -2343,10 +2343,25 @@ physical implementationへ位置付け直せる土台である。Overview / Stat
 単位ごとのArtifact作成、完全な説明set、file-map-first invocationまたはreading orderを要求せず、最小の外部表現で
 mental-model loadを下げ、重要なcouplingを隠さないことをqualityとする。
 
+最初に勧める入口は、一般的なprogrammingとstackを知るがPR固有の背景・用語・状態modelを知らない読者が、
+PR本文、file map、他Artifactを読まずに開始できるものとする。最初のcode参照を開く前に、対象の仕組み、
+想定状況、そのcodeで確かめることが分かる局所的な文脈を補い、巨大な導入や用語集は要求しない。
+behavior / data flowが中心なら、構成段階で追う一件、初期条件、必要な受け渡し、意味のある終了点を決める。
+入力から別の型、保存、後続の読取りへ変わっても同じ一件との対応を説明し、非同期の待機・競合・再試行を
+説明の都合で直列化しない。例外や別patternは、その一件の条件を変えた場合の分岐点、変わる結果、合流または
+終了として扱う。失敗や競合を中心のcaseにしてよく、全分岐やUIからDBへの完全経路は要求しない。
+state / async / error / testという話題別の分類だけでArtifactを分けず、同じ一件を再接続する負担を判断する。
+局所的変更・機械的変更・関係中心の問いは、短い比較、Structure、直接codeを使い、実行物語を強制しない。
+file mapでは各fileの処理・定義と、別fileが何を呼ぶ・読む・登録するかをsourceで確認し、抽象labelだけで
+説明を終えない。設計判断にも、どの呼出元・利用先が変わるか、どの判定が重複するか等の具体的根拠を求める。
+
 composerは各producerへ渡す前に、subject、review question、scopeのinclusion / exclusion、Structureならfile mapか
 通常Structureかというauthoring role、他Artifactと共有すべきfact / terminology、重複させないquestion / explanation、
 `mustEstablish`、emphasisを持つ内部Artifact briefを用意する。Walkthrough briefは図が理解を助ける中心的な問いも
 示し、必要ならdiagram種別候補を渡せるが、未検証のstate、order、concurrency、transitionを強制しない。
+briefには必要な読者前提、入口で補う文脈、一件と条件、切れない接続、終了点、変える重要条件も引き継ぐ。
+固定formや公開fieldにはせず、関係中心の問いへ不要なcase項目を埋めない。複数Artifactの用語と前提は揃え、
+各入口には短い局所文脈を置く。composerのcase条件と経路もproducerが独立に検証するcandidate claimである。
 このうちsubject、question、purpose / behavior boundary、scope、inclusion /
 exclusion、emphasisはauthoring boundaryのauthorityであり、`mustEstablish`、suggested origin / relationship /
 invariantその他の実装assertionはproducerがcommit済みsourceから独立に検証するcandidate claimである。composerの事前
@@ -2383,7 +2398,7 @@ SQLite、内部path、会話で記憶したURIを通常のdiscoveryに使わな�
 作る。上位briefを含む明示されたsubject、review question、scope、inclusion / exclusion、emphasisを優先して
 未指定部分だけを既定guideで補い、PR全体のArtifact数やStructureとの役割分担を決めない。説明の見出し、順序、
 粒度はrequestとsubjectへ適応し、固定の文書templateを要求しない。未指定の場合は具体的な問いとcode入口から
-small explanation / diagram、source確認、理解更新、次の問いへ進むpathを作る。複数actor、state、condition、order、
+局所文脈、small explanation / diagram、同じ一件の変化と受け渡し、source確認、理解更新へ進むpathを作る。複数actor、state、condition、order、
 branch、lifecycleをproseから再構築させる場合は問いに合うMermaid図を標準的に実際に使い、local changeで不要なら
 図を作らない。diagram数やfieldは必須化せず、一図一中心質問、source claimの独立検証、binding非対応Edgeの近接
 `rvw-ref:` evidenceを要求する。ordered pathが有用でなければ
@@ -2424,8 +2439,11 @@ surface shape、central question、scope / exclusion、direct-code choice、over
 file-map presence / accuracy、briefのauthoring authorityとcandidate claimの分離を確認し、planning-only評価をhost
 invocation / publish成功とは扱わない。Walkthroughはdiagram数ではなく、問いへの適合、認知負荷の低減、図法選択、
 sourceとの意味整合、diagram size / label readability、文章との非重複、code確認への接続、binding accuracy、図なし判断を
-評価する。読解品質は具体的code入口への速さ、file responsibilityへの再定位、behavior / state owner / interactionの説明、
-条件変更時の探索可能性、unknownと次のcode理由、Artifact間joinのworking-memory costを評価する。
+評価する。読解品質は入口だけで状況と検証目的が分かるか、一件の状態・表現・非同期の受け渡しが途切れないか、code参照の
+理由、条件変更時の分岐と探索先、処理・data・依存の具体性を、生成した本文で評価する。同じ対象commitと読者前提で
+旧指示・新指示の内容候補を比較し、構成案や文章量だけで改善としない。可能なら成果物と明示前提だけを渡すfresh
+contextで読解を先に評価し、その後sourceと照合する。Agent評価、人間の読解評価、schema / source / render検証を
+区別する。内容候補はpublish済みArtifactではなく、未実施のhost連携を成功扱いしない。
 結果は`docs/review-composition-evaluation.md`へ記録する。
 
 `rvw-watch-comments`は一つの外部Agent taskをreceiverとして使い、cursorless起動で既存未解決を処理せず、

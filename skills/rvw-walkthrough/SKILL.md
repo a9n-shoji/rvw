@@ -10,13 +10,14 @@ requested implementation subject and continue into the code. Treat the Walkthrou
 not as the code's source of truth, an exhaustive change log, a completed AI review, a review-scope
 guarantee, or an approval plan.
 
-Build that path as a sequence of small understanding updates: begin with a concrete situation or
-question, give the minimum explanation or diagram needed to inspect it, let the reviewer verify the
-claim in exact committed code, state what that evidence establishes, and use the resulting question to
-lead deeper into the implementation.
+Build that path as a sequence of small understanding updates: establish the local situation before the first code
+check, then follow a concrete case through the changes needed to answer the question. Give the minimum
+explanation or diagram, verify each claim in exact committed code, and explain how the resulting state
+or output reaches the next stop. For a contract, refactor, or local change, use the useful comparison
+or relation instead of inventing an execution story.
 
-This producer retains responsibility for representation suitability. When the requested subject has
-no useful ordered reading path and is clearer as a navigable map of responsibilities and relations,
+This producer checks representation suitability. When the requested subject has
+no useful ordered reading path and is clearer as a navigable map of reads, writes, calls, and contracts,
 stop without publishing and recommend `rvw-structure` to the requester or upstream composer. Do not
 create that Structure from this Skill. A request that starts from a file or symbol still belongs there
 when it asks which concrete behavior that source participates in rather than for an authored reading
@@ -26,7 +27,7 @@ This Skill produces, updates, or deletes at most one Walkthrough for the request
 user, caller, Pull Request body, or an upstream Skill supplies an Artifact brief, treat its subject,
 review question, purpose, scope, inclusions, exclusions, and emphasis as authoring authority over what
 this Walkthrough investigates. Treat `mustEstablish` and every suggested implementation fact,
-relationship, or invariant as a claim to verify independently in committed source and tests, not as an
+relationship, case condition, handoff, or invariant as a claim to verify independently in committed source and tests, not as an
 assumed fact or a conclusion to force. These are internal authoring inputs, not new Walkthrough schema
 fields. Inspect broader Pull Request context only to verify those claims and find exact source evidence;
 a valid path or line range alone does not prove the prose attached to it. When source establishes a
@@ -39,7 +40,7 @@ the Walkthrough to cover the whole Pull Request, decide the Pull Request's Artif
 When invoked directly without an upstream brief, derive one bounded Walkthrough subject from the
 user's explicit request and verified facts. Standalone Walkthrough creation remains supported. Follow
 explicit instructions before any default in this Skill. Instructions may set the reading order, focus,
-format, detail, scope, exclusions, assumed knowledge, design decisions to explain, or non-code evidence
+format, detail, scope, exclusions, assumed knowledge, entry context, a case and its conditions, design decisions to explain, or non-code evidence
 to include. Apply the default authoring guide only where those instructions are silent. Add only the
 minimum context needed to keep the requested Walkthrough understandable; never replace the requested
 purpose with a different one.
@@ -105,14 +106,15 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 1. Inspect the explicit instructions and relevant committed repository state. Determine whether the request explains a change or a standalone implementation, flow, or architecture subject. Use available Pull Request context when it contains authoring directions or establishes purpose.
 2. When explicit instructions leave authoring choices unresolved, read [the authoring guide](references/walkthrough-authoring.md). Apply its workflow, adaptation rules, anti-patterns, example, and completion check only as defaults for those choices.
 3. Choose one exact commit containing every referenced path and range. Treat it as the coordinate where the references are guaranteed to exist and the viewer's fallback if latest-head mapping is uncertain, not as a request to keep normal viewing historical. Do not publish an explanation of uncommitted code.
-4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the requested subject's center and connections. Only when no bounded subject was supplied may the change itself establish that center. For a standalone subject, inspect its central responsibility, contract, entry points, and connections without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
-5. Start with the concrete problem, situation, or behavior to understand and the first code entry that
-   can confirm it. Do not require a large glossary, repository-wide architecture, complete file tour,
-   or giant overview diagram before that first verification. Compose the smallest useful path in the
-   order that best builds the mental model, rather than file order or diff order. Let each section
-   establish one useful understanding through concise explanation, a small diagram when appropriate,
-   and exact code evidence; state why that evidence matters and let the new understanding motivate the
-   next question. These are authoring checks, not fixed output headings.
+4. For a change-focused Walkthrough, inspect the diff and enough surrounding code to identify the requested subject's center and connections. Only when no bounded subject was supplied may the change itself establish that center. For a standalone subject, inspect what starts the mechanism, which contracts it uses, and what it reads, changes, or passes on without inventing a before/after story. Include unchanged callers, callees, contracts, models, or tests when they materially reduce the reader's exploration cost; do not include them merely because they are related.
+5. Make the opening readable without prior PR, file-map, or Artifact reading. Assume programming and
+   stack knowledge, not local terms or state meaning. Give enough context to explain the mechanism,
+   situation, and purpose of the first code check, without a broad glossary or architecture tour.
+   For behavior or data flow, keep one case connected from its starting conditions to a meaningful
+   outcome, including changes of representation and asynchronous handoffs. Explain what each code
+   stop establishes about that case and why the next stop follows; then vary important conditions
+   against the established path. Follow the authoring guide for these continuity and evidence checks.
+   These are internal checks, not fixed headings or a requirement to narrate every subject as a flow.
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
 7. Link important code claims with `rvw-ref:<referenceId>`; use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews.
 8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.

@@ -1,6 +1,6 @@
 # Review composition decision evaluation
 
-This record captures planning-only forward evaluations of `rvw-review-compose`. They test whether the
+This record captures composition and content-only forward evaluations of `rvw-review-compose`. They test whether the
 composer chooses bounded review surfaces adaptively from real committed repository history. They do
 not treat Artifact count as a score and do not turn the cases into a production template. Historical
 results remain below as calibration evidence; only a run whose recorded Skill blobs match the current
@@ -12,7 +12,210 @@ publication. It therefore does not prove that Codex or Claude Code can invoke a 
 a producer-ready payload is valid, or that an Artifact URI can be issued. No fake URI or persistent
 review object was created.
 
-## Current file-map composition evaluation (2026-09-08)
+## Entry and continuous-case evaluation (2026-09-20)
+
+### Finding and implementation
+
+The checkout baseline was `84f5383b0bfdf5b11d732eb9940d308c5ed54191`. The old contract already asked
+for concrete questions, small understanding updates, evidence, representative cases, and low join
+cost. The gap was not absence of those ideas:
+
+- The composer brief required subject, question, scope, and claims, but could drop the reader's missing
+  context, the one input/event, starting conditions, essential handoffs, and endpoint.
+- The Walkthrough guide accepted adjacent causal or conceptual questions; it did not require the
+  explanation to identify what the same case becomes at a transformation, saved state, or later read.
+  Its generic request → orchestration → consumer example gave reference destinations without the
+  data/condition/result that connects them.
+- The historical runtime example below already connects a URL lease to heartbeat. It is therefore not
+  evidence that the old producer cannot explain a chain. Its opening nevertheless uses runtime,
+  ownership, and reservation before establishing their local meaning, and shifts between successor
+  startup and accepted requests. A knowledgeable author can supply those joins unconsciously.
+- The earlier record assessed plans, diagrams, exact anchors, and broad reader-model judgments.
+  It did not retain a matched old/new content comparison with artifact-only first readings.
+
+The revision chooses entry context and a case before splitting behavioral explanations and carries
+those decisions into flexible producer notes. The producer follows the same case across transformations
+and async handoffs; variants change conditions of that model. The file-map guide asks what each file
+reads, checks, changes, defines, or passes to a consumer. A local or relation-centered question still
+need not become a story. Existing publication authority, source verification, protocol, stable identity,
+sequential recomposition, producer rejection, and PR-wide file-map requirements remain intact.
+No runtime, public schema, CLI/API, database, or Viewer implementation changed.
+
+### Matched setup and retained outputs
+
+Two separate fresh generator contexts received the same task and reader assumptions, with no expected
+Artifact count, preferred surface mix, existing examples, or this evaluation record. Both were told:
+
+> Recommend a PR-wide reading composition for runtime startup handoff over
+> `c45bc91f4a0cfd071c3be3622eb6418059e236ff..a2f016c5e90886cce769aa0990c6a05c7ce02ae9`.
+> The Japanese-speaking reader knows programming, TypeScript, promises, HTTP, and local processes,
+> but no rvw-specific terms or state model. Inspect committed source, produce briefs, then verify a
+> selected brief and author at least one complete Walkthrough content candidate. This is offline
+> evaluation: no live rvw, Artifact reads/writes, or claims of successful preflight.
+
+Both also received the same local typography and Skill-distribution control questions below, and the
+same concrete-language constraint. Each generator used a frozen six-file instruction set and did its
+composer and producer work in one context, rechecking source claims during authoring. This is not an
+independent native-host producer invocation. Source coordinates and instructions are separate: the
+runtime code is historical, while the two instruction sets are the checkout baseline and this revision.
+The historical target even predates protocol v5; no claim is made that its CLI passed current preflight.
+
+| Instruction under `skills/`                           | Baseline Git blob                          | Revised generation Git blob                |
+| ----------------------------------------------------- | ------------------------------------------ | ------------------------------------------ |
+| `rvw-review-compose/SKILL.md`                         | `bb9cbf9103f98004d16fef20f70f876e775fd9df` | `968f7a5f279586f4cb7ed96425a23ea16e64c098` |
+| `rvw-review-compose/references/review-composition.md` | `2981fb015af2aa040055d985fafb82b64ca2e6e5` | `cb552537d9ca8266474e0ea6cfc17ee3684e83e0` |
+| `rvw-walkthrough/SKILL.md`                            | `410ac6e5f160156595a98c8f263a1346da31a228` | `55982981a36e8098ed660897473a01719e051a12` |
+| `rvw-walkthrough/references/walkthrough-authoring.md` | `b4f55e72bd388c19782a72862bea9afd7321443d` | `bb0dc47708107bbd9643e9b22cfb4e775f6a44ca` |
+| `rvw-structure/SKILL.md`                              | `f8cf78e287d6824c869ea3e5be4353cbd0d20bd7` | `4bd98eda2ec14d637d1c4e297122199ea2a7da83` |
+| `rvw-structure/references/structure-authoring.md`     | `6c25d6dbe2dab38be8703f32c840d0439df1770a` | `b4eb83694d0cdc434b57f9a08f3123c9ce3ee315` |
+
+The final composer reference also received one grammatical correction to the sentence separating file
+location from behavior questions after generation. Its final blob is `1ca4bbaef507d372f9392a0eaea7d732fdc966b6`;
+all other six-file instruction blobs remain those evaluated above. This copyedit did not change the
+case, routing, authority, or evaluation rules; the candidates were not regenerated for it.
+
+Retained complete outputs:
+
+- [Baseline composition and briefs](examples/review-composition/runtime-handoff-before.md),
+  [baseline content](examples/review-composition/runtime-handoff-before.json).
+- [Revised composition and briefs](examples/review-composition/runtime-handoff-after.md),
+  [revised content](examples/review-composition/runtime-handoff-after.json).
+- [Baseline first reading](examples/review-composition/runtime-handoff-before-reader.md) and
+  [revised first reading](examples/review-composition/runtime-handoff-after-reader.md).
+
+Both compositions selected one file map and two Walkthroughs. The baseline recommends the stopping
+runtime's lock handoff first; the revision recommends one accepted slow open, from reservation to
+browser heartbeat, first. Only each recommended first Walkthrough was fully authored. The other
+Walkthrough and file map remain briefs, not produced Structures or published Artifacts. The revised
+file-map brief includes the unchanged browser session, poll caller, and header constants and explicitly
+avoids an invented direct App → HTTP-handler call across the API helper.
+The count is unchanged and is not a success measure. Both explain why their two cases can be read
+independently and preserve the shared stopping-error connection.
+
+### Short excerpt comparison
+
+Before its first reference, the baseline says:
+
+> 最後の画面を閉じた直後に、もう一度 `rvw open` したとする。旧プロセスは終了処理に入り、新しい依頼を受け付けなくなっているかもしれない。
+
+The local HTTP process, database, and lock explanation follows that first reference. The revised
+opening first establishes:
+
+> `rvw open` は GitHub の Pull Request をローカルの HTTP 画面で開くコマンドで、すでに動いているプロセスを再利用できます。
+
+It then states the still-accepting process, successful but slow PR lookup, and the question about not
+spending browser-connection time during that lookup, all before the first code reference.
+
+For a connection that the baseline leaves as the next subject, it says:
+
+> 既存プロセスが依頼を受けた後、PR の取得に時間がかかる場合は別の問いになる。
+
+The revised recommended path makes the representation change explicit:
+
+> 先ほど待っていた 1 件の open は、ここで「PR を選ぶ ID」と「準備済みの予約を識別する ID」を持つ URL になり、CLI がその URL をブラウザーへ渡します。
+
+And it distinguishes two easily confused changes:
+
+> URL から消したことは、サーバーの予約を消したことではありません。
+
+These excerpts show a different selected case and a more explicit connection, not a proof that every
+baseline sentence is inferior. The old handoff candidate itself explains lock retention, retry, and
+error selection concretely and lets its reader predict a non-retryable uncertain-result error.
+
+### First reading and condition transfer
+
+Two further fresh contexts each saw only one anonymously located content candidate and the same reader
+assumptions. They did not receive source, Skills, briefs, prior findings, or the other candidate.
+Each evaluated the opening before the first reference, reconstructed a case, identified guesses,
+and predicted a condition change with a code destination. These are Agent judgments, not human
+reading trials. Source agreement was audited separately, without feeding missing facts back into the
+initial assessments. The retained candidates were not repaired after seeing reader feedback.
+
+| Check                            | Baseline first reader                                                                                                     | Revised first reader                                                                                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Entry before the first code link | Could state the situation but not the mechanism; the local server and lock explanation arrived after the link.            | Could state the mechanism, still-accepting situation, and timer question from the first two paragraphs. Auto-close configuration was inferred from a later paragraph.                               |
+| Continuous case and state        | Reconstructed the lock handoff, but had to infer what a worker is and the initial socket-unavailable → worker connection. | Reconstructed reservation L, PR ID P, and distinct browser ID B through nine state/data steps. The absence of other pending reservations became explicit only during the timer explanation.         |
+| Reason for code references       | Most references have concrete purposes; the first loop and Runtime references receive their full reason later.            | References specify the await, UUID transfer, timer selection, or header operation to inspect. Reused handler references ask different questions.                                                    |
+| Cross-module / async handoffs    | Socket request → reservation adapter and reconstructed error details require inference.                                   | URL → memory → headers → RequestInit → fetch → HTTP route → heartbeat is explicit. The exact socket return envelope is omitted; URL return itself is stated.                                        |
+| Variants                         | Retryable and terminal outcomes are clear, but the slow-lookup reservation at the end is only a new topic.                | No heartbeat, failed lookup, and stopped-before-reserve each change an identified condition of the established case.                                                                                |
+| Transfer to code                 | Predicted uncertain-result errors are rethrown and named the error factory, stopping guard, and loop.                     | Predicted a 45-second successful lookup leaves L in opening, then arm starts the separate window; named phase, scheduler, handler, and heartbeat references and retained separate transport limits. |
+| Concrete explanation             | PID files, retained locks, candidate close, error fields, and tests are concrete.                                         | Distinct IDs, maps, deadline calculation, and consumption are concrete; the first-use name `RunningServer` in a diagram caveat still lacks an explicit mapping to the reservation adapter.          |
+
+The revised reader judged most extra length useful for connecting the reservation to its consumer,
+but reported that the test paragraph between arm and URL transfer interrupts the case. It also
+suggested making auto-close and the absence of other pending reservations explicit earlier. Those
+are retained weaknesses, not silently edited away. Neither reader was asked to prefer the revision,
+and the baseline's successful condition-transfer answer is retained.
+
+The baseline body has 3,100 Unicode characters, or 2,597 after removing the Mermaid fence; the revised
+body has 4,606, or 4,166 without the fence. References increase from 16 to 21. These are raw Markdown
+counts, not reading-time measures. The extra length includes the chosen case's transfer through URL,
+headers, polling, and the heartbeat update. That is observable added connection, but it also costs
+attention. The two generators selected different first subquestions within the same PR, so this is a
+comparison of composition-plus-content, not an equal-scope rewrite or a causal estimate of the Skill's
+effect. One generation per condition cannot establish reliability or human comprehension improvement.
+
+### Separate source audit
+
+At the exact target, the accepted-open path is supported by the following chain. These checks concern
+semantic claims as well as valid ranges; they do not turn an illustrative scenario into an observed run.
+
+| Candidate claim                                              | Evidence at `a2f016c5…`                                                                 | Qualification                                                                                                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI passes one open through socket to the registered handler | `main.ts:381–410`; `agent-socket.ts:1085–1094`                                          | Existing-response case; worker acquisition is a separate branch.                                                                                        |
+| Reserve before lookup; arm after its awaited success         | `main.ts:481–499`; `start-server.ts:78–104`                                             | Port check happens first; automatic lifecycle tracking is conditional on server options.                                                                |
+| Opening has no startup deadline; startup does                | `viewer-lifecycle.ts:49–65,103–118`                                                     | This is not an unlimited socket operation or a global absence of timeouts. Base commit `viewer-lifecycle.ts:51–58` verifies the old deadline placement. |
+| One lease becomes URL data, then request headers             | `main.ts:485–495`; `viewer-session.ts:9–27`; `App.tsx:50–57`; `api.ts:43–46`            | Browser document ID is distinct from lease and PR IDs; removing the query does not delete server state.                                                 |
+| Heartbeat consumes pending lease and records viewer/time     | `app.ts:159–168`; `viewer-lifecycle.ts:72–81`                                           | Receipt of the request, not URL creation or browser launch, establishes this state.                                                                     |
+| No heartbeat changes the outcome after arm                   | `viewer-lifecycle.ts:132–168`                                                           | Timer lateness can extend deadlines; shutdown also depends on other viewers/reservations and the grace interval.                                        |
+| Failed lookup removes the pending reservation                | `main.ts:496–499`; `viewer-lifecycle.ts:67–70`; test `viewer-lifecycle.test.ts:461–480` | The test is an assertion in historical source, not an execution result from this evaluation.                                                            |
+
+The baseline's lock-handoff chain was also checked against `main.ts:574–633,714–734` and
+`agent-socket.ts:785–814,1000–1039,1054–1098`. The loop retries acquisition rather than assuming a
+non-owning socket later promotes itself. Other errors are rethrown and database mismatch is terminal.
+A reader's missing socket-unavailable → worker connection is real explanatory omission:
+`main.ts:398–410` provides it. It is not a fabricated implementation defect.
+For both candidates, normal shutdown sequencing does not imply that all cleanup calls always succeed.
+
+### Controls against a forced narrative
+
+Both generators inspected the same additional historical questions; these were decisions and exact-code
+recommendations, not extra produced payloads or reader trials.
+
+| Explicitly bounded subject                            | Baseline                               | Revised                                               | What this checks                                                                                                                                                                                              |
+| ----------------------------------------------------- | -------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Typography change `0b2a1798…4ca57148`                 | Direct code, no Artifact               | Direct code, no Artifact                              | The two-theme foreground variable, diff-span selector, and computed-style assertion answer the local question; no startup story or long preface is required.                                                  |
+| Five bundled Skill names and consumers at `01841f83…` | Direct code plus a small mapping table | One relation-centered Structure brief, no Walkthrough | Both distinguish runtime enumeration, type declarations, package subtree inclusion, platform roots, and independent test lists without inventing an execution order. Different surface choices are permitted. |
+
+The relevant control evidence is `DocumentViewer.tsx:147–151,182–191` and
+`review-flow.spec.ts:396–451` at `4ca57148…`; and `skill-installer.ts:20–30,146–183,277–312`,
+`main.ts:1569–1604`, `package.json:30–38`, and `package-smoke.mjs:445–498` at `01841f83…`.
+No control was rated by a required Artifact count or by words appearing in an instruction.
+
+### Verification and limits
+
+- `pnpm check`: type, lint, and formatting checks pass.
+- `pnpm test`: **744 tests in 63 files pass**, including both new content candidates' strict existing
+  schema, committed source/range checks, reference closure, and parsed binding targets. The first run
+  hit sandbox `EPERM` on a Unix socket; the outside-sandbox rerun passes. These are current-checkout
+  tests, not an execution of the historical target.
+- `pnpm test:e2e`: **174 pass**, run as 173 existing cases plus the updated producer-diagram case.
+  Both new diagrams render in Chromium with rvw's Mermaid settings. This tests rendering, not human
+  reading speed or a complete published-Artifact session.
+- `pnpm build` and `pnpm test:package` pass; package smoke installs offline into a temporary prefix and
+  checks distributed Skill content. Nothing was published to npm.
+- Skill Creator's `quick_validate.py` could not run because both available Python runtimes
+  lack PyYAML. The repository's Skill contract, installer, and package checks did run; no dependency
+  was installed merely for that auxiliary validator.
+
+No live rvw protocol/transport preflight, existing-Artifact discovery, native-host sibling invocation,
+preview, publication, update, deletion, or URI readback was performed. No user's review state changed.
+No fresh file-map JSON was generated; its candidate files and direct relations are briefs for producer
+verification. Human comprehension, repeated-run stability, and position recovery after detouring into
+source in the Viewer remain unverified. The latter needs a separate navigation evaluation; authoring
+improvements do not establish that it is solved.
+
+## Historical file-map composition evaluation (2026-09-08)
 
 The implementation baseline was `2a2d9dcd4da7b227db4ebc71f297a1e45ba86787`. Fresh evaluators
 re-read the final working-tree instruction content after the core-Walkthrough default was added. Its

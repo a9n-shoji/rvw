@@ -27,6 +27,13 @@ different answer without changing the central question or scope, use the support
 essential claim or origin is unsupported or contradicted and resolution would change the question, role,
 or boundary, do not publish it; return the conflict to the requester or upstream composer.
 
+When the brief supplies reader assumptions or entry context, use them to make this map understandable
+without prior reading of another Artifact or the PR body. Otherwise assume stack knowledge but no
+local terms or state model. Use the existing scope, optional thesis, and entry descriptions to establish
+what is being examined, in which situation, and what the first code check can show. Introduce only the
+terms needed here. Do not add a long glossary or turn a relation question into a temporal story.
+Proposed cases and handoffs are implementation claims to verify, not proof supplied by the composer.
+
 ## Choose one authoring role
 
 Author exactly one Structure in one of two roles. Both roles use the existing Structure schema. Do not
@@ -51,18 +58,18 @@ composer.
 ### PR-scoped file map
 
 A file map answers which real repository files matter to understanding a declared Pull Request or
-change scope, what responsibility each has in that change, and which concrete inter-file relationships
-connect them. It is a map of physical implementation locations for this review, not a repository-wide
+change scope, which processing or definitions each contains, and what another file calls, reads,
+registers, or tests. It is a map of physical implementation locations for this review, not a repository-wide
 architecture tour, a changed-files checklist, a diff recap, a generated import graph, or a claim that
 impact analysis is complete.
 
 Inspect changed files plus any unchanged caller, consumer, dependency, type or contract definition,
 state owner, wiring, configuration, test, migration, or documentation file needed to understand the
-change. Include a file because its responsibility or relationship matters to the declared change, not
+change. Include a file because its processing, definitions, or relationships matter to this change, not
 merely because it changed or belongs to a favored file category. Conversely, do not mechanically omit
 tests, configuration, migrations, documents, generated artifacts, lockfiles, or repetitive support
-files: inspect their actual content and include them only when they materially establish a responsibility
-or contract in scope. Do not silently omit a major changed area. Use the scope and completion response to
+files: inspect their content and include them only when they establish how data is checked, changed,
+passed on, or interpreted in scope. Do not silently omit a major changed area. Use the scope and completion response to
 state what is included, what is intentionally excluded, and which local conditions, branches, exceptions,
 or peripheral details remain for direct code reading.
 
@@ -109,11 +116,12 @@ For a PR-scoped file map:
   `startLine` and `endLine`; do not substitute a convenient symbol range for the file identity.
 - Make the file identifiable from the `label`. A basename is sufficient when unique and unambiguous;
   when basenames repeat, include enough repository-relative path context to distinguish them.
-- Write a short `description` of the responsibility the file carries specifically for understanding
-  this Pull Request. Do not summarize the file's entire contents or enumerate its diff. When unrelated
-  or mixed responsibilities genuinely coexist in the file, say so briefly rather than polishing them
-  into one fictitious responsibility. A separate behavior / review-question Structure may map the
-  distinct internal responsibilities at exact ranges when that relationship has independent value.
+- Describe the relevant processing or definitions: what starts the code, what it reads or checks,
+  what it changes or saves, or what another file consumes. Select the facts needed for this map,
+  rather than listing every operation. “Validates the selected IDs and saves the job” is inspectable;
+  “application layer” alone is not. If unrelated processing coexists in the file, say so without
+  inventing a cleaner module. An independently useful relation among its internal operations can be
+  proposed to the composer as a different question, not published as a companion by this producer.
 - Do not use unanchored concepts, functions, classes, logical subsystems, or a synthetic PR Node to fill
   gaps or connect components. File granularity is expressed through the existing Node and anchor fields,
   not through a new `kind`, `notation`, or other schema convention.
@@ -347,7 +355,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] A behavior / review-question Structure has one factual entrypoint and a consistent code-centered
       granularity; concept-only Nodes are necessary and do not invent semantics.
 - [ ] In a file map, every Node is one unique path that exists at `sourceOid`, has a file-level anchor,
-      has a label that identifies the file, and briefly states its honest PR-specific responsibility.
+      has a label that identifies the file, and describes its relevant processing or definitions.
 - [ ] A file map includes changed and unchanged files only when they matter to the declared change,
       identifies intentional exclusions and direct-code-reading boundaries, and is neither a changed-files
       list nor a generic repository inventory.

@@ -1,0 +1,180 @@
+{
+  "sourceOid": "a2f016c5e90886cce769aa0990c6a05c7ce02ae9",
+  "title": "PR を調べている間に接続待ちを使い切らない",
+  "body": "`rvw open` は GitHub の Pull Request をローカルの HTTP 画面で開くコマンドで、すでに動いているプロセスを再利用できます。このプロセスは SQLite と HTTP サーバーを持ち、ブラウザーの画面がなくなると終了します。ここではこれを runtime、画面を開いたブラウザー文書を viewer と呼びます。\n\n最後の画面を閉じた後、runtime の終了猶予中に次の `rvw open` が届くケースを追います。受付はまだ可能で、同じ database を使い、port の衝突はないものとします。PR の取得には時間がかかるものの成功し、返された URL からブラウザーが接続できる、という説明用の条件です。実行記録ではありません。確かめたいのは、PR を調べる時間で「次のブラウザーを待つ時間」を使い切らない仕組みです。\n\n[通常の open の入口](rvw-ref:reuse-entry)では、CLI が PR の指定・作業ディレクトリー・port を既存 runtime へ送り、URL を受け取ってからブラウザーを起動します。[socket の送信処理](rvw-ref:socket-send)はこれを内部操作 `viewer.open` として送り、[受信処理](rvw-ref:socket-dispatch)が登録済みの `openViewer` を呼びます。このケースでは既存 runtime が応答するため、新しい worker の経路へは入りません。\n\n次は[その openViewer](rvw-ref:open-handler)で、PR を取得する `await` の前後に注目してください。先に `reserveViewer()` で予約 ID を作り、`openPullRequest(reference, cwd)` の成功後に同じ ID で `armViewerReservation()` を呼びます。ブラウザーはまだ起動されていません。待っているのは、この open が URL を作れるようになるまでの処理です。\n\n`openPullRequest` は単なる文字列変換ではありません。[PR の取得処理](rvw-ref:resolve-pr)は repository を確認し、保存済み PR と必要な Git object が使えればそこから返し、そうでなければ GitHub から取得して同期します。返った `pullRequest.id` がこの画面の URL に使われます。どの枝でも、呼び出し側の `await` が成功するまでは次の期限設定に進みません。\n\n予約 ID は runtime が作る一時的な UUID です。[HTTP サーバーの生成と予約の窓口](rvw-ref:server-reservation)で、自動終了が有効な場合にだけ lifecycle が作られ、その `reserveViewer` へ UUID が渡ることを確認できます。これは PR の ID と別の値です。\n\n[予約を保存する処理](rvw-ref:reservation-phases)は `pendingViewers` に `{ phase: \"opening\" }` を入れます。この値には deadline がありません。[タイマーの選び直し](rvw-ref:schedule-reservations)は接続済み viewer の最終通信時刻と `startup` の期限だけを候補にし、候補がなければ既存タイマーを消します。今回のように最後の画面が閉じ、残るものが opening だけなら、終了猶予のタイマーもここで消えます。また、pending がある間は空状態の終了タイマーを始めません。PR を調べている間は、この予約自体の接続待ち期限で落とされない、という境界です。\n\nPR の取得が成功したところで、同じ予約が `startup` に変わります。[armViewerReservation](rvw-ref:reservation-phases)は、その時点の `Date.now()` に `startupTimeoutMs` を加えます。[既定値](rvw-ref:startup-default)は 30 秒です。変更前は予約を作った時点からこの期限を数えていましたが、変更後は PR を取得してから数えます。ここで期限なしと言っているのは opening の予約だけで、PR 取得や socket 通信全体を無期限にする説明ではありません。\n\n図は「どの待ち時間に期限が付くか」だけを取り出したものです。`L` は説明用の予約 ID、`P` は取得した PR の ID で、実在する値を示していません。`RunningServer` の薄い転送は省略しています。矢印の根拠は上の [handler](rvw-ref:open-handler)、[予約の窓口](rvw-ref:server-reservation)、[予約の保存・期限設定](rvw-ref:reservation-phases)です。\n\n```mermaid\nsequenceDiagram\n    participant Open as 受理した openViewer\n    participant Life as ViewerLifecycle\n    participant PR as openPullRequest\n    Open->>Life: reserveViewer(L)\n    Life-->>Open: opening を保存\n    Open->>PR: reference と cwd を渡す\n    Note over Open,PR: await 中は L に接続待ち期限がない\n    PR-->>Open: pullRequest.id = P\n    Open->>Life: armViewerReservation(L)\n    Life-->>Open: startup の期限を設定\n    Note over Open: P と L を URL に含めて返す\n```\n\n[取得中の予約を確かめるテスト](rvw-ref:opening-test)は、startup の長さを 100 ms にしても、arm する前に時計を 10,000 ms 進めた段階では予約が残る、と検査しています。その後 arm し、100 ms 後には予約が消え、さらに終了猶予 50 ms 後に終了通知される、と検査します。これらはテストの入力と assertion であり、この評価でテストを実行した結果ではありません。[handler のテスト](rvw-ref:handler-test)にも予約→PR 取得→arm の呼び出し順を調べる記述があります。PR 完了を待つこと自体は、handler の `await` を確認するのが直接の根拠です。\n\nURL が返れば予約はもう不要、とはなりません。[handler の URL 作成](rvw-ref:open-handler)は同じ origin に `pullRequestId` と予約 ID を付けます。パラメーター名 `viewerLease` とヘッダー名は[共有定数](rvw-ref:lease-names)で確認できます。先ほど待っていた 1 件の open は、ここで「PR を選ぶ ID」と「準備済みの予約を識別する ID」を持つ URL になり、CLI がその URL をブラウザーへ渡します。\n\nブラウザー側の[viewer-session](rvw-ref:browser-lease)は `viewerLease` を読み取り、URL 表示からは取り除いてメモリーに保持します。同時に、ブラウザー文書用の別の ID を作ります。`viewerHeartbeatRequest()` がこの二つを `x-rvw-viewer-id` と `x-rvw-viewer-open-lease` のヘッダーにします。URL から消したことは、サーバーの予約を消したことではありません。\n\n[App の定期問い合わせ](rvw-ref:browser-poll)はこのヘッダーを `/api/meta/change-sequence` の呼び出しに付けます。[api helper](rvw-ref:api-fetch)が渡された `RequestInit` をそのまま fetch に使い、[HTTP route](rvw-ref:heartbeat-route)が二つの ID を検証して lifecycle の `heartbeat(viewerId, pendingLeaseId)` へ渡します。この応答は変更通知番号を返すと同時に、ブラウザーがまだいることを記録する通信になっています。\n\n最後に[heartbeat の更新](rvw-ref:heartbeat-record)を確認すると、同じ予約 ID が `pendingViewers` から消え、ブラウザー ID と現在時刻が `viewers` に入ります。新しい画面の準備を待つ予約から、その画面の通信を追う記録へつながりました。この地点が今回の終点です。URL の作成だけでもブラウザー起動の成功だけでも、ここまで到達したことは証明しません。\n\n条件を一つ変えて、URL は返ったが最初の通信が届かない場合を考えてください。PR 取得と arm までは同じで、最後の heartbeat 更新に進みません。[期限を処理するコード](rvw-ref:reservation-expiry)は startup の予約を期限後に消し、ほかの接続・予約がなければ終了猶予を置きます。ただし、タイマーが許容幅より遅く発火した場合は期限を延ばす枝もあるので、「必ず URL 返却から 30 秒で停止」とは読めません。この条件の違いは opening を無期限にしたことと混同せず確認できます。\n\nPR 取得が失敗する場合は URL まで進まず、[handler の catch](rvw-ref:open-handler)から予約を取り消します。これを確かめる[失敗時のテスト](rvw-ref:failure-test)もあります。さらに到着が遅く、予約前に lifecycle が stopped なら、[予約の窓口](rvw-ref:server-reservation)は `runtime-stopping` を含むエラーを返します。その別の入口を追うなら、[停止中だけを識別する条件](rvw-ref:stopping-guard)と[取得・再利用を試し直すループ](rvw-ref:handoff-loop)からコードを読めます。本稿の「受理済みの予約が browser 接続へ渡る」という条件を、そこで切り替えてください。\n",
+  "diagramBindings": {
+    "Open": "open-handler",
+    "Life": "reservation-phases",
+    "PR": "resolve-pr"
+  },
+  "references": [
+    {
+      "id": "reuse-entry",
+      "label": "既存 runtime の URL を受け取りブラウザーを開く",
+      "path": "src/cli/main.ts",
+      "startLine": 381,
+      "endLine": 410,
+      "description": "通常の自動 open が既存 runtime を再利用する入口。"
+    },
+    {
+      "id": "socket-send",
+      "label": "viewer.open を同じ database に送る",
+      "path": "src/server/agent-socket.ts",
+      "startLine": 625,
+      "endLine": 641,
+      "description": "PR 指定、cwd、port の socket 送信。"
+    },
+    {
+      "id": "socket-dispatch",
+      "label": "viewer.open から handler を呼ぶ",
+      "path": "src/server/agent-socket.ts",
+      "startLine": 1085,
+      "endLine": 1094,
+      "description": "受信値を検証し、登録済み openViewer に渡す。"
+    },
+    {
+      "id": "open-handler",
+      "label": "予約、PR 取得、期限設定、URL、失敗時の解除",
+      "path": "src/cli/main.ts",
+      "startLine": 462,
+      "endLine": 502,
+      "description": "同じ予約 ID と PR ID の流れを確認する。"
+    },
+    {
+      "id": "resolve-pr",
+      "label": "openPullRequest のローカル参照と取得",
+      "path": "src/application/rvw-service.ts",
+      "startLine": 556,
+      "endLine": 621,
+      "description": "非同期処理を経て画面に使う PR を返す。"
+    },
+    {
+      "id": "server-reservation",
+      "label": "lifecycle の生成と予約の窓口",
+      "path": "src/server/start-server.ts",
+      "startLine": 36,
+      "endLine": 104,
+      "description": "自動終了の設定、UUID 生成、停止中エラーと転送を確認する。"
+    },
+    {
+      "id": "reservation-phases",
+      "label": "opening の保存と startup への期限設定",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 49,
+      "endLine": 65,
+      "description": "同じ ID に対して期限を付ける時点。"
+    },
+    {
+      "id": "schedule-reservations",
+      "label": "予約と接続から次のタイマーを選ぶ",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 98,
+      "endLine": 124,
+      "description": "opening だけならタイマーを消し、pending 中は空状態の終了を始めない。"
+    },
+    {
+      "id": "startup-default",
+      "label": "接続開始待ちの既定 30 秒",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 4,
+      "endLine": 4,
+      "description": "DEFAULT_VIEWER_STARTUP_TIMEOUT_MS の定義。"
+    },
+    {
+      "id": "opening-test",
+      "label": "arm 前の予約が期限で消えないことを検査",
+      "path": "test/unit/viewer-lifecycle.test.ts",
+      "startLine": 139,
+      "endLine": 159,
+      "description": "短い設定時間と fake timer を使う assertion。今回の実行結果ではない。"
+    },
+    {
+      "id": "handler-test",
+      "label": "PR 取得と期限設定の呼び出し順を検査",
+      "path": "test/unit/viewer-lifecycle.test.ts",
+      "startLine": 416,
+      "endLine": 459,
+      "description": "port、URL、呼び出し順を検査する記述。"
+    },
+    {
+      "id": "lease-names",
+      "label": "viewer ID と予約 ID の通信名",
+      "path": "src/shared/constants.ts",
+      "startLine": 3,
+      "endLine": 5,
+      "description": "URL と HTTP の双方で使う名前。"
+    },
+    {
+      "id": "browser-lease",
+      "label": "URL の予約 ID をブラウザーのヘッダーへ移す",
+      "path": "src/web/viewer-session.ts",
+      "startLine": 9,
+      "endLine": 28,
+      "description": "予約 ID とブラウザー文書 ID は別の値。"
+    },
+    {
+      "id": "browser-poll",
+      "label": "通信を設定する App",
+      "path": "src/web/app/App.tsx",
+      "startLine": 47,
+      "endLine": 57,
+      "description": "viewerHeartbeatRequest の結果を定期問い合わせへ渡す。"
+    },
+    {
+      "id": "api-fetch",
+      "label": "RequestInit を fetch に渡す",
+      "path": "src/web/api.ts",
+      "startLine": 43,
+      "endLine": 65,
+      "description": "ヘッダーを含む init が実際の HTTP 呼び出しに使われる。"
+    },
+    {
+      "id": "heartbeat-route",
+      "label": "HTTP の ID を lifecycle へ渡す",
+      "path": "src/server/app.ts",
+      "startLine": 159,
+      "endLine": 169,
+      "description": "検証済み viewer ID と任意の予約 ID を渡す。"
+    },
+    {
+      "id": "heartbeat-record",
+      "label": "予約を消してブラウザーの通信時刻を保存",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 72,
+      "endLine": 81,
+      "description": "最初の通信が予約から接続の記録へ移る終点。"
+    },
+    {
+      "id": "reservation-expiry",
+      "label": "期限切れと遅延タイマーの条件",
+      "path": "src/server/viewer-lifecycle.ts",
+      "startLine": 132,
+      "endLine": 168,
+      "description": "startup の削除、遅延時の延長、空状態の終了通知を確認する。"
+    },
+    {
+      "id": "failure-test",
+      "label": "PR 取得失敗で予約を取り消す検査",
+      "path": "test/unit/viewer-lifecycle.test.ts",
+      "startLine": 461,
+      "endLine": 480,
+      "description": "handler の失敗時に同じ予約 ID が渡る assertion。"
+    },
+    {
+      "id": "stopping-guard",
+      "label": "停止中エラーの識別",
+      "path": "src/cli/main.ts",
+      "startLine": 237,
+      "endLine": 241,
+      "description": "PROCESS_FAILED と details.reason の両方を見る。"
+    },
+    {
+      "id": "handoff-loop",
+      "label": "取得か既存利用を繰り返す",
+      "path": "src/cli/main.ts",
+      "startLine": 594,
+      "endLine": 633,
+      "description": "受理できないケースを別に調べる入口。"
+    }
+  ]
+}

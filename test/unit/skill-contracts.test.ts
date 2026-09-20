@@ -232,7 +232,7 @@ describe("rvw review composition contract", () => {
     expect(reviewComposeDescription).toContain("Pull Request or explicit review subject");
     expect(reviewComposeDescription).toContain("direct code reading");
     expect(reviewComposeDescription).toContain("overall review composition");
-    expect(reviewComposeDescription).toContain("always include a PR-scoped file-responsibility");
+    expect(reviewComposeDescription).toContain("always include a PR-scoped file map");
     expect(reviewComposeSkill).toContain("This Skill owns PR-wide composition");
     expect(reviewComposeSkill).toContain("minimizes the reviewer's total comprehension cost");
     expect(reviewComposeSkill).toContain('"minimum useful" never means "fewest Artifacts."');
@@ -262,7 +262,7 @@ describe("rvw review composition contract", () => {
     );
     expect(reviewComposeSkill).toContain("it is never a fixed three-Artifact template");
     expect(reviewComposeOpenAi).toContain("Compose a PR file map and adaptive review paths");
-    expect(reviewComposeOpenAi).toContain("recommend its required PR-scoped file responsibility");
+    expect(reviewComposeOpenAi).toContain("recommend its required PR-scoped map of relevant code");
     expect(reviewComposeOpenAi).toContain(
       "produce Artifacts only when I explicitly request production",
     );
@@ -305,7 +305,7 @@ describe("rvw review composition contract", () => {
       "Use these shape checks as counterexamples, not a template or required scenario list",
     );
     expect(reviewComposition).toMatch(
-      /linear request → service → repository route[\s\S]*causal transitions[\s\S]*responsibility or dependency/,
+      /linear request → service → repository route[\s\S]*causal transitions[\s\S]*which callers use a contract/,
     );
     expect(reviewComposition).toMatch(
       /hub\/fan-out or convergence[\s\S]*star or converging backbone, Regions, or only a start/,
@@ -463,7 +463,7 @@ describe("rvw review composition contract", () => {
     );
     expect(reviewComposeSkill).toMatch(/connected\s+exact-relation visual backbone/);
     expect(reviewComposeSkill).toMatch(
-      /new Region by the chunk's meaning, responsibility, and contribution[\s\S]*producer builds the verified graph/,
+      /new Region by the processing or definitions the chunk connects[\s\S]*producer builds the verified graph/,
     );
     expect(reviewComposeSkill).toMatch(
       /attention-start concept to one current Node ID[\s\S]*accepted chunk to exact Node membership[\s\S]*new Region a\s+fresh ID/,
@@ -493,19 +493,11 @@ describe("rvw review composition contract", () => {
 });
 
 describe("rvw Walkthrough mental-model and diagram contract", () => {
-  it("enters concrete code early and builds small verifiable understanding updates", () => {
-    expect(walkthroughSkill).toMatch(
-      /begin with a concrete situation or\s+question,[\s\S]*verify the\s+claim in exact committed code,[\s\S]*resulting question to\s+lead deeper/,
-    );
-    expect(walkthroughAuthoring).toMatch(
-      /do\s+not make a large glossary, a repository-wide model, every changed file, or a giant overview diagram\s+mandatory preparation/,
-    );
-    expect(walkthroughAuthoring).toMatch(
-      /For each natural section,[\s\S]*which exact code can confirm or contradict it,[\s\S]*which new\s+question follows/,
-    );
-    expect(walkthroughAuthoring).toMatch(
-      /continue\s+into code with a new question[\s\S]*say why each is worth opening\s+and what uncertainty or boundary it can test/,
-    );
+  // These are instruction wiring checks, not evidence of reader comprehension. The content
+  // comparison and fresh-reader assessment are recorded in docs/review-composition-evaluation.md.
+  it("keeps the authoring defaults reachable from the producer", () => {
+    expect(walkthroughSkill).toContain("(references/walkthrough-authoring.md)");
+    expect(walkthroughAuthoring).toContain("defaults for choices that explicit instructions");
     expect(walkthroughOpenAi).toContain("builds understanding through concrete code");
   });
 

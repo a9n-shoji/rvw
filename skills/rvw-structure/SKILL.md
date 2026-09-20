@@ -47,8 +47,8 @@ report the candidate boundaries to the requester or upstream composer so that th
 
 For a file map, investigate the changed files and the unchanged callers, consumers, dependencies, type or
 contract definitions, state owners, wiring, configuration, tests, migrations, and documents needed to
-understand the declared change. Include only files whose PR-specific responsibility or relation matters to
-that understanding. Do not mechanically include every changed file or exclude a file because of its
+understand the declared change. Describe relevant reads, checks, writes, definitions, and consumers;
+include only files whose content or relations matter to that understanding. Do not mechanically include every changed file or exclude a file because of its
 category, and do not expand to the repository's complete dependency graph. State what the map includes,
 what it intentionally excludes, and what is left to direct code reading. If the relevant files form
 genuinely independent relation sets, do not connect them with a fabricated whole-PR Node or a vague Edge.
