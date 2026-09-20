@@ -90,6 +90,15 @@ an rvw ref, validates every reply reference against that exact synchronized head
 comment updates in one SQLite transaction. Created replies and their references are linked to the
 synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
+An open viewer detects the update through its local heartbeat without a reload. Latest-head selections
+follow the new head, historical selections remain fixed, and open document tabs remain in place.
+For post-push completion, Skills first sync without comment updates and require
+`git merge-base --is-ancestor <pushedOid> <returnedHeadOid>` to exit 0 in the same repository. A sync
+may successfully return a pre-push head, especially with a differently named or detached worktree.
+The check accepts descendants as well as equality; non-inclusion or command failure is incomplete.
+Only then may commit-fixed reply/edit report completion. Completion updates must not be sent inside
+an unchecked batch sync. Transient failure or visibility lag gets at most three sync attempts per
+worker invocation with 2-second and 5-second waits, without repeating the push.
 
 An exact retry of an update carrying the same idempotency key returns its existing reply. Reusing the
 key for another comment or caller payload fails. The derived synchronized head is not part of that
@@ -884,8 +893,13 @@ only when that batch is retried, accepts the current runtime's accurate `--autho
 acknowledgement/final post, and hands every acknowledged lease to one fresh subagent in the
 same parent scheduling turn. The parent never substitutes direct processing. Each subagent handoff uses
 an absolute JSON result path rather than relying on relayed completion text. Subagent outcomes carry
-`body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
-references by default for concrete code behavior, implemented
+`body`, `relatedCommitOid`, a complete `references` array, `pushStatus`, and nullable
+`pushedHeadOid` and `synchronizedHeadOid`. The pushed OID is retained after a sync failure and passed
+to the retry worker; it is null when nothing was pushed. A successful pushed outcome sets
+`synchronizedHeadOid` and `relatedCommitOid` to the returned head after checking that it includes the
+pushed commit. Unpushed or sync/check-failed outcomes use null for `synchronizedHeadOid`. Parents
+independently check ancestry in the repository from fresh `comment get` before posting success.
+The Skill uses typed references by default for concrete code behavior, implemented
 changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
 outcomes may cite their evidence commit without claiming that a change was pushed.
 

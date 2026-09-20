@@ -92,6 +92,11 @@ repository外のdirectoryからも開けます。
 
 初回openでPRのcommit履歴と最新PR本文を取得します。以後は保持済み状態を先に表示し、viewer起動後または最上部の`...` menuにある`GitHubと同期`で最新状態を取得します。独自の版取り込み操作はありません。
 
+`rvw` / `rvw-watch-comments` Skill経由の修正では、Agentがpush後に`rvw pr sync --stdin --json`を
+実行し、最新のGitHub状態を取り込みます。
+開いているviewerは再読込なしで更新を受け取り、最新を読んでいれば新しいheadへ追従します。
+過去commitを選択中ならその選択を保ちます。同期失敗はpush成功と区別して報告されます。
+
 基本の読み方は次のとおりです。
 
 1. `Pull Request.md`で、最後に同期できたPRの意図と説明を読む。

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -695,6 +696,65 @@ describe("RvwService commit workflow", () => {
     expect(synced.pullRequest.latestHeadOid).toBe(githubHead);
     expect(git(repository, "rev-parse", "HEAD")).toBe(firstHead);
   });
+
+  it.each(["other-branch", "detached"])(
+    "requires the Skill's post-push ancestry check after sync from a %s worktree",
+    async (mode) => {
+      const { repository, firstHead, fake, service } = setup("rvw-sync-pushed-worktree-");
+      await service.openPullRequest(undefined, repository);
+      const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-sync-push-"));
+      const worktree = path.join(directory, "worker");
+      const remote = path.join(directory, "remote.git");
+      git(repository, "clone", "--bare", repository, remote);
+      git(
+        repository,
+        "worktree",
+        "add",
+        ...(mode === "detached" ? ["--detach"] : ["-b", "worker-fix"]),
+        worktree,
+        firstHead,
+      );
+      const pushedHeadOid = commitFile(worktree, "src.txt", "fixed\n", "worker fix");
+      git(worktree, "push", remote, `${pushedHeadOid}:refs/heads/feature`);
+      expect(git(worktree, "ls-remote", remote, "refs/heads/feature")).toContain(pushedHeadOid);
+
+      const sync = () =>
+        service.syncPullRequest({
+          pullRequest: fake.pullRequest.url,
+          repositoryPath: worktree,
+        });
+      const inclusionStatus = (synchronizedHeadOid: string) =>
+        spawnSync(
+          "git",
+          ["-C", worktree, "merge-base", "--is-ancestor", pushedHeadOid, synchronizedHeadOid],
+          { encoding: "utf8" },
+        ).status;
+
+      // Simulate API visibility lag after a real push. Sync is intentionally generic;
+      // success alone does not prove that the worker's pushed commit reached the viewer.
+      const stale = await sync();
+      expect(stale.headOid).toBe(firstHead);
+      expect(stale.commentUpdatesApplied).toBe(0);
+      expect(inclusionStatus(stale.headOid)).toBe(1);
+
+      fake.pullRequest = { ...fake.pullRequest, headOid: pushedHeadOid };
+      expect(inclusionStatus((await sync()).headOid)).toBe(0);
+
+      const descendant = commitFile(worktree, "src.txt", "fixed\nfollow-up\n", "follow-up");
+      git(worktree, "push", remote, `${descendant}:refs/heads/feature`);
+      fake.pullRequest = { ...fake.pullRequest, headOid: descendant };
+      const advanced = await sync();
+      expect(advanced.headOid).not.toBe(pushedHeadOid);
+      expect(inclusionStatus(advanced.headOid)).toBe(0);
+
+      // A different line of history and missing objects cannot be completion evidence.
+      const divergent = commitFile(repository, "src.txt", "different fix\n", "other history");
+      fake.pullRequest = { ...fake.pullRequest, headOid: divergent };
+      expect(inclusionStatus((await sync()).headOid)).toBe(1);
+      expect(inclusionStatus("0".repeat(40))).toBeGreaterThan(1);
+      expect(git(worktree, "rev-parse", "HEAD")).toBe(descendant);
+    },
+  );
 
   it("synchronizes a force-pushed GitHub head when local HEAD is the last cached GitHub head", async () => {
     const { repository, base, firstHead, fake, service } = setup("rvw-sync-force-push-");

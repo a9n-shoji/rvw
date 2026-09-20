@@ -271,7 +271,9 @@ shape:
           "endLine": 24
         }
       ],
-      "pushStatus": "not-needed"
+      "pushStatus": "not-needed",
+      "pushedHeadOid": null,
+      "synchronizedHeadOid": null
     }
   ]
 }
@@ -279,10 +281,26 @@ shape:
 
 `pushStatus` is `not-attempted`, `not-needed`, or `pushed`. `relatedCommitOid` is the exact available PR
 commit containing every referenced path and may identify investigation evidence even when no change
-was made. Set it to null only when `references` is empty. `references` is always the complete array for
+was made. Set it to null only when `references` is empty and no pushed outcome needs its synchronized
+head. `references` is always the complete array for
 that outcome. The subagent's completion notification only signals that the file is ready. The parent
 reads and validates the file after that notification and never depends on relayed message text for the
 result. Accept no progress, plans, or partial findings as the final result.
+
+For `pushStatus: "pushed"`, `pushedHeadOid` is the exact successfully pushed commit, retained even if
+sync fails; it is null for unpushed outcomes. A successful pushed outcome requires `synchronizedHeadOid`
+from a successful `rvw pr sync` response that includes `pushedHeadOid` as an ancestor, and uses the
+synchronized head as `relatedCommitOid`. Equality is allowed, but not required. For unpushed or
+sync-failed outcomes `synchronizedHeadOid` is null. Preserve `pushedHeadOid` in the failure result and
+pass it with the prior outcome to the next worker on retry, so it retries synchronization of the
+already-pushed work instead of repeating implementation or push.
+
+Before accepting pushed success, the parent validates both full OIDs and independently runs
+`git merge-base --is-ancestor <pushedHeadOid> <synchronizedHeadOid>` in the thread's repository from
+the fresh `comment get` response. This read-only Git metadata check is part of result validation;
+it does not permit source investigation or synchronization by the parent. Require exit status 0 and
+`relatedCommitOid === synchronizedHeadOid`; missing values, exit 1, or execution errors take the
+failure/retry path before any successful final edit or lease completion.
 
 For every concrete claim about code behavior, an implemented change, or relevant test coverage, use
 typed references by default so the reviewer can open the exact evidence. Select the smallest useful
@@ -301,8 +319,9 @@ status post with exactly one final outcome:
 
 Validate the outcome's body, `relatedCommitOid`, and complete `references` array against the freshly
 read thread, then pass all three fields to `rvw comment edit`. A result without references must send
-`references: []`; set `relatedCommitOid` to null unless the post needs that commit for repository links
-or images. Never leave references from the acknowledgement or a previous retry on the status post.
+`references: []`; preserve the synchronized head for pushed outcomes, and otherwise set
+`relatedCommitOid` to null unless the post needs that commit for repository links or images. Never
+leave references from the acknowledgement or a previous retry on the status post.
 
 Finish the lease only after every required final edit succeeds:
 
@@ -354,10 +373,32 @@ and push explicitly to the verified head repository URL and head branch. Never p
 force-push without separate authorization. Before push, verify that the remote head still equals the
 live OID used as the work base. After an uncertain push result, read the remote head and commit before
 retrying; never repeat the implementation blindly.
+Record the exact source OID sent by the successful push as `pushedHeadOid` (capture HEAD before push
+when using HEAD). Do not substitute the current checkout or an API head for this recorded OID.
 
-After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
-without comment updates. Then edit each status post with its final body and the synchronized head as
-`relatedCommitOid`. Follow the code evidence defaults above: link the implemented behavior and relevant
+The worker must synchronize after every successful push, before writing its final result file. Use
+the existing CLI with no comment updates, closing stdin in the same invocation:
+
+```bash
+rvw pr sync --repository '<WORKTREE>' --stdin --json <<'RVW_JSON'
+{
+  "pullRequest": "https://github.com/owner/repository/pull/123"
+}
+RVW_JSON
+```
+
+Require `ok: true` and follow the `rvw` Skill's post-push ancestry check: the recorded `pushedHeadOid`
+must be an ancestor of the returned `headOid`. Only exit status 0 permits returning that head in
+`synchronizedHeadOid` and `relatedCommitOid`. A successful sync of an older or divergent head is still
+incomplete. This applies equally to same-name branches, other branch names, and detached worktrees.
+This updates the open viewer through its existing local
+polling; no browser action or additional user request is needed. The parent edits each status post
+only after validating the worker result. The worker never edits status posts. On failure, follow the
+`rvw` Skill's sync recovery guidance and bounded attempt limit for GitHub visibility lag, retain the
+already-pushed commit, and report incomplete synchronization if it remains unsuccessful.
+Do not return `✅ 対応しました` while synchronization is incomplete.
+
+Follow the code evidence defaults above: link the implemented behavior and relevant
 test ranges from the final body and include the post's complete typed `references` array at that exact
 head. If the outcome has no useful code evidence, send `references: []` explicitly rather than
 retaining stale declarations.
