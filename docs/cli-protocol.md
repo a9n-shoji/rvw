@@ -90,6 +90,8 @@ an rvw ref, validates every reply reference against that exact synchronized head
 comment updates in one SQLite transaction. Created replies and their references are linked to the
 synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
+An open viewer detects the update through its local heartbeat without a reload. Latest-head selections
+follow the new head, historical selections remain fixed, and open document tabs remain in place.
 
 An exact retry of an update carrying the same idempotency key returns its existing reply. Reusing the
 key for another comment or caller payload fails. The derived synchronized head is not part of that
@@ -884,8 +886,11 @@ only when that batch is retried, accepts the current runtime's accurate `--autho
 acknowledgement/final post, and hands every acknowledged lease to one fresh subagent in the
 same parent scheduling turn. The parent never substitutes direct processing. Each subagent handoff uses
 an absolute JSON result path rather than relying on relayed completion text. Subagent outcomes carry
-`body`, `relatedCommitOid`, a complete `references` array, and `pushStatus`. The Skill uses typed
-references by default for concrete code behavior, implemented
+`body`, `relatedCommitOid`, a complete `references` array, `pushStatus`, and nullable
+`synchronizedHeadOid`. A successful pushed outcome sets it and `relatedCommitOid` to the head returned
+by sync; unpushed or sync-failed outcomes use null for `synchronizedHeadOid`. Workers call `pr sync`
+before returning pushed success, and parents validate synchronization before replacing status posts.
+The Skill uses typed references by default for concrete code behavior, implemented
 changes, and relevant tests when an exact committed range adds navigation value. Investigation-only
 outcomes may cite their evidence commit without claiming that a change was pushed.
 

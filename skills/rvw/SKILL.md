@@ -232,7 +232,27 @@ Use `rvw comment resolve <COMMENT_URI> --json` and `rvw comment reopen <COMMENT_
 
 ## Synchronize pushed changes
 
-Synchronize only GitHub-visible state. Complete authorized code changes, tests, commit, push, and any required PR title or body update first. Never represent uncommitted or unpushed local changes as synchronized state.
+After every successful authorized push while addressing an rvw Pull Request, synchronize it before
+reporting completion; this is part of the fix workflow and needs no separate synchronization request.
+Also synchronize after an authorized PR title or body update. Complete tests, commit, push, and any
+required PR metadata update first. Synchronize only GitHub-visible state.
+
+A sync without replies is sufficient to update the viewer:
+
+```bash
+rvw pr sync --repository '<CLEAN_WORKTREE>' --stdin --json <<'RVW_JSON'
+{
+  "pullRequest": "https://github.com/owner/repo/pull/123"
+}
+RVW_JSON
+```
+
+Require `ok: true` and use the returned `headOid` for final code references. An open
+viewer observes the local update automatically: a latest-head selection follows the new head while
+a historical selection stays in place. Do not open or reload the browser to apply synchronization.
+For a transient sync failure, retry only synchronization with bounded backoff. Preserve the pushed
+commit and report synchronization as incomplete if it still fails; never repeat the implementation
+or push merely to retry sync.
 
 Pass one JSON object and close stdin in the same invocation:
 

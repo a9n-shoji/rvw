@@ -271,7 +271,8 @@ shape:
           "endLine": 24
         }
       ],
-      "pushStatus": "not-needed"
+      "pushStatus": "not-needed",
+      "synchronizedHeadOid": null
     }
   ]
 }
@@ -279,10 +280,18 @@ shape:
 
 `pushStatus` is `not-attempted`, `not-needed`, or `pushed`. `relatedCommitOid` is the exact available PR
 commit containing every referenced path and may identify investigation evidence even when no change
-was made. Set it to null only when `references` is empty. `references` is always the complete array for
+was made. Set it to null only when `references` is empty and no pushed outcome needs its synchronized
+head. `references` is always the complete array for
 that outcome. The subagent's completion notification only signals that the file is ready. The parent
 reads and validates the file after that notification and never depends on relayed message text for the
 result. Accept no progress, plans, or partial findings as the final result.
+
+For a successful `pushStatus: "pushed"` outcome, require `synchronizedHeadOid` from a successful
+`rvw pr sync` response and use that head as `relatedCommitOid`. For unpushed or sync-failed outcomes it
+is null. The parent
+must reject a successful fix outcome without this synchronization result and use the failure/retry
+path; push success alone does not complete the lease. During retry, the worker inspects the existing
+remote commit and retries synchronization before considering any further code changes.
 
 For every concrete claim about code behavior, an implemented change, or relevant test coverage, use
 typed references by default so the reviewer can open the exact evidence. Select the smallest useful
@@ -301,8 +310,9 @@ status post with exactly one final outcome:
 
 Validate the outcome's body, `relatedCommitOid`, and complete `references` array against the freshly
 read thread, then pass all three fields to `rvw comment edit`. A result without references must send
-`references: []`; set `relatedCommitOid` to null unless the post needs that commit for repository links
-or images. Never leave references from the acknowledgement or a previous retry on the status post.
+`references: []`; preserve the synchronized head for pushed outcomes, and otherwise set
+`relatedCommitOid` to null unless the post needs that commit for repository links or images. Never
+leave references from the acknowledgement or a previous retry on the status post.
 
 Finish the lease only after every required final edit succeeds:
 
@@ -355,9 +365,26 @@ force-push without separate authorization. Before push, verify that the remote h
 live OID used as the work base. After an uncertain push result, read the remote head and commit before
 retrying; never repeat the implementation blindly.
 
-After GitHub exposes the pushed head, run `rvw pr sync --repository '<WORKTREE>' --stdin --json`
-without comment updates. Then edit each status post with its final body and the synchronized head as
-`relatedCommitOid`. Follow the code evidence defaults above: link the implemented behavior and relevant
+The worker must synchronize after every successful push, before writing its final result file. Use
+the existing CLI with no comment updates, closing stdin in the same invocation:
+
+```bash
+rvw pr sync --repository '<WORKTREE>' --stdin --json <<'RVW_JSON'
+{
+  "pullRequest": "https://github.com/owner/repository/pull/123"
+}
+RVW_JSON
+```
+
+Require `ok: true`, then return the synchronized `headOid` in
+`synchronizedHeadOid` and `relatedCommitOid`. This updates the open viewer through its existing local
+polling; no browser action or additional user request is needed. The parent edits each status post
+only after validating the worker result. The worker never edits status posts. On failure, follow the
+`rvw` Skill's sync recovery guidance: retry synchronization with bounded backoff for GitHub visibility
+lag, retain the already-pushed commit, and report incomplete synchronization if it remains unsuccessful.
+Do not return `✅ 対応しました` while synchronization is incomplete.
+
+Follow the code evidence defaults above: link the implemented behavior and relevant
 test ranges from the final body and include the post's complete typed `references` array at that exact
 head. If the outcome has no useful code evidence, send `references: []` explicitly rather than
 retaining stale declarations.

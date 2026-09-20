@@ -3599,3 +3599,32 @@ zero.
 - Zero approvals and not-yet-synchronized legacy rows intentionally have the same absence of a badge.
 - The bulk status refresh retrieves one additional bounded GitHub field but preserves its existing
   candidate set and maximum concurrency of four.
+
+## 2026-09-20: Complete Agent pushes with PR synchronization
+
+### Problem
+
+The CLI already supported `pr sync`, and the viewer already polled local domain revisions to follow
+new heads. The watcher mentioned synchronization after push but did not include synchronization in
+its worker result contract, and its fix instructions ambiguously assigned final status-post editing
+to the worker.
+
+### Choice
+
+Reuse `pr sync` without adding CLI fields, capabilities, or another GitHub polling loop. Make
+synchronization part of completing an authorized rvw fix in both the general Skill and watcher.
+The worker synchronizes without comment updates and returns `synchronizedHeadOid` from the response;
+the parent validates successful synchronization before editing the existing status posts. Only the
+parent edits posts. A transient failure retries synchronization with bounded backoff and preserves
+the already-pushed work. A successful push followed by failed synchronization remains incomplete.
+
+The viewer keeps its existing behavior: latest selections follow the new head, historical selections
+remain fixed, and document tabs stay open. Real CLI-to-viewer tests cover the existing socket, service,
+Git, SQLite, and browser path without a manual reload.
+
+### Trade-offs
+
+- Synchronization takes the latest GitHub snapshot returned by the existing command. Final references
+  use that response's head and must be verified against its source.
+- The automatic call belongs to the Agent Skill workflow; rvw does not observe arbitrary pushes made
+  outside that workflow or start an Agent itself.

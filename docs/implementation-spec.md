@@ -1398,6 +1398,10 @@ tab、pane、scroll、commit selectionを変更しない。
 
 ### 7.2 pr sync
 
+authorizedなpush後は、Agentが完了報告前にこのCLIで同期する。watcherではworkerが同期し、親taskは
+同期成功を確認した結果だけを最終status postへ反映する。viewerは既存のlocal change-sequence pollで
+更新を検出し、latest選択はnew headへ追従、historical選択は維持する。browser再読込は不要。
+
 stdin:
 
 ```json
@@ -1424,6 +1428,8 @@ stdin:
 ```
 
 前提:
+
+- `commentUpdates`は省略可能で、PR同期だけにも使う
 
 - authorizedな修正、test、commit、push、必要なPR本文更新が完了済み
 - 選択したlocal worktreeに未commitのtracked変更がない
@@ -1500,6 +1506,9 @@ code変更がない調査結果でも、具体的なcode上の結論を支える
 parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
 fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
 retryやacknowledgementから宣言を引き継がない。
+各outcomeはnullableな`synchronizedHeadOid`も返し、`pushStatus=pushed`の成功結果では同期responseのheadを
+`relatedCommitOid`とともに返す。未pushではnullとする。workerは同期失敗を成功結果にしない。
+一時的な同期失敗はbounded backoffで同期だけをretryし、実装やpushを無条件に繰り返さない。
 
 ### 7.4 Walkthrough lifecycle
 
