@@ -117,16 +117,12 @@ rvw skill install claude
 rvw skill status
 ```
 
-Agent側でSkillが読み込まれていることを確認し、rvwで開いたPRのURLを添えて依頼します。
+Agent側でSkillが読み込まれていることを確認し、`rvw-review-compose`を選んでPRのURLだけを渡します。
 `rvw-review-compose`はPRと周辺コードを調べ、どこを説明し、どこをコードで直接読むかを考えて、
 必要なWalkthroughやStructureを作成します。
 
 ```text
-rvw-review-compose Skillを使って、https://github.com/owner/repository/pull/123 を
-理解するためのWalkthrough / Structureを、おすすめの構成でrvwに作成してください。
-コミット済みの実装と関連するテスト、周辺コードを調べ、根拠のコードを開けるようにしてください。
-最初に読む入口と、説明に含めなかった範囲を教えてください。
-確認できない点は明記してください。今回はコードの変更は不要です。
+https://github.com/owner/repository/pull/123
 ```
 
 作成後は、Agentが案内した説明を左の **ウォークスルー** または **Structure** から開きます。
@@ -148,7 +144,7 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 監視には子Agentを使えるローカル環境が必要です。**全登録PRの新しいコメント・返信**が対象で、
 新規に監視を始める前からあるコメントは拾いません。rvwを起動するだけでは監視は始まりません。
 監視を使わず一件ずつ渡す方法や、修正を依頼する方法は、
-[利用ガイド](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md)にあります。
+[利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)にあります。
 
 ## 使う前に知っておくこと
 
@@ -163,14 +159,14 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
   rvw自身はコード編集、テスト実行、commit、pushを行いません。
 - PRタイトルと本文は、常に**最後に成功したGitHub同期時点の内容**です。過去のコミットを選んでも過去のPR本文には戻りません。
 
-保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md)にまとめています。
+保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)にまとめています。
 
 ## デモと関連文書
 
 ソースから `pnpm demo` を起動すると、上の画面と同じ注文サービスPRを試せます。
-GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md#デモで同じ疑問を追う)を参照してください。
+GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md#デモで同じ疑問を追う)を参照してください。
 
-- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
+- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
 - [CLI protocol](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
 - [実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)：参照解決、保存、描画などの保証。
 - [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)。
