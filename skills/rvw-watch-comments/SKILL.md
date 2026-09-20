@@ -272,6 +272,7 @@ shape:
         }
       ],
       "pushStatus": "not-needed",
+      "pushedHeadOid": null,
       "synchronizedHeadOid": null
     }
   ]
@@ -286,12 +287,20 @@ that outcome. The subagent's completion notification only signals that the file 
 reads and validates the file after that notification and never depends on relayed message text for the
 result. Accept no progress, plans, or partial findings as the final result.
 
-For a successful `pushStatus: "pushed"` outcome, require `synchronizedHeadOid` from a successful
-`rvw pr sync` response and use that head as `relatedCommitOid`. For unpushed or sync-failed outcomes it
-is null. The parent
-must reject a successful fix outcome without this synchronization result and use the failure/retry
-path; push success alone does not complete the lease. During retry, the worker inspects the existing
-remote commit and retries synchronization before considering any further code changes.
+For `pushStatus: "pushed"`, `pushedHeadOid` is the exact successfully pushed commit, retained even if
+sync fails; it is null for unpushed outcomes. A successful pushed outcome requires `synchronizedHeadOid`
+from a successful `rvw pr sync` response that includes `pushedHeadOid` as an ancestor, and uses the
+synchronized head as `relatedCommitOid`. Equality is allowed, but not required. For unpushed or
+sync-failed outcomes `synchronizedHeadOid` is null. Preserve `pushedHeadOid` in the failure result and
+pass it with the prior outcome to the next worker on retry, so it retries synchronization of the
+already-pushed work instead of repeating implementation or push.
+
+Before accepting pushed success, the parent validates both full OIDs and independently runs
+`git merge-base --is-ancestor <pushedHeadOid> <synchronizedHeadOid>` in the thread's repository from
+the fresh `comment get` response. This read-only Git metadata check is part of result validation;
+it does not permit source investigation or synchronization by the parent. Require exit status 0 and
+`relatedCommitOid === synchronizedHeadOid`; missing values, exit 1, or execution errors take the
+failure/retry path before any successful final edit or lease completion.
 
 For every concrete claim about code behavior, an implemented change, or relevant test coverage, use
 typed references by default so the reviewer can open the exact evidence. Select the smallest useful
@@ -364,6 +373,8 @@ and push explicitly to the verified head repository URL and head branch. Never p
 force-push without separate authorization. Before push, verify that the remote head still equals the
 live OID used as the work base. After an uncertain push result, read the remote head and commit before
 retrying; never repeat the implementation blindly.
+Record the exact source OID sent by the successful push as `pushedHeadOid` (capture HEAD before push
+when using HEAD). Do not substitute the current checkout or an API head for this recorded OID.
 
 The worker must synchronize after every successful push, before writing its final result file. Use
 the existing CLI with no comment updates, closing stdin in the same invocation:
@@ -376,12 +387,15 @@ rvw pr sync --repository '<WORKTREE>' --stdin --json <<'RVW_JSON'
 RVW_JSON
 ```
 
-Require `ok: true`, then return the synchronized `headOid` in
-`synchronizedHeadOid` and `relatedCommitOid`. This updates the open viewer through its existing local
+Require `ok: true` and follow the `rvw` Skill's post-push ancestry check: the recorded `pushedHeadOid`
+must be an ancestor of the returned `headOid`. Only exit status 0 permits returning that head in
+`synchronizedHeadOid` and `relatedCommitOid`. A successful sync of an older or divergent head is still
+incomplete. This applies equally to same-name branches, other branch names, and detached worktrees.
+This updates the open viewer through its existing local
 polling; no browser action or additional user request is needed. The parent edits each status post
 only after validating the worker result. The worker never edits status posts. On failure, follow the
-`rvw` Skill's sync recovery guidance: retry synchronization with bounded backoff for GitHub visibility
-lag, retain the already-pushed commit, and report incomplete synchronization if it remains unsuccessful.
+`rvw` Skill's sync recovery guidance and bounded attempt limit for GitHub visibility lag, retain the
+already-pushed commit, and report incomplete synchronization if it remains unsuccessful.
 Do not return `✅ 対応しました` while synchronization is incomplete.
 
 Follow the code evidence defaults above: link the implemented behavior and relevant

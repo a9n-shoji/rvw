@@ -1399,7 +1399,7 @@ tab、pane、scroll、commit selectionを変更しない。
 ### 7.2 pr sync
 
 authorizedなpush後は、Agentが完了報告前にこのCLIで同期する。watcherではworkerが同期し、親taskは
-同期成功を確認した結果だけを最終status postへ反映する。viewerは既存のlocal change-sequence pollで
+同期成功とpush済みcommitの包含を確認した結果だけを最終成功status postへ反映する。viewerは既存のlocal change-sequence pollで
 更新を検出し、latest選択はnew headへ追従、historical選択は維持する。browser再読込は不要。
 
 stdin:
@@ -1430,7 +1430,6 @@ stdin:
 前提:
 
 - `commentUpdates`は省略可能で、PR同期だけにも使う
-
 - authorizedな修正、test、commit、push、必要なPR本文更新が完了済み
 - 選択したlocal worktreeに未commitのtracked変更がない
 - 未追跡fileがある場合は内容を確認して`--allow-untracked`を明示する
@@ -1452,6 +1451,13 @@ fetchするが、behindなworktreeのcheckoutやbranch refは変更しない。
 `comment create`は非冪等である。`pr sync`と`comment reply`のreplyは任意のidempotency keyを受け、
 同じcaller payloadのretryは元のpostを返す。syncが内部で関連付けるGitHub head OIDはcaller payload
 fingerprintへ含めない。keyのreuseは拒否し、元postが削除済みなら再作成せず明示errorにする。
+
+push後のSkill完了条件は、同期成功に加え、記録したpush済みOIDが返却headの祖先（同一を含む）であることとする。
+同一repositoryで`git merge-base --is-ancestor <pushedOid> <headOid>`の終了値0を確認する。別名branchや
+detached worktreeも例外とせず、旧head・別系統のhead（終了値1）、object不足等の実行errorは未完了とする。
+push後の完了返信・resolveはcomment updateなしの同期と照合の後にexact commit固定のreply/editで行い、
+未照合headへ成功返信を付ける可能性があるbatch syncでは行わない。一時的な失敗・反映遅延はworker実行あたり
+最大3回（2秒、5秒待機）まで同期だけをretryし、失敗が続けば未完了を返す。metadataだけの同期には包含確認を要求しない。
 
 ### 7.3 comment watch
 
@@ -1506,9 +1512,12 @@ code変更がない調査結果でも、具体的なcode上の結論を支える
 parentはthreadを再取得してbody、commit、referenceを検証し、同じstatus postの完全置換へすべて渡す。
 fix-and-push後のreferenceは同期済みGitHub headへ固定する。referenceがない結果は空配列を明示し、以前の
 retryやacknowledgementから宣言を引き継がない。
-各outcomeはnullableな`synchronizedHeadOid`も返し、`pushStatus=pushed`の成功結果では同期responseのheadを
-`relatedCommitOid`とともに返す。未pushではnullとする。workerは同期失敗を成功結果にしない。
-一時的な同期失敗はbounded backoffで同期だけをretryし、実装やpushを無条件に繰り返さない。
+各outcomeはnullableな`pushedHeadOid`と`synchronizedHeadOid`も返す。前者は実際にpushしたOIDで、
+同期失敗後も保持してretryのhandoffへ渡す。後者は包含確認済みの同期responseのheadで、成功時は
+`relatedCommitOid`と同じ値、未push・同期または包含確認失敗ではnullとする。親taskも返信前にfreshな
+comment getのrepositoryで両OIDの祖先関係を検証する。このread-onlyなGit metadata照合はresult validationに含み、
+親によるsource調査や同期を許可するものではない。workerは同期・包含確認失敗を成功結果にせず、既存のlease
+failure/retry手順へ進む。実装やpushを無条件に繰り返さない。
 
 ### 7.4 Walkthrough lifecycle
 

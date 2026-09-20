@@ -237,7 +237,10 @@ reporting completion; this is part of the fix workflow and needs no separate syn
 Also synchronize after an authorized PR title or body update. Complete tests, commit, push, and any
 required PR metadata update first. Synchronize only GitHub-visible state.
 
-A sync without replies is sufficient to update the viewer:
+Record the exact commit sent by the successful push as `PUSHED_OID`; when pushing HEAD, capture it
+before the push. Preserve it across sync retries rather than reading a potentially moved HEAD later.
+First sync without comment updates so an unverified head cannot publish a completion reply or resolve
+a thread:
 
 ```bash
 rvw pr sync --repository '<CLEAN_WORKTREE>' --stdin --json <<'RVW_JSON'
@@ -247,14 +250,31 @@ rvw pr sync --repository '<CLEAN_WORKTREE>' --stdin --json <<'RVW_JSON'
 RVW_JSON
 ```
 
-Require `ok: true` and use the returned `headOid` for final code references. An open
+Require `ok: true`, then set `SYNCHRONIZED_HEAD_OID` to the returned `headOid` and run this read-only
+check in the same repository (`WORKTREE` is its local worktree path):
+
+```bash
+git -C "$WORKTREE" merge-base --is-ancestor "$PUSHED_OID" "$SYNCHRONIZED_HEAD_OID"
+```
+
+Only exit status 0 proves the pushed commit is included. Equality and descendants are accepted;
+an old or divergent head (exit 1) is incomplete even when sync returned `ok: true`. Other exit statuses
+mean the check failed, such as a missing object, and must not count as success. Apply this check for
+every worktree, including detached HEAD and branches whose names differ from the PR branch.
+Retry sync only for transient failure or visibility lag, with at most three attempts per worker
+invocation (wait 2 seconds, then 5 seconds). A divergent head or persistent failure remains incomplete;
+report it rather than repeating implementation or push. A watcher then follows its existing lease
+failure policy. Metadata-only synchronization without a new push does not require this ancestry check.
+
+After the check passes, verify final references at the synchronized head and use commit-fixed
+`comment reply` / `comment edit` to report completion, resolving only when authorized. Do not use
+a second unchecked `pr sync` with completion updates: it can observe a different head. An open
 viewer observes the local update automatically: a latest-head selection follows the new head while
 a historical selection stays in place. Do not open or reload the browser to apply synchronization.
-For a transient sync failure, retry only synchronization with bounded backoff. Preserve the pushed
-commit and report synchronization as incomplete if it still fails; never repeat the implementation
-or push merely to retry sync.
 
-Pass one JSON object and close stdin in the same invocation:
+For other synchronization operations, the batch form can apply comment updates atomically with the
+GitHub snapshot. It does not prove inclusion of a newly pushed commit. Pass one JSON object and close
+stdin in the same invocation:
 
 ```bash
 rvw pr sync --stdin --json <<'RVW_JSON'
@@ -288,7 +308,8 @@ rvw pr sync --stdin --json <<'RVW_JSON'
 RVW_JSON
 ```
 
-Prefer this atomic path when the GitHub refresh and comment updates belong to the same operation.
+Use this atomic path when GitHub refresh and comment updates belong to the same operation and are not
+reporting completion of a new push; use the checked sync-only path above for post-push completion.
 Successful replies are linked to the synchronized head commit. Give each automated or resumable
 update a stable `idempotencyKey`; an exact retry returns the existing reply. Without keys, re-read
 affected comments before retrying an uncertain result. A later GitHub head advance does not change the

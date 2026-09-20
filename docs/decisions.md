@@ -3613,10 +3613,17 @@ to the worker.
 
 Reuse `pr sync` without adding CLI fields, capabilities, or another GitHub polling loop. Make
 synchronization part of completing an authorized rvw fix in both the general Skill and watcher.
-The worker synchronizes without comment updates and returns `synchronizedHeadOid` from the response;
-the parent validates successful synchronization before editing the existing status posts. Only the
+The worker records the actual pushed commit as `pushedHeadOid`, synchronizes without comment updates,
+and verifies `git merge-base --is-ancestor <pushedHeadOid> <returnedHeadOid>` exits 0. It then returns
+the verified response head as `synchronizedHeadOid`; the parent independently checks inclusion before
+posting success. This closes the stale-head success path for differently named and detached worktrees,
+where the generic sync service does not compare local HEAD to the PR branch. Only the
 parent edits posts. A transient failure retries synchronization with bounded backoff and preserves
-the already-pushed work. A successful push followed by failed synchronization remains incomplete.
+the already-pushed work. Workers retain the pushed OID even in failure results and pass it into retry
+handoffs. A successful push followed by failed synchronization or containment verification remains
+incomplete. Retry transient sync failures or visibility lag up to three times per worker invocation,
+waiting 2 seconds then 5 seconds. Completion replies use a verified exact commit through reply/edit;
+the unchecked atomic sync-with-comment-updates path is not used for post-push completion.
 
 The viewer keeps its existing behavior: latest selections follow the new head, historical selections
 remain fixed, and document tabs stay open. Real CLI-to-viewer tests cover the existing socket, service,
@@ -3625,6 +3632,8 @@ Git, SQLite, and browser path without a manual reload.
 ### Trade-offs
 
 - Synchronization takes the latest GitHub snapshot returned by the existing command. Final references
-  use that response's head and must be verified against its source.
+  use that response's head and must be verified against its source. Descendants of the pushed commit
+  are accepted; exact OID equality is not required. Divergent histories and missing objects cannot
+  count as successful completion.
 - The automatic call belongs to the Agent Skill workflow; rvw does not observe arbitrary pushes made
   outside that workflow or start an Agent itself.
