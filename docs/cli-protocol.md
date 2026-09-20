@@ -1,5 +1,7 @@
 # CLI protocol v5
 
+この文書はAgentと自動化の実装者向けです。初めて使う方は[利用ガイド](usage.md)で、PRの登録とSkillの準備を先に行ってください。
+
 Version 1 is the first public compatibility contract. Pre-public internal version numbers were not
 released or supported; after the first public release, protocol versions only increase for breaking
 changes and are never reused. Version 2 added the invariant that every declared Walkthrough reference

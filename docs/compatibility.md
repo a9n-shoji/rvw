@@ -28,4 +28,4 @@ version番号を再利用せず、breaking changeのたびに単調増加させ�
 - `refs/rvw/`を利用者が直接編集すること
 
 SQLiteとGit refはrvwが管理します。downgrade互換や、手作業で変更したDB/refの修復は保証しません。
-正式な復旧経路はREADMEとCLIが案内する`rvw pr reset`です。
+正式な復旧経路は[利用ガイド](usage.md#最後の復旧手段prをリセットする)とCLIが案内する`rvw pr reset`です。

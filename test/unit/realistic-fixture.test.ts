@@ -91,7 +91,7 @@ describe("realistic fixture", () => {
       );
       expect(fixture.walkthroughs.map(({ title }) => title)).toEqual([
         "Review route: authenticated order placement",
-        "Failure route: retries and payment recovery",
+        "決済承認後に注文を保存できなかったら",
         "Delivery route: transactional outbox operations",
       ]);
       expect(fixture.structures.map(({ title }) => title)).toEqual([
