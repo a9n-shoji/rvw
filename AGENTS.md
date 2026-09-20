@@ -34,3 +34,9 @@
 - Prefer explicit errors over silent fallbacks.
 - Do not introduce Skill-less prompt support.
 - Do not publish to npm during Phase 1.
+
+## Documentation
+
+- Keep README as the first-time user's entry point: purpose, setup, main reading experience, and important limits.
+- Update README when those change; put detailed operations in `docs/usage.md` and behavioral or implementation guarantees in the corresponding specifications.
+- Keep README screenshots from the real demo reproducible with `scripts/capture-readme.mjs`; preserve links that work on both GitHub and npm.

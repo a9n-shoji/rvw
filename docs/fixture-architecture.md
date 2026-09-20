@@ -81,3 +81,102 @@ Git object readerを手元の実repositoryで確認するmodeであり、realist
 byte数、changed file数、PRの意味を通常の`pnpm test`で固定assertせず、専用CI jobでsmoke testする。必要なhistoryがなければ、取得すべきhistoryを
 示すerrorを返し、network fetchを暗黙に行わない。tree / document / binary / rename reader自体は現在のcheckoutに
 依存しないtemporary Git repositoryのunit testで固定する。
+
+## README用の実画面
+
+READMEの素材は、realisticデモの同じPR（`acme/commerce-service #418`）を読むGIF二本と、質問・回答の静止画一枚です。
+Playwrightでデモを操作し、左右のペインを含む全画面と、コメントの拡大画面を撮影します。
+初回利用の手順は[利用ガイド](usage.md#デモで同じ疑問を追う)を参照してください。
+
+Node.js 24.15.0以上、pnpm 11.21.0、Gitを使い、リポジトリのルートで実行します。
+
+```bash
+pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
+pnpm demo -- --no-open
+```
+
+別の端末で、デモを起動した直後に撮影します。
+
+```bash
+node scripts/capture-readme.mjs
+```
+
+ポートを変える場合は両方のコマンドに同じ `RVW_DEMO_PORT` を渡してください。
+再撮影はデモをCtrl+Cで止めてから起動し直します。スクリプトは初期コメント13件を検証し、
+個人のrvw保存先ではなく、この固定PRだけを操作します。コメントを投稿するので、同じデモへの二回目の実行は初期状態の検証で止まります。
+
+撮影条件はChromium、ライトモード、画面1200 × 800 CSS px、倍率2、`ja-JP`、`Asia/Tokyo`です。
+新しいブラウザコンテキストを作り、サイドバーをUIから240 pxへ縮め、既存コメントを折りたたみます。
+GIFは画面全体を使い、左にWalkthroughまたはStructure、右に参照先のコードを見せます。
+質問と回答の静止画は一つのペインへ戻し、コードとコメントが読めるよう文書部分を切り出します。
+
+紹介するWalkthroughの本文・図ラベルと、Structureの題名・要素・関係はfixture側で日本語にしてあり、通常の `pnpm demo` でも同じ内容を読めます。
+アプリの文言や表示用CSSは書き換えません。Structureの二要素は通常のドラッグ操作で縦に並べ、Fitで収めます。
+GIF用のカーソルだけ、撮影スクリプトが重ねて表示します。
+実際のマウス移動に追従し、マウスを押している間は輪を表示するもので、アプリ本体への変更はありません。
+コード、参照ID、参照先は維持しています。投稿日時は撮影時点のものです。
+
+| 出力                             | 場面と確認事項                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `docs/images/review-flow.gif`    | 左のWalkthroughから右のコードを開き、質問を投稿してAgentの受付・回答例を読む                            |
+| `docs/images/structure-flow.gif` | 決済状態の周辺を示すStructureの関係から判定コードを開き、要素の参照から決済先との通信を扱うコードへ進む |
+| `docs/images/review-comment.png` | `retry-later` についての質問と、復旧処理・運用手順の参照リンクを含むAgentの回答例                       |
+
+スクリプトは `決済の復旧処理` をCmd＋クリックして右ペインにコードを開き、質問を投稿します。
+行番号は `return "retry-later"` の実際の表示行から取得します。
+コメントの投稿と参照コピーをUIで実行し、コピー先が質問本文とそのコード行に対応することをAPIの読み取りで照合します。
+
+Agentの応答は、撮影スクリプトが**デモの保存APIに投稿した例**です。実際のAgentは起動しません。
+投稿者名を `Codex（デモ）` とし、`🔎 確認中です…` を追加した後、同じ投稿をコード参照付きの回答に更新します。
+画面への反映と「確認中」が回答に置き換わること、回答内の運用手順リンクが開けることも確認します。
+通常のwatcherは外部Agentで `rvw-watch-comments` Skillを起動すると動きます。実際の処理時間をGIFで表すものではありません。
+デモで作ったコメント参照は通常のCLIには渡せません。実際のAgentとの往復には、通常の `rvw open` とSkillを使います。
+
+題材の根拠は `test/fixtures/order-service/order-service-sources.mjs` 内の
+`src/workers/payment-reconciliation.ts` と、`test/fixtures/realistic/realistic-fixture.mjs` 内の
+`docs/runbooks/payment-recovery.md`、既成Walkthroughです。取り消し可能な決済だけを取り消し、
+注文がある場合・既に取り消された場合・後で再試行する場合を分けます。
+運用文書は試行情報の永続化が未実装であることと、外部から滞留を監視することを述べており、
+画像の質問では、コードだけでは分からない再試行の期限と通知条件を尋ねています。
+
+### 操作GIFの再作成
+
+どちらのGIFも7.5秒です。Walkthroughは説明から質問・回答まで、Structureは関係の選択から二つのコード参照までを撮影します。
+カーソルの移動中にもフレームを撮り、各フレームの表示時間と場面を `frames.json` に記録します。
+1200 × 800 px、共通の256色で保存し、静止部分の色がフレームごとに変わらないようにします。
+変換時だけPython 3とPillowが必要です。rvw本体や通常の撮影に依存関係は追加していません。
+
+デモを再起動してから、空の一時ディレクトリを指定して実行します。
+
+```bash
+RVW_CAPTURE_FRAMES_DIR=/tmp/rvw-readme-frames node scripts/capture-readme.mjs
+python3 scripts/compose-readme-gif.py /tmp/rvw-readme-frames
+```
+
+`docs/images/review-flow.gif` と `docs/images/review-comment.png` を出力します。
+
+Structureを撮る場合はデモを再起動し、別の一時ディレクトリを指定します。
+
+```bash
+RVW_CAPTURE_SCENE=structure RVW_CAPTURE_FRAMES_DIR=/tmp/rvw-structure-frames node scripts/capture-readme.mjs
+python3 scripts/compose-readme-gif.py /tmp/rvw-structure-frames structure-flow.gif
+```
+
+「決済を取り消してよいか」を開き、「決済先の承認状態」を選んで1-hopに絞ります。
+二つの要素をドラッグして縦に並べ、Fitで収めた状態から撮影します。
+関係「取り消せる状態か確かめる」のコード参照をCmd＋クリックし、右に開いた判定コードを確認します。
+続けて要素のコード参照を開き、`StripeGateway.getAuthorization` まで実際にスクロールします。
+関係と要素のID・根拠のコードは変更せず、表示と参照先をPlaywrightで検証します。
+
+各PNGと `frames.json` は一時ディレクトリに残るので、全場面を開いて確認できます。
+
+画像更新時は静止画とGIFの全場面を実際に開き、README相当の幅で読めること、本文・alt・画像が一致することを確認してください。
+READMEの画像URLは、画像を含むpush済みコミットの完全なSHAで固定します。再撮影した画像をcommit・pushしてから、そのSHAへURLを更新してください。未マージの画像を `main` のURLで参照しないでください。
+READMEからの文書リンクも、案内する文書を含むpush済みコミットへの絶対URLにします。文書の更新時は、そのリンク先のSHAも見直してください。
+詳細文書や画像はパッケージへ同梱せず、GitHub・npmとも同じ公開URLを参照します。
+確認はローカルファイルの存在だけで済ませず、画像URLのHTTP応答と、GitHubで描画されたREADMEの画像・文書リンクも確かめてください。
+
+参照解決、図の描画・ID・座標、コメント追跡、runtime・保存先の細則は
+[実装仕様](implementation-spec.md)、[設計](architecture.md)、[CLI protocol](cli-protocol.md)を参照してください。
+利用操作と復旧は[利用ガイド](usage.md)、開発・パッケージ検証は[Contributing](../CONTRIBUTING.md)にあります。
