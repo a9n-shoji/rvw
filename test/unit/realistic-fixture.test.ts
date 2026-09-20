@@ -97,7 +97,7 @@ describe("realistic fixture", () => {
       expect(fixture.structures.map(({ title }) => title)).toEqual([
         "Order placement behavior",
         "Idempotent retry convergence",
-        "Payment reconciliation recovery",
+        "決済を取り消してよいか",
         "Transactional outbox delivery",
       ]);
     } finally {

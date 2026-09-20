@@ -9,7 +9,7 @@ source = Path(sys.argv[1])
 manifest = json.loads((source / "frames.json").read_text())
 size = (manifest["width"], manifest["height"])
 capture_size = tuple(value * manifest["scale"] for value in size)
-destination = Path(__file__).resolve().parent.parent / "docs/images/review-flow.gif"
+destination = Path(__file__).resolve().parent.parent / "docs/images" / (sys.argv[2] if len(sys.argv) > 2 else "review-flow.gif")
 frames = []
 for entry in manifest["frames"]:
     with Image.open(source / entry["file"]) as original:
@@ -18,10 +18,12 @@ for entry in manifest["frames"]:
         frames.append(original.convert("RGB").resize(size, Image.Resampling.LANCZOS))
 
 # One palette across the sequence keeps static text and code colors from flickering.
-samples = Image.new("RGB", (160 * 8, 107 * math.ceil(len(frames) / 8)))
+sample_width, sample_height, columns = 480, 320, 4
+samples = Image.new("RGB", (sample_width * columns, sample_height * math.ceil(len(frames) / columns)))
 for index, frame in enumerate(frames):
-    samples.paste(frame.resize((160, 107)), ((index % 8) * 160, (index // 8) * 107))
-palette = samples.quantize(colors=192)
+    samples.paste(frame.resize((sample_width, sample_height)),
+                  ((index % columns) * sample_width, (index // columns) * sample_height))
+palette = samples.quantize(colors=256)
 frames = [frame.quantize(palette=palette, dither=Image.Dither.NONE) for frame in frames]
 durations = [entry["duration"] for entry in manifest["frames"]]
 assert sum(durations) == manifest["duration"] == 7500

@@ -84,7 +84,7 @@ byte数、changed file数、PRの意味を通常の`pnpm test`で固定assertせ
 
 ## README用の実画面
 
-READMEの画像は、realisticデモの同じPR（`acme/commerce-service #418`）を読む二つの場面です。
+READMEの素材は、realisticデモの同じPR（`acme/commerce-service #418`）を読むGIF二本と、質問・回答の静止画一枚です。
 Playwrightでデモを操作し、左右のペインを含む全画面と、コメントの拡大画面を撮影します。
 初回利用の手順は[利用ガイド](usage.md#デモで同じ疑問を追う)を参照してください。
 
@@ -108,18 +108,20 @@ node scripts/capture-readme.mjs
 
 撮影条件はChromium、ライトモード、画面1200 × 800 CSS px、倍率2、`ja-JP`、`Asia/Tokyo`です。
 新しいブラウザコンテキストを作り、サイドバーをUIから240 pxへ縮め、既存コメントを折りたたみます。
-最初の静止画とGIFは画面全体を使い、左にWalkthrough、右に参照先のコードを見せます。
-二枚目は一つのペインへ戻し、コードとコメントが読めるよう文書部分を切り出します。
+GIFは画面全体を使い、左にWalkthroughまたはStructure、右に参照先のコードを見せます。
+質問と回答の静止画は一つのペインへ戻し、コードとコメントが読めるよう文書部分を切り出します。
 
-紹介するWalkthroughの本文・図ラベルはfixture側で日本語にしてあり、通常の `pnpm demo` でも同じ内容を読めます。
-撮影時にアプリの文言や配置は書き換えません。GIF用のカーソルだけ、撮影スクリプトが重ねて表示します。
+紹介するWalkthroughの本文・図ラベルと、Structureの題名・要素・関係はfixture側で日本語にしてあり、通常の `pnpm demo` でも同じ内容を読めます。
+アプリの文言や表示用CSSは書き換えません。Structureの二要素は通常のドラッグ操作で縦に並べ、Fitで収めます。
+GIF用のカーソルだけ、撮影スクリプトが重ねて表示します。
 実際のマウス移動に追従し、マウスを押している間は輪を表示するもので、アプリ本体への変更はありません。
 コード、参照ID、参照先は維持しています。投稿日時は撮影時点のものです。
 
-| 出力                              | 場面と確認事項                                                                    |
-| --------------------------------- | --------------------------------------------------------------------------------- |
-| `docs/images/review-evidence.png` | 左の説明の「決済の復旧処理」から、右にコードを開く。説明と根拠を同時に読める      |
-| `docs/images/review-comment.png`  | `retry-later` についての質問と、復旧処理・運用手順の参照リンクを含むAgentの回答例 |
+| 出力                             | 場面と確認事項                                                                                          |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `docs/images/review-flow.gif`    | 左のWalkthroughから右のコードを開き、質問を投稿してAgentの受付・回答例を読む                            |
+| `docs/images/structure-flow.gif` | 決済状態の周辺を示すStructureの関係から判定コードを開き、要素の参照から決済先との通信を扱うコードへ進む |
+| `docs/images/review-comment.png` | `retry-later` についての質問と、復旧処理・運用手順の参照リンクを含むAgentの回答例                       |
 
 スクリプトは `決済の復旧処理` をCmd＋クリックして右ペインにコードを開き、質問を投稿します。
 行番号は `return "retry-later"` の実際の表示行から取得します。
@@ -140,9 +142,9 @@ Agentの応答は、撮影スクリプトが**デモの保存APIに投稿した�
 
 ### 操作GIFの再作成
 
-GIFは説明からの参照、コードのスクロール、質問の入力、投稿、受付の応答、回答までを7.5秒で表示します。
+どちらのGIFも7.5秒です。Walkthroughは説明から質問・回答まで、Structureは関係の選択から二つのコード参照までを撮影します。
 カーソルの移動中にもフレームを撮り、各フレームの表示時間と場面を `frames.json` に記録します。
-1200 × 800 px、共通の192色で保存し、静止部分の色がフレームごとに変わらないようにします。
+1200 × 800 px、共通の256色で保存し、静止部分の色がフレームごとに変わらないようにします。
 変換時だけPython 3とPillowが必要です。rvw本体や通常の撮影に依存関係は追加していません。
 
 デモを再起動してから、空の一時ディレクトリを指定して実行します。
@@ -152,7 +154,22 @@ RVW_CAPTURE_FRAMES_DIR=/tmp/rvw-readme-frames node scripts/capture-readme.mjs
 python3 scripts/compose-readme-gif.py /tmp/rvw-readme-frames
 ```
 
-`docs/images/review-flow.gif` を出力します。各PNGと `frames.json` は一時ディレクトリに残るので、全場面を開いて確認できます。
+`docs/images/review-flow.gif` と `docs/images/review-comment.png` を出力します。
+
+Structureを撮る場合はデモを再起動し、別の一時ディレクトリを指定します。
+
+```bash
+RVW_CAPTURE_SCENE=structure RVW_CAPTURE_FRAMES_DIR=/tmp/rvw-structure-frames node scripts/capture-readme.mjs
+python3 scripts/compose-readme-gif.py /tmp/rvw-structure-frames structure-flow.gif
+```
+
+「決済を取り消してよいか」を開き、「決済先の承認状態」を選んで1-hopに絞ります。
+二つの要素をドラッグして縦に並べ、Fitで収めた状態から撮影します。
+関係「取り消せる状態か確かめる」のコード参照をCmd＋クリックし、右に開いた判定コードを確認します。
+続けて要素のコード参照を開き、`StripeGateway.getAuthorization` まで実際にスクロールします。
+関係と要素のID・根拠のコードは変更せず、表示と参照先をPlaywrightで検証します。
+
+各PNGと `frames.json` は一時ディレクトリに残るので、全場面を開いて確認できます。
 
 画像更新時は静止画とGIFの全場面を実際に開き、README相当の幅で読めること、本文・alt・画像が一致することを確認してください。
 READMEの画像URLは、画像を含むpush済みコミットの完全なSHAで固定します。再撮影した画像をcommit・pushしてから、そのSHAへURLを更新してください。未マージの画像を `main` のURLで参照しないでください。
