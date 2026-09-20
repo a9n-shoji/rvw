@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-20
+
+### Changed
+
+- Agentが修正をpushした後にGitHub上のPull Requestを同期し、push済みcommitが最新headへ含まれることを確認してから完了を報告するようにした
+- review compositionとWalkthroughで、入口の前提、追跡する一件、重要な受け渡し、終了点を保った説明を作るguidanceへ改善
+- `rvw-watch-comments`をClaude Codeで使う場合、background shellやpollingではなくMonitor toolで継続監視する手順へ変更
+- READMEと利用ガイドを初回利用者向けに再構成し、実画面の操作例を追加
+
+### Fixed
+
+- 外部Agentからreplyが届いた際、Markdown Preview内で編集中のcomment editorが再マウントされ、未保存内容とfocusが失われる問題を修正
+
 ## [0.8.1] - 2026-09-14
 
 ### Changed
