@@ -26,7 +26,7 @@ cross an exclusion, do not publish it; return the conflict to the requester or u
 Honor partial directions for the parts they cover and use this guide for the rest. Add minimal context when an instruction would otherwise leave the Walkthrough unintelligible, but do not substitute a different goal.
 
 This guide governs one Walkthrough, not the Pull Request's Artifact composition. Use broader PR context
-as evidence without taking responsibility for PR-wide coverage, choosing an Artifact count or type mix,
+as evidence without claiming PR-wide coverage, choosing an Artifact count or type mix,
 or publishing a companion Artifact. If a bounded brief conflicts with the representation or cannot be
 made understandable inside its exclusions, return the conflict to the requester or upstream composer.
 
@@ -37,52 +37,56 @@ not make a large glossary, a repository-wide model, every changed file, or a gia
 mandatory preparation. Let the reviewer choose which references to open and where to explore next. Do
 not present the route as the full review boundary or as a substitute for the committed source.
 
-When the requested subject is a standalone architecture, flow, or surrounding-code explanation rather than a change, treat its central responsibility, contract, or path as the center. Do not require a diff or invent a change narrative.
+When the requested subject is a standalone architecture, flow, or surrounding-code explanation rather than a change, treat what starts the mechanism, the contract it consumes, or the data it transforms as the center. Do not require a diff or invent a change narrative.
 
 ## Build the default reading path
 
-1. **Identify the concrete center.** Use the supplied subject and review question when present; do not
-   recenter on the whole change. Otherwise derive the smallest coherent implementation question from
-   the explicit request and verified facts. A Walkthrough should have one central path, not absorb every
-   independently useful concept in the Pull Request. For a change, connect only the problem, visible
-   behavior, before/after difference, concept, responsibility, or existing mechanism needed for that
-   path. For a standalone subject, identify its central responsibility, contract, or path. When purpose
-   is not established, describe only the verified implementation and state what remains unknown.
-2. **Enter the code quickly.** Name the concrete situation the reader is trying to explain and the first
-   source location that can confirm or refute the initial explanation. Supply only the context needed to
-   make that verification intelligible.
-3. **Trace enough surrounding structure.** Inspect the diff when the task concerns a change, and inspect
-   beyond changed files whenever useful. Consider entry points, callers, callees, data producers and
-   consumers, state transitions, persistence, external I/O, events or jobs, types and contracts,
-   existing implementation, and tests. Stop exploring branches that do not clarify the center.
-4. **Build small understanding updates.** For each natural section, decide internally what the reader
-   wants to know now, the minimum explanation needed, which exact code can confirm or contradict it,
-   what that evidence establishes about responsibility, state, conditions, or results, and which new
-   question follows. Express the result naturally as concise prose, a small diagram when useful, and a
-   few references. Do not print these checks as five fixed headings.
-5. **Choose a comprehension order.** Prefer a causal or conceptual sequence over file or diff order.
-   Useful sequences include external entry to internal handling, caller to callee, data creation to
-   transformation to storage to use, old mechanism to new difference, abstraction to implementation,
-   contract to implementation, or representative case to repeated applications.
-6. **Select and anchor the minimum useful route.** Use as few sections as needed to understand the
-   central behavior. For every code stop, identify the exact file, symbol, or range, its role, what it
-   does or what changed, how it connects to adjacent evidence, and why reading it updates the model.
-   Prefer relationships and consequences over translating code line by line.
-7. **Include unchanged code selectively.** Include a key caller, maintained contract, replaced path,
-   downstream consumer, side-effect subscriber, model defining state meaning, or existing
-   implementation needed to interpret a test when it materially improves orientation.
-8. **Choose an intentional endpoint.** Stop after the reviewer can explain the subject's center, trace
-   its representative behavior, place it among the relevant responsibilities or state, and continue
-   into code with a new question. When naming further exploration points, say why each is worth opening
-   and what uncertainty or boundary it can test; do not finish with a related-file list.
+1. **Establish local footing.** Use the supplied question without recentering on the whole PR. Assume
+   general programming and stack knowledge, but no local vocabulary, state model, or prior reading of
+   the PR body, file map, or other Artifacts. Before the first code reference, give enough context that
+   the reader can explain what mechanism this is, what situation is being considered, and what the
+   code check will establish. Introduce a term where it is needed. Investigate missing context in
+   source and available PR information; do not invent business intent or demand a large introduction.
+2. **Choose what stays connected.** For behavior or data flow, identify one input, operation, record,
+   event, or concrete failure, its starting conditions, and an outcome sufficient to answer the
+   question. Follow the brief when supplied, while verifying its proposed case and path. A conflict
+   or failure can be the main case. For a contract or local comparison, use that question directly;
+   do not manufacture a UI journey or a before/after story for a standalone explanation.
+3. **Investigate the actual handoffs.** Inspect relevant changed and unchanged callers, callees,
+   transformations, state writes, persistence, later reads, events, jobs, and callbacks. An input can
+   become a request, a differently typed record, then a displayed result: find what preserves the
+   connection to this case at each transition. Registration does not prove invocation, and an import
+   does not prove execution or data flow. If an essential connection cannot be established, state the
+   gap and return a conflicting brief rather than making up a tidy path.
+4. **Carry the case through each code stop.** Explain the received data or current state, the relevant
+   condition or transformation, the resulting output or update, and how the next consumer gets it.
+   Select only the facts needed at that point; do not print these as fixed headings or narrate every
+   line. Give each reference a verification question and explain what it establishes about this case.
+   Describing a controller, service, and repository in succession is insufficient if the reader must
+   infer which result each one receives. Explain a component when the case needs it, not in a prior
+   inventory. For conceptual paths, make the comparison or dependency between stops equally explicit.
+5. **Preserve the real ordering.** Choose a helpful reading order, but distinguish it from execution
+   order and a representative trace from a guaranteed schedule. Keep waits, concurrent work, retries,
+   callbacks, and races visible in prose as well as diagrams. Mark invented example values as
+   illustrative, not observed. Separate case assumptions from source-established conditions, and
+   source facts from inference, test assertions, actual execution results, and unknowns.
+6. **Stop where the model becomes usable.** Use the smallest route that reaches the chosen outcome;
+   do not force a full UI-to-storage-to-UI tour. Summarize a shared rule only after establishing the
+   concrete connections that support it. Finish with a meaningful condition to change and the code
+   that could confirm its effect, so the reader can continue exploring without a related-file list.
+
+Explain design choices through consequences supported by source or an attributed constraint: which
+caller or consumer would change, which check would be duplicated, or which saved value could disagree.
+Do not justify moving or grouping code solely with abstract module labels. If the evidence is missing,
+leave that judgment open. Concrete explanation need not be a line-by-line translation.
 
 ## Adapt to the subject
 
-- For a standalone architecture or flow, explain the central responsibility or contract and trace representative connections without manufacturing a before/after distinction.
+- For a standalone architecture or flow, explain what starts the mechanism or which contract is consumed and trace representative connections without manufacturing a before/after distinction.
 - For a local behavior change, show the before/after behavior and the main decision point briefly; avoid a broad architecture tour.
 - For a new feature or processing path, follow the user or system entry through the main processing, data, persistence, and side effects in causal order.
 - For a cross-cutting change, explain the shared rule first and then show a few representative applications; do not enumerate every similar file.
-- For a refactor, focus on changed responsibilities, dependencies, and contracts rather than file movement. Point to tests or invariants when preserved behavior matters.
+- For a refactor, show which callers, checks, writes, or consumed contracts change, rather than only file movement. Point to tests or invariants when preserved behavior matters.
 - For a mechanical or repetitive change, explain the pattern and a small number of representative examples.
 - For a data model or migration, explain data meaning, compatibility, write and read paths, migration order, and relevant application connections.
 - For a UI change, consider user action, state, data retrieval, component connections, and rendered outcome rather than a component list.
@@ -92,11 +96,12 @@ When the requested subject is a standalone architecture, flow, or surrounding-co
 
 ## Deepen at real boundaries
 
-After establishing a representative main case, show where that understanding stops being sufficient.
-Choose only boundaries that matter to this subject, such as failure, retry, re-entry, cancellation,
-race, existing data, compatibility, cleanup, permission, lifecycle, or state-update timing. Do not add
-a fixed error or edge-case chapter. Connect a boundary to the source that implements it and explain how
-it changes or qualifies the model established by the representative case.
+Vary a condition of the established case when explaining failure, retry, re-entry, cancellation,
+race, existing data, compatibility, cleanup, permission, lifecycle, or state-update timing. State what
+stays the same until the divergence, which condition changes the route, what no longer happens, what
+happens instead, and where it rejoins or ends, selecting only the distinctions that matter. A failure
+can be the central case rather than an obligatory later chapter. Do not enumerate all branches or
+isolate “error handling,” “lifecycle,” and “tests” from the case whose behavior they qualify.
 
 Place a relevant test beside the behavior or boundary it helps the reader inspect instead of saving all
 tests for a final inventory. Keep these claims separate: a test exists; it was executed; that execution
@@ -242,19 +247,29 @@ Avoid a review-findings list that replaces orientation:
 - Recommendation: rewrite the persistence layer.
 ```
 
-When one short causal chain is already easy to hold in working memory, prefer a connected text path
-with no ceremonial diagram:
+The following is a hypothetical example, not a claim about an rvw feature or an executed result.
+The reference names stand for code the producer would have to inspect before publication:
 
 ```markdown
-Start at [the request contract](rvw-ref:request-contract) to see the new input and the boundary that
-accepts it. Follow that value into [the orchestration step](rvw-ref:orchestrator), where the existing
-flow now selects the new behavior. Then inspect [the unchanged consumer](rvw-ref:consumer) to see why
-the produced state has this shape, and finish at [the behavior test](rvw-ref:behavior-test), which
-records the observable before/after distinction. These references establish the main path; the
-adjacent error handling remains a useful next exploration point.
+A reviewer has selected two documents to export. Export saves a job that a worker can read later;
+it does not create the archive during the request. Follow this one selection until the worker can
+retrieve it. The two documents and job J are illustrative values.
+
+At [the request check](rvw-ref:request), verify that both selected document IDs are accepted before
+any job is saved. [The enqueue call](rvw-ref:enqueue) saves those IDs in job J and returns J's ID to
+the caller. The selected IDs have now become persisted job input, not archive contents.
+[The worker read](rvw-ref:worker) reloads J by that ID; check that it uses the saved document IDs.
+This read can happen later, so the returned job ID does not prove an archive already exists.
+
+Change one document to an ineligible status. The request check now rejects this same selection before
+enqueue, so no J is saved on this path; inspect [the rejection test](rvw-ref:reject-test) for that
+assertion. If the next question is what happens when a document disappears after enqueue, begin at
+the worker read, where the saved IDs are used against the documents that still exist.
 ```
 
-This route may cross changed and unchanged code, gives each stop a reason, and remains useful without claiming completeness. Adapt its organization and length; do not copy it as a fixed template.
+Adapt the length and form to the subject. This example preserves one selection across input, saved
+job, and later read; general descriptions of request, queue, and worker would leave those connections
+for the reader to supply. A small local condition can be clearer in a few sentences with no diagram.
 
 ## Avoid these anti-patterns
 
@@ -267,7 +282,7 @@ This route may cross changed and unchanged code, gives each stop a reason, and r
 - Do not claim the Walkthrough is sufficient, exhaustive, or evidence that the change can be approved.
 - Do not invent business intent or external constraints.
 - Do not force every subject into the same headings, number of steps, or prose structure.
-- Do not narrate code line by line when relationships, responsibility, or behavior are the useful information.
+- Do not narrate code line by line when relationships, state changes, or behavior are the useful information.
 - Do not make a broad glossary, file tour, or giant architecture diagram a prerequisite for the first
   code verification.
 - Do not default every visual question to a flowchart or add a diagram where prose and code are clearer.
@@ -285,22 +300,26 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] Adjacent subjects were reported to the caller rather than turned into companion Artifacts.
 - [ ] The subject is genuinely clearer as an ordered path; otherwise no Walkthrough was published.
 - [ ] The requested subject or change center can be stated briefly without unsupported intent.
-- [ ] The reader reaches a concrete source verification before being asked to retain broad background.
+- [ ] Before the first code link, a new reader can explain the mechanism, situation, and reason for
+      checking that code without reading another Artifact or the PR body.
 - [ ] The order builds a mental model rather than mirroring file or diff order.
-- [ ] Each natural section answers a current question, connects to exact code, states what the evidence
-      establishes, and motivates the next useful question.
-- [ ] Adjacent steps have a causal or conceptual connection.
+- [ ] For a behavioral path, the same case remains identifiable across transformations, saved state,
+      later reads, and async handoffs; each stop explains what changed and why the next code matters.
+- [ ] For a conceptual path, the comparison or dependency between stops is explicit without a forced
+      execution story.
 - [ ] Necessary unchanged code is included and incidental related files are omitted.
 - [ ] The depth matches the size and nature of the requested subject.
 - [ ] Facts, inference, and unknowns are distinguishable.
-- [ ] Relevant boundaries qualify the representative case without becoming a fixed checklist.
+- [ ] Important variants name a changed condition, divergence, changed effect, and rejoin or endpoint
+      relative to the established case, without becoming a fixed checklist.
 - [ ] Claims about test existence, execution, pass status, and guarantees remain distinct.
 - [ ] Every diagram answers one useful question with an appropriate notation, readable scope, and
       source-supported elements and relations; a diagram-free local explanation remains diagram-free.
 - [ ] Bindable node-like elements use exact supported source IDs, while passive messages, transitions,
       and relations have nearby `rvw-ref:` evidence when they carry important claims.
 - [ ] The output is an orientation path, not an AI review, approval plan, or completeness claim.
-- [ ] The endpoint gives a reason and a question for each worthwhile next code exploration point.
+- [ ] At the endpoint, changing one condition lets the reader identify a likely divergence and code
+      to inspect; a generic instruction to explore more does not suffice.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
 - [ ] Any HTML preview is static, network-free, readable in both themes, pretty-printed, and used only where it improves comprehension.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

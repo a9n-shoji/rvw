@@ -1,6 +1,6 @@
 ---
 name: rvw-review-compose
-description: Analyze one Pull Request or explicit review subject and choose source-anchored rvw Walkthroughs, Structures, and direct code reading that minimize total comprehension cost. For a PR-wide composition, always include a PR-scoped file-responsibility and dependency Structure while adapting every other surface. Use when the user asks to recommend or explicitly produce an overall review composition; recommendation is non-mutating. Use the producer Skills directly for one explicitly bounded Walkthrough or Structure.
+description: Analyze one Pull Request or explicit review subject and choose source-anchored rvw Walkthroughs, Structures, and direct code reading that minimize total comprehension cost. For a PR-wide composition, always include a PR-scoped file map of relevant definitions, processing, and dependencies while adapting every other surface. Use when the user asks to recommend or explicitly produce an overall review composition; recommendation is non-mutating. Use the producer Skills directly for one explicitly bounded Walkthrough or Structure.
 ---
 
 # rvw review composition
@@ -13,7 +13,7 @@ overloaded surface, while zero can be best for an explicitly bounded local quest
 composition is the exception: it always includes at least one PR-scoped file-map Structure, then
 optimizes every other surface within that constraint. The goal is not to create a complete explanation
 set or to make the reviewer feel finished; it is to let the reviewer build small mental models, verify
-them in committed code, place them back among file responsibilities and dependencies, and keep
+them in committed code, locate the code that reads, changes, or consumes the relevant data, and keep
 exploring.
 
 This Skill owns PR-wide composition. `rvw-walkthrough` owns one ordered explanation path, and
@@ -63,14 +63,17 @@ update.
 When production intent is ambiguous, finish with a recommendation rather than mutate review state.
 
 Investigate the Pull Request or requested subject, its diff, relevant surrounding code, contracts, and
-tests before choosing Artifact boundaries. Identify the main comprehension difficulties and the
-coupling between them. Candidate bounded understanding units are internal reasoning only; do not
+tests before choosing Artifact boundaries. Identify what context the reader needs, what one case or relation they should understand, and
+which connections they would otherwise have to reconstruct. For behavior or data flow, choose the
+case, initial conditions, essential handoffs, and a meaningful endpoint before splitting surfaces.
+Assume general programming and stack knowledge, but no PR-specific terms, state model, or prior
+reading of the PR body, file map, or other Artifacts. Candidate bounded understanding units are internal reasoning only; do not
 persist or present them as a new rvw object.
 
 First decide whether the request covers the Pull Request as a whole or one explicitly bounded review
 subject. For a PR-wide composition, include one file-map Structure for each genuinely independent
-change area needed to locate the implementation. A file map answers which files carry the relevant
-responsibilities and what source-verifiable dependencies connect them. It is not a changed-file list,
+change area needed to locate the implementation. A file map identifies where relevant processing and definitions live, and what another file calls,
+reads, registers, or tests. It is not a changed-file list,
 repository-wide import graph, generic architecture inventory, or required first reading step. Do not
 join independent areas with a relation that exists only because they share a Pull Request. A single-file
 change still has a one-Node file map and needs no invented Edge. In a read-only request, include the map
@@ -86,10 +89,10 @@ comprehension cost:
   rebuttable default, not a mandatory slot for every Pull Request.
 - Use a Walkthrough when ordered execution, causality, lifecycle, or a comprehension sequence needs
   prose between stops, a required ending, or transitions that carry the meaning.
-- Use a normal behavior Structure when responsibility, ownership, dependency, contract, or side-effect
-  relationships around one factual code entrypoint are the essential shape. Its optional presentation
+- Use a normal behavior Structure when the question is which code reads or changes shared state,
+  consumes a contract, or triggers an effect around one factual code entrypoint. Its optional presentation
   may set initial attention, emphasize one connected exact-relation backbone, and identify stable named
-  comprehension Regions with responsibility summaries while keeping the complete graph directly
+  comprehension Regions with summaries of the processing or definitions they connect while keeping the complete graph directly
   reachable. Region array order is not authorial semantics. Do not omit an independently useful behavior
   Structure merely because the file map exists.
 - Direct the reviewer to code without creating an Artifact when the question is local, conditional,
@@ -108,9 +111,17 @@ cost. Split when one surface would overload two independently useful questions; 
 surfaces when the reviewer would need multiple surfaces open just to understand one inseparable
 invariant.
 
+Do not split a case into separate state, async, error, or test Artifacts just because these topics
+can be named. Account for the cost of recovering the same input or state across those surfaces.
+Keep independently useful questions separate; do not combine them into one giant path.
+
 Before invoking a producer, prepare an internal Artifact brief with a single subject and review
 question, explicit role (`walkthrough`, `file-map Structure`, or `behavior Structure`), scope and
 exclusions, any requested spatial presentation, and the candidate claims that the Artifact must verify.
+Pass the reader assumptions and local context that make its entry understandable. For a behavioral
+path, retain the chosen case, conditions, essential connections, endpoint, and useful condition changes
+in the handoff; for a relation or local question, do not invent an execution story. These are flexible
+authoring notes, not mandatory fields or output headings.
 Also state the verified facts and terminology it should share with the composition and which question or
 explanation another surface already owns so the producer does not duplicate it. For a Walkthrough,
 identify any central relationship, state, ordering, or branching question that a diagram could help the
@@ -141,7 +152,7 @@ emphasis as authoring authority: they control what the producer investigates, no
 say. For a Structure, also pass any requested thesis, semantic attention-start concept, connected
 exact-relation visual backbone, and named comprehension chunks to consider as Regions as presentation
 authority over verified claims. Describe a new backbone by the relationship claims it should emphasize
-and a new Region by the chunk's meaning, responsibility, and contribution to the thesis. The composer
+and a new Region by the processing or definitions the chunk connects and how they support the thesis. The composer
 does not assign protocol IDs for a new Structure. The Structure producer builds the verified graph,
 resolves the attention-start concept to one current Node ID, resolves the backbone claims to exact
 current Edge IDs, resolves each accepted chunk to exact Node membership, and assigns each new Region a
@@ -149,7 +160,7 @@ fresh ID that becomes stable across same-chunk updates. Refer to raw IDs only wh
 existing Structure read. A suggested factual origin remains a separate claim to verify and is not
 automatically the attention start. A requested backbone must resolve to a compact connected exact Edge
 set with the start among its derived endpoint Nodes. A requested Region needs a concise statement of how
-its chunk contributes to the thesis and which responsibility concepts seem to belong together; the
+its chunk contributes to the thesis and which reads, writes, calls, or definitions need to be seen together; the
 producer decides the exact unordered disjoint Node membership. Never require the start or every Node to
 belong to a Region, interpret Region array order as guidance, or request authored Region-to-Region
 relations; the Viewer derives cross-Region connections only from verified factual Edges.
@@ -164,7 +175,7 @@ representation or reports that an essential claim is unsupported or contradicted
 to composition and revise the brief, choose a better surface, or direct the reviewer to code; never
 make the producer broaden the subject or force the claim to compensate.
 
-For a file-map brief, pass the bounded change area, candidate files and file responsibilities, candidate
+For a file-map brief, pass the bounded change area, candidate files and the processing or definitions in each, candidate
 direct relationships, deliberate exclusions, and a candidate real file from which source verification
 could begin. Do not describe that origin as a common runtime entrypoint, assign one Node to several
 files, split one file across Nodes, infer runtime behavior from an import, or ask the producer to connect
@@ -210,7 +221,16 @@ remembered URIs, or invented identity.
 
 ## Finish as a composition
 
-Before finalizing, check the whole composition for detailed overlap, terminology drift, missing
+Before finalizing, use the reference contract's entry and continuity checks on each proposed surface
+according to what is available. For a recommendation with no body, check that its brief carries the
+needed entry context and, for a behavioral path, the case, initial conditions, essential connections,
+endpoint, and useful condition changes. Report body readability as unverified; producing a content
+candidate is not required to finish a recommendation. When a body has been produced or an existing
+body can be read under the preflight and contextual-read rules, inspect the actual explanation.
+Finding a problem in existing content does not grant update permission; without that permission,
+report the problem and recommend a correction.
+
+Check the whole composition for detailed overlap, terminology drift, missing
 important boundaries, over-fragmentation, and cross-boundary risk. Drop or rescope an unpublished
 optional candidate when it does not lower total comprehension cost. For a PR-wide composition, confirm
 that every necessary independent change area has an honest file map, without inventing connectivity or

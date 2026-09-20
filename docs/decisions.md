@@ -3631,3 +3631,38 @@ maximum concurrency, and badge presentation remain unchanged.
   unusually large review sets.
 - Comment-only and pending reviews no longer erase a current approval from the cached count; dismissed
   or superseded opinions continue to follow GitHub's own connection semantics.
+
+## 2026-09-20: Preserve one case from composition through explanation
+
+### Problem
+
+The composer already minimized joins and passed bounded questions, but its brief could omit the
+reader's missing context and the input or event to follow. The Walkthrough guide could accept a
+sequence of individually concrete questions without explaining how the output at one stop reaches
+the next. Earlier evaluations checked planning, exact anchors, and diagrams; these do not establish
+that a first-time reader can follow the case or predict a changed condition.
+
+### Choice
+
+Choose local entry context, a case with starting conditions, essential handoffs, and a meaningful
+endpoint before splitting a behavioral subject. Pass those decisions to the producer as flexible
+internal authoring notes. Proposed conditions and paths still require independent source verification.
+Follow the same case across requests, saved state, callbacks, and later reads; describe important
+variants as changes to its conditions. A failure or conflict may be the main case. Explain design
+choices with concrete effects on callers, checks, consumers, or saved data.
+
+Use the existing body, scope, descriptions, references, and diagrams. No Artifact type, public field,
+DB model, CLI/API, or Viewer behavior changes. PR-wide file maps, contextual-read authority, explicit
+production intent, sequential recomposition, source exactness, and producer rejection remain intact.
+A relation question can remain a Structure and a local change direct code. This refines the existing
+Skill strategy, not the product architecture.
+
+### Validation and trade-offs
+
+Compare content candidates from old and revised instructions at the same committed target and reader
+assumptions, including fresh-context reading before source audit. Record generation, reader judgments,
+schema/source/render checks, and native-host publication separately in
+[the evaluation record](review-composition-evaluation.md). Additional context can increase length;
+check the connections it adds rather than treating length or vocabulary as quality. Do not add a
+fixed introduction or mandatory execution narrative. Reader navigation after opening source remains
+a Viewer concern and is not resolved by these authoring instructions.

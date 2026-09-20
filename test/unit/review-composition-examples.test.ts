@@ -103,3 +103,30 @@ describe("review-composition producer trio", () => {
     ).toBe(true);
   });
 });
+
+// These checks establish that both evaluation candidates can use the existing format and source
+// coordinates. Reader comprehension is assessed separately, without expected phrases or diagram counts.
+describe("composition instruction comparison candidates", () => {
+  const candidates = [
+    "docs/examples/review-composition/runtime-handoff-before.json",
+    "docs/examples/review-composition/runtime-handoff-after.json",
+  ];
+
+  it.each(candidates)("validates source and reference closure for %s", (file) => {
+    const candidate = walkthroughUpdateInputSchema.parse(readJson(file));
+    expectCommittedSource(candidate.sourceOid);
+    expect(candidate.sourceOid).toBe("a2f016c5e90886cce769aa0990c6a05c7ce02ae9");
+    const analysis = analyzeReferenceMarkdown(candidate.body);
+    const declaredIds = new Set(candidate.references.map((reference) => reference.id));
+    expect(
+      new Set([...analysis.referenceIds, ...Object.values(candidate.diagramBindings ?? {})]),
+    ).toEqual(declaredIds);
+    for (const [elementId, referenceId] of Object.entries(candidate.diagramBindings ?? {})) {
+      expect(analysis.mermaidNodeIds.has(elementId)).toBe(true);
+      expect(declaredIds.has(referenceId)).toBe(true);
+    }
+    for (const reference of candidate.references) {
+      expectReferenceExact(candidate.sourceOid, reference);
+    }
+  });
+});
