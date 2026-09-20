@@ -2374,6 +2374,11 @@ mandatoryなreview planや完了保証にはせず、通常のAgent responseで�
 永続Artifactにしない。
 
 composerへのassess / recommend / plan / audit依頼はread-onlyで、未productionのbriefとdirect-code entrypointだけを返す。
+本文のない提案はbriefに必要な入口の文脈と、振る舞いを追う場合の一件・初期条件・接続・終了点・条件変更が
+引き継がれているかを確認し、本文の読みやすさは未検証と報告して終了できる。検査のためだけの内容候補生成は要求しない。
+transport unavailableでもsourceのみからこの提案を返せるが、diagnosticと既存Artifact未評価を報告し、Artifactは読まない。
+制作済み本文やpreflightとcontextual-read契約に従って読める既存本文があれば実物を検査する。既存本文の問題発見は
+update許可ではなく、許可がなければ問題と修正案を報告する。
 producerを起動してpublish / updateするのはcreate / publish / produce / updateが明示された場合だけとし、既存URIの提示は
 read権限であってupdate権限ではない。production時はproducerをbatch起動せず、独立に有用で他候補を最も制約するsurfaceから
 順に実行する。成功時のclaim refinementを含む各producer結果の後に、残る未publish briefのoverlap、scope、terminology、

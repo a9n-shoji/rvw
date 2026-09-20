@@ -423,7 +423,8 @@ the scope or manufacturing a connection.
 
 ## Re-evaluate the whole composition
 
-Apply these checks after drafting and again after producer feedback.
+Apply these checks to the proposed briefs and any available bodies before finalizing, and again after
+producer feedback. A brief check does not establish the readability of an unproduced explanation.
 
 These checks may discard or rescope an unpublished candidate. They never authorize deletion of a
 published Artifact, including one created during the current composition; use the matching producer's
@@ -441,14 +442,25 @@ reading order.
 
 ### Entry, continuity, and transfer
 
-Inspect the produced body, not just the composition plan. Read its opening without other Artifacts:
-can a newcomer explain the situation and the first code check? At each important handoff, identify
-what the same case has become, what changed, and how it reaches the next stop. If this requires facts
-only in the brief, repair the explanation. Check whether changing one condition lets the reader name
-the likely divergence and code to inspect; a generic “explore errors next” does not do this.
+For a recommendation-only surface with no body, inspect the brief: does it carry the reader's needed
+entry context and, for a behavioral path, the chosen case, initial conditions, essential connections,
+endpoint, and useful condition changes? Preserve these in the proposed handoff and report body
+readability as unverified. Do not generate a content candidate merely to satisfy this check. This is
+also the completion path for a source-only recommendation when transport is unavailable: report the
+transport diagnostic and that existing Artifacts were not evaluated, without trying to read them.
+
+For a produced body or an existing body readable under the preflight and contextual-read rules,
+inspect the actual explanation, not just the composition plan. Read its opening without other
+Artifacts: can a newcomer explain the situation and the first code check? At each important handoff,
+identify what the same case has become, what changed, and how it reaches the next stop. Check whether
+changing one condition lets the reader name the likely divergence and code to inspect; a generic
+“explore errors next” does not do this. If needed facts appear only in the brief, repair an unpublished
+draft within the authorized production scope. For existing Artifacts, report the gap and recommend a
+correction unless the user has authorized that update; inspection itself never grants update authority.
 Compare alternative wording at similar length where useful: more prose is not evidence of a better
 connection. Contract wording, valid anchors, diagrams, and a tidy brief do not measure understanding.
-For evaluation, use the same target commit and reader assumptions for old and new instructions, retain
+
+For a separate evaluation of generation quality, use the same target commit and reader assumptions for old and new instructions, retain
 at least one complete content candidate, and separate first-reading assessment from source checking.
 A fresh reader context should see only the candidate and stated prior knowledge before source audit.
 Record whether judgments came from an Agent or a human; neither schema checks nor Agent judgments

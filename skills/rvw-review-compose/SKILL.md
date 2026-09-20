@@ -221,11 +221,15 @@ remembered URIs, or invented identity.
 
 ## Finish as a composition
 
-Before finalizing, read the recommended entry without relying on the PR body or another Artifact: can
-a newcomer explain the mechanism, situation, and purpose of the first code check? For a behavioral
-path, follow the same case through each change of representation or async handoff, then vary one
-condition and check whether the reader can locate the divergence in code. Use the reference contract
-to check the actual explanation, not merely the brief.
+Before finalizing, use the reference contract's entry and continuity checks on each proposed surface
+according to what is available. For a recommendation with no body, check that its brief carries the
+needed entry context and, for a behavioral path, the case, initial conditions, essential connections,
+endpoint, and useful condition changes. Report body readability as unverified; producing a content
+candidate is not required to finish a recommendation. When a body has been produced or an existing
+body can be read under the preflight and contextual-read rules, inspect the actual explanation.
+Finding a problem in existing content does not grant update permission; without that permission,
+report the problem and recommend a correction.
+
 Check the whole composition for detailed overlap, terminology drift, missing
 important boundaries, over-fragmentation, and cross-boundary risk. Drop or rescope an unpublished
 optional candidate when it does not lower total comprehension cost. For a PR-wide composition, confirm

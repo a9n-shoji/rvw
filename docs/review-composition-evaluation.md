@@ -69,10 +69,12 @@ The historical target even predates protocol v5; no claim is made that its CLI p
 | `rvw-structure/SKILL.md`                              | `f8cf78e287d6824c869ea3e5be4353cbd0d20bd7` | `4bd98eda2ec14d637d1c4e297122199ea2a7da83` |
 | `rvw-structure/references/structure-authoring.md`     | `6c25d6dbe2dab38be8703f32c840d0439df1770a` | `b4eb83694d0cdc434b57f9a08f3123c9ce3ee315` |
 
-The final composer reference also received one grammatical correction to the sentence separating file
-location from behavior questions after generation. Its final blob is `1ca4bbaef507d372f9392a0eaea7d732fdc966b6`;
-all other six-file instruction blobs remain those evaluated above. This copyedit did not change the
-case, routing, authority, or evaluation rules; the candidates were not regenerated for it.
+After generation, the composer reference received one grammatical correction to the sentence separating file
+location from behavior questions. At commit `0e29c42939e6b0f1e7bd241f5edd2ee38f442f02`, its blob was
+`1ca4bbaef507d372f9392a0eaea7d732fdc966b6`; the other five instruction blobs matched the table.
+This copyedit did not change the case, routing, authority, or evaluation rules; the candidates were not
+regenerated for it. The later recommendation-completion correction is evaluated separately below;
+these generation results remain tied to the recorded blobs.
 
 Retained complete outputs:
 
@@ -214,6 +216,48 @@ No fresh file-map JSON was generated; its candidate files and direct relations a
 verification. Human comprehension, repeated-run stability, and position recovery after detouring into
 source in the Viewer remain unverified. The latter needs a separate navigation evaluation; authoring
 improvements do not establish that it is solved.
+
+## Recommendation completion check (2026-09-20)
+
+Review found an instruction conflict in `0e29c429…`: the new finish checks required a produced body,
+while recommendation mode could correctly stop with unproduced briefs. The correction selects the
+check per surface: inspect a brief when there is no body, inspect available bodies under the existing
+preflight/read rules, and never infer update permission from an inspection finding. This is a contract
+correction, not evidence of an observed unauthorized update.
+
+The evaluated composer instruction blobs are:
+
+- `skills/rvw-review-compose/SKILL.md`: `87de60097accdafff754895bf6e50281a5f19d52`
+- `skills/rvw-review-compose/references/review-composition.md`: `bf30f0989a0674d2db61e639bf5cf5fed576e468`
+
+One fresh Agent used these instructions and inspected committed source for the same historical
+`c45bc91f…a2f016c5` change. It shared source inspection across the scenarios but reset available
+Artifacts for each. The reader knew TypeScript, promises, HTTP, and local processes, but no rvw terms.
+Protocol v5, capabilities, transport, and discovery results were supplied fixtures, not live CLI runs.
+The Agent completed the recommendations and final checks; this was not a phrase-presence test.
+
+| Request and available input                                                                                                                                        | Observed completion                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 「このPRの読書構成を提案して。Artifactは作らない。」 Available transport; exhaustive discovery fixture found no Artifacts.                                         | Returned an unproduced file-map brief and two Walkthrough briefs, checked their context and connections, and reported body readability as unverified. No content candidate was required to finish.                         |
+| 「このPRの読書構成を提案して。既存のWalkthroughも参考にして。Artifactは作成・更新しない。」 Unavailable transport; no body supplied.                               | Returned source-only briefs, reported the exact diagnostic and existing-Artifact assessment as unmet, and proposed no Artifact read or mutation. It did not carry over the first scenario's no-match result.               |
+| Recommendation-only request; transport available; successful contextual-read fixture supplies the opening “The lease survives until heartbeat; see handleRequest.” | Inspected the supplied opening, identified missing situation and term definitions, and recommended a correction without updating. The rest of the body was not supplied, so its continuity remained explicitly unverified. |
+
+Both recommendations retained a case from reservation through PR resolution, arming, the URL lease ID,
+HTTP headers, and heartbeat consumption; failure cancellation and successful resolution without a
+browser were condition changes. They also retained a separate stopping-owner case, its lock-release
+endpoint, and a PR-wide file-map brief. Their final reports included:
+
+> 本文は未制作のため、本文の読みやすさとproducerによる最終表現検証は未検証です。
+
+> 既存Artifactを参照する部分はtransport不可で未達ですが、source-onlyの提案はここで完了できます。
+
+The unavailable-transport diagnostic was `No active rvw runtime is available; direct database access
+is disabled`. No live preflight, Artifact operation, producer activation, or human reading study was
+performed. This pass checks recommendation completion and operation choices, not generation quality
+or native-host acceptance; it does not replace the earlier content comparison.
+
+For this correction, `pnpm check` and the focused Skill contract, installer, and composition-example
+tests pass (**39 tests in 3 files**). No runtime, schema, or UI changed.
 
 ## Historical file-map composition evaluation (2026-09-08)
 
