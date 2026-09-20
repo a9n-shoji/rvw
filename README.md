@@ -21,20 +21,13 @@ rvwでは、その説明をコードと同じ画面に開き、気になる箇�
 作成は、別に起動したCodex / Claude CodeへSkillを使って依頼します。rvwがAgentを起動したり、説明の正しさを判定したりすることはありません。
 Agentなしでコードを読むこともできます。
 
-下は注文サービスPRのデモです。**左にWalkthrough、右に参照先のコード**を開いています。
-左の「決済の復旧処理」を選び、右の強調された行で、注文の有無と決済状態による分岐を確認している場面です。
+下は注文サービスPRのデモです。左のWalkthroughにある「決済の復旧処理」から右にコードを開き、
+注文の有無と決済状態による分岐を確認して質問します（カーソル付きGIF・7.5秒）。
 
-![rvwの画面全体。左のWalkthrough「決済承認後に注文を保存できなかったら」と、右の参照先payment-reconciliation.tsを並べている](https://raw.githubusercontent.com/a9n-shoji/rvw/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/images/review-evidence.png)
-
-<details>
-<summary>参照リンクからコードを開き、質問への応答を見る（カーソル付きGIF・7.5秒）</summary>
-
-![左のWalkthroughの参照リンクをカーソルで選び、右に復旧コードを開いて読み、再試行について質問し、Agentの確認中の応答と返信を読む操作](https://raw.githubusercontent.com/a9n-shoji/rvw/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/images/review-flow.gif)
+![左のWalkthroughの参照リンクをカーソルで選び、右に復旧コードを開いて読み、再試行について質問し、Agentの確認中の応答と返信を読む操作](https://raw.githubusercontent.com/a9n-shoji/rvw/166871b5fbd78f258611553ca7c8acc0101737e2/docs/images/review-flow.gif)
 
 左の説明を残したまま、右のコードで質問し、Agentの「🔎 確認中です…」が回答に変わるところまでを見せています。
 実操作を短く編集し、カーソルとクリック位置を表示しています。応答は撮影用に用意した例で、実際のAgentの処理時間を示すものではありません。
-
-</details>
 
 ## コードを確かめて質問を残す
 
@@ -45,12 +38,26 @@ Agentなしでコードを読むこともできます。
 3. さらに読むと、`pending` や `unknown` の場合は `retry-later` を返しています。再試行の期限が分からなければ、その行に質問を残します。
 4. Agentの返信と、返信に付いた参照リンクからコードや運用手順を確認します。
 
-![再試行の期限を質問したコメントと、Codexの応答例。復旧処理と運用手順の参照リンク付きで回答している画面](https://raw.githubusercontent.com/a9n-shoji/rvw/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/images/review-comment.png)
+![再試行の期限を質問したコメントと、Codexの応答例。復旧処理と運用手順の参照リンク付きで回答している画面](https://raw.githubusercontent.com/a9n-shoji/rvw/166871b5fbd78f258611553ca7c8acc0101737e2/docs/images/review-comment.png)
 
 Agent連携では、先に外部Agentで **rvw-watch-comments** を起動しておきます。
 コメントを受け付けると **「🔎 確認中です…」** が付き、調査が終わると同じ投稿が回答に変わります。
 応答にはCodex / Claude CodeなどのAgent名が表示され、自分の質問と区別できます。上の返信はデモ用の例です。
 コメントと返信は手元のrvwに保存され、GitHubには投稿されません。
+
+## 図から処理の関係を辿る
+
+Structureでは、処理やデータを表す要素と、それらの関係を図で読めます。
+要素のコード参照からその実装へ、関係に付いたコード参照から呼び出しや条件分岐などの根拠へ進めます。
+
+下は同じPRの「決済を取り消してよいか」という図です。**決済先の承認状態**の周辺に絞り、
+「取り消せる状態か確かめる」という関係の **`</>`** を `Cmd` / `Ctrl`＋クリックしています。
+右に開いた復旧処理で `voidable` の判定を確認し、続けて図の要素から決済先との通信を扱うコードを開きます。
+
+![左のStructureで決済状態と取り消し判断の関係を選び、右に判定コードを開く。続いて決済先の承認状態の要素からStripeGatewayの実装を読む操作](https://raw.githubusercontent.com/a9n-shoji/rvw/166871b5fbd78f258611553ca7c8acc0101737e2/docs/images/structure-flow.gif)
+
+カーソル付きGIF・7.5秒。要素を選んで **1-hop / 2-hop** を使うと周辺の関係に絞れます。
+**全体** で図全体に戻り、**Fit** で表示中の要素を画面に収められます。
 
 ## インストールしてPRを開く
 
@@ -111,17 +118,20 @@ rvw skill status
 ```
 
 Agent側でSkillが読み込まれていることを確認し、rvwで開いたPRのURLを添えて依頼します。
-下の角括弧の部分を、自分が確かめたいことに置き換えます。
+`rvw-review-compose`はPRと周辺コードを調べ、どこを説明し、どこをコードで直接読むかを考えて、
+必要なWalkthroughやStructureを作成します。
 
 ```text
-rvw-walkthrough Skillを使って、https://github.com/owner/repository/pull/123 の
-「［例：保存に失敗したときの処理］」を説明するWalkthroughをrvwに作成してください。
-コミット済みの実装と関連するテストを調べ、説明から根拠のコードを開けるようにしてください。
+rvw-review-compose Skillを使って、https://github.com/owner/repository/pull/123 を
+理解するためのWalkthrough / Structureを、おすすめの構成でrvwに作成してください。
+コミット済みの実装と関連するテスト、周辺コードを調べ、根拠のコードを開けるようにしてください。
+最初に読む入口と、説明に含めなかった範囲を教えてください。
 確認できない点は明記してください。今回はコードの変更は不要です。
 ```
 
-作成後、左の **ウォークスルー** から説明を開きます。気になる説明のリンクを `Cmd` / `Ctrl`＋クリックし、
-横のコードで条件や呼び出し先を確かめてください。
+作成後は、Agentが案内した説明を左の **ウォークスルー** または **Structure** から開きます。
+気になる説明のリンクや図のコード参照を `Cmd` / `Ctrl`＋クリックし、横のコードで条件や呼び出し先を確かめてください。
+小さな変更では、ファイルの関係図とコードを直接読む構成になることもあります。WalkthroughとStructureが常に一組で作られるわけではありません。
 
 コメントする前に、外部Agentの別タスクで監視を起動します。
 
@@ -138,7 +148,7 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 監視には子Agentを使えるローカル環境が必要です。**全登録PRの新しいコメント・返信**が対象で、
 新規に監視を始める前からあるコメントは拾いません。rvwを起動するだけでは監視は始まりません。
 監視を使わず一件ずつ渡す方法や、修正を依頼する方法は、
-[利用ガイド](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/usage.md)にあります。
+[利用ガイド](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md)にあります。
 
 ## 使う前に知っておくこと
 
@@ -153,16 +163,34 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
   rvw自身はコード編集、テスト実行、commit、pushを行いません。
 - PRタイトルと本文は、常に**最後に成功したGitHub同期時点の内容**です。過去のコミットを選んでも過去のPR本文には戻りません。
 
-保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/usage.md)にまとめています。
+保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md)にまとめています。
 
 ## デモと関連文書
 
 ソースから `pnpm demo` を起動すると、上の画面と同じ注文サービスPRを試せます。
-GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/usage.md#デモで同じ疑問を追う)を参照してください。
+GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md#デモで同じ疑問を追う)を参照してください。
 
-- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
-- [CLI protocol](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
-- [実装仕様](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/architecture.md)：参照解決、保存、描画などの保証。
-- [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/SECURITY.md)。
+- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
+- [CLI protocol](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
+- [実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)：参照解決、保存、描画などの保証。
+- [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)。
 
-ライセンスは[MIT](https://github.com/a9n-shoji/rvw/blob/139f13135832af4eb3fd8eac901e50944e8ed0e2/LICENSE)です。
+ライセンスは[MIT](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/LICENSE)です。
+
+## ショートカット
+
+`Cmd`はmacOS、`Ctrl`はWindows / Linuxで使います。
+
+| 操作                                     | ショートカット                 | 使う場所・条件                                                                |
+| ---------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------- |
+| ファイルや説明を名前で探して開く         | `Cmd` / `Ctrl` + `P`           | 検索結果は `↑` / `↓` で選び、`Enter` で左ペインに開く                         |
+| コードベース全体から文字列を探す         | `Cmd` / `Ctrl` + `Shift` + `F` | 選択コミットのリポジトリを全文検索                                            |
+| 開いているペイン内を検索する             | `Cmd` / `Ctrl` + `F`           | 文書ペインをクリックしてから。コメントなどの入力欄にいる場合は対象外          |
+| ペイン内検索の次／前の一致へ進む         | `Enter` / `Shift` + `Enter`    | ペイン内検索の入力欄。検索を開いている間は `F3` / `Shift` + `F3` も使える     |
+| ファイルや参照先を横に開く               | `Cmd` / `Ctrl` + クリック      | ファイル一覧・検索結果・説明やコメントの参照リンク・Structureのコード参照     |
+| コメント・返信を送信する／編集を保存する | `Cmd` / `Ctrl` + `Enter`       | 各入力欄。日本語変換中は送信しない                                            |
+| 新規の行・ファイルコメント入力を取り消す | `Esc`                          | 新規コメントの入力欄。未投稿の内容を破棄する                                  |
+| 前／次の文書タブへ移る                   | `←` / `→`                      | 文書タブにフォーカスがあるとき。`Home` / `End` で先頭／末尾へ                 |
+| コミットを範囲で選ぶ                     | `Shift` + クリック             | **対象commit** の一覧で、選択範囲の最後のコミットからクリックしたコミットまで |
+| Structureの要素と周辺の関係へ移る        | 要素をダブルクリック           | 図のコード参照ボタン以外の部分                                                |
+| Structureを拡大・縮小する                | `Cmd` / `Ctrl` + ホイール      | 図の上。ホイールだけなら図を移動                                              |
