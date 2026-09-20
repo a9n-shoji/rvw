@@ -3,38 +3,54 @@
 rvwは、GitHubのPull Requestを、差分と**その時点のコードベース全体**を行き来しながら読むためのツールです。
 PR内のコミットを選び、変更された行からファイル全文、変更されていない呼び出し元やテストまで、手元のブラウザで確認できます。
 
-説明やコメントの**参照リンクから、根拠となるコードの行を開けます**。
-説明を残したまま横にコードを並べ、書かれた条件や処理を自分で確かめられます。
-Codex / Claude Codeには、この参照リンク付きの説明を作ってもらえます。Agentを使わず、コードから読み始めることもできます。
+基本的な使い方は次の4つです。
 
-![決済承認後の注文保存失敗について、説明と根拠のコードへのリンクを読んでいるrvwの画面](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-evidence.png)
+- **その時点のコードベースを読む。** 差分と全文を切り替え、変更されていないファイルも開いて検索できます。
+- **参照リンクで根拠を確かめる。** 説明・図・コメントに付いたリンクから、対象のファイルと行を開けます。
+- **左右に並べて読む。** 説明とコード、呼び出し元と呼び出し先を、タブに残して見比べられます。
+- **コードにコメントを残す。** 変更のない行にも質問を書けます。Agentのコメント監視を起動しておけば、質問への応答と調査結果を同じ場所で読めます。
 
-同梱デモの注文サービスPRを開いた画面です。決済の承認後に注文を保存できなかった場合の説明から、復旧処理のコードへ移動できます。
+## 説明とコードを並べて読む
+
+コードをどこから読めばよいか迷ったときは、Agentに参照リンク付きの説明を作ってもらえます。
+rvwでは、その説明をコードと同じ画面に開き、気になる箇所から根拠のファイルや行へ進めます。説明には2つの形式があります。
+
+- **Walkthrough** は、一つの疑問や処理を順に読む説明です。「決済の承認後に注文を保存できなかったらどうなるか」などを文章や図で説明し、各所に根拠のコードへのリンクを付けます。流れを読みながら、条件や処理をコードで確認できます。
+- **Structure** は、ファイルや処理の関係を辿るための図です。どの処理がデータを読み書きするか、どのファイルに依存するかなどを、関連する要素や線からコードを開いて確認できます。
+
+作成は、別に起動したCodex / Claude CodeへSkillを使って依頼します。rvwがAgentを起動したり、説明の正しさを判定したりすることはありません。
+Agentなしでコードを読むこともできます。
+
+下は注文サービスPRのデモです。**左にWalkthrough、右に参照先のコード**を開いています。
+左の「決済の復旧処理」を選び、右の強調された行で、注文の有無と決済状態による分岐を確認している場面です。
+
+![rvwの画面全体。左のWalkthrough「決済承認後に注文を保存できなかったら」と、右の参照先payment-reconciliation.tsを並べている](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-evidence.png)
 
 <details>
-<summary>説明からコメントまでの操作GIFを見る（13秒）</summary>
+<summary>参照リンクからコードを開き、質問への応答を見る（カーソル付きGIF・7.5秒）</summary>
 
-![日本語の説明を読み、決済の復旧コードを開き、再試行について質問を入力して投稿する4場面のGIF](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-flow.gif)
+![左のWalkthroughの参照リンクをカーソルで選び、右に復旧コードを開いて読み、再試行について質問し、Agentの確認中の応答と返信を読む操作](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-flow.gif)
 
-実際に操作した「説明 → コード → 質問の入力 → 投稿」の4場面を順に表示します。
+左の説明を残したまま、右のコードで質問し、Agentの「🔎 確認中です…」が回答に変わるところまでを見せています。
+実操作を短く編集し、カーソルとクリック位置を表示しています。応答は撮影用に用意した例で、実際のAgentの処理時間を示すものではありません。
 
 </details>
 
-## 参照リンクからコードを確かめる
+## コードを確かめて質問を残す
 
-コードへの参照リンクが付いた説明を **Walkthrough** と呼びます。リンクを選ぶと、対象のファイルを開いて該当する行を強調表示します。
 このデモでは「決済承認後に注文を保存できなかったら」を開き、次の順に読みます。
 
 1. 説明内の **決済の復旧処理** を `Cmd` / `Ctrl`＋クリックして、右ペインにコードを開きます。
 2. 注文がある場合は終了し、決済状態が `voidable` の場合に取り消すことを確認します。
 3. さらに読むと、`pending` や `unknown` の場合は `retry-later` を返しています。再試行の期限が分からなければ、その行に質問を残します。
+4. Agentの返信と、返信に付いた参照リンクからコードや運用手順を確認します。
 
-![決済状態が確定しない場合のretry-laterを読み、再試行の期限についてコード行に日本語のコメントを残した画面](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-comment.png)
+![再試行の期限を質問したコメントと、Codexの応答例。復旧処理と運用手順の参照リンク付きで回答している画面](https://raw.githubusercontent.com/a9n-shoji/rvw/d9ea131858d1c6365060082ad971ef5aca43fa4b/docs/images/review-comment.png)
 
-コメントは手元のrvwに保存されます。参照をコピーしてAgentへ渡すと、対象のコードと質問を読んで返信できます。
-
-ファイルや処理の関係を図から辿りたい場合は、**Structure** の作成もAgentに依頼できます。図の要素や関係からコードを開けます。
-説明や図を作るのは、利用者が別に起動したAgentです。rvw自身にAI機能はありません。
+Agent連携では、先に外部Agentで **rvw-watch-comments** を起動しておきます。
+コメントを受け付けると **「🔎 確認中です…」** が付き、調査が終わると同じ投稿が回答に変わります。
+応答にはCodex / Claude CodeなどのAgent名が表示され、自分の質問と区別できます。上の返信はデモ用の例です。
+コメントと返信は手元のrvwに保存され、GitHubには投稿されません。
 
 ## インストールしてPRを開く
 
@@ -105,19 +121,24 @@ rvw-walkthrough Skillを使って、https://github.com/owner/repository/pull/123
 ```
 
 作成後、左の **ウォークスルー** から説明を開きます。気になる説明のリンクを `Cmd` / `Ctrl`＋クリックし、
-横のコードで条件や呼び出し先を確かめてください。疑問が残ったら、そのコード行にコメントします。
-コメントの **… → 参照をコピー** を選び、Agentへ次のように渡します。
+横のコードで条件や呼び出し先を確かめてください。
+
+コメントする前に、外部Agentの別タスクで監視を起動します。
 
 ```text
-rvw Skillを使って、次のコメントについて調査し、rvwの同じコメントに返信してください。
-確認したコードへのリンクも付けてください。今回はコードの変更やpushは不要です。
-
-［ここにコピーした rvw://comment/… を貼る］
+rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を監視してください。
+今回は調査とrvwへの返信だけを行い、コード変更・commit・pushはしないでください。
+監視を開始できたら知らせてください。
 ```
 
-返信とリンク先のコードを確認し、疑問が解消したら **解決** を押します。
-修正を依頼する場合や、PR全体の説明の構成を任せる場合は、
-[利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)へ進んでください。
+監視開始の知らせを待ってから、疑問のあるコード行にコメントします。
+「🔎 確認中です…」が付けばAgentが受け付けています。調査後はその投稿が回答に置き換わるので、
+返信とリンク先のコードを確認し、疑問が解消したら **解決** を押します。続けて質問する場合は同じコメントに返信できます。
+
+監視には子Agentを使えるローカル環境が必要です。**全登録PRの新しいコメント・返信**が対象で、
+新規に監視を始める前からあるコメントは拾いません。rvwを起動するだけでは監視は始まりません。
+監視を使わず一件ずつ渡す方法や、修正を依頼する方法は、
+[利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)にあります。
 
 ## 使う前に知っておくこと
 
@@ -139,7 +160,7 @@ rvw Skillを使って、次のコメントについて調査し、rvwの同じ�
 ソースから `pnpm demo` を起動すると、上の画面と同じ注文サービスPRを試せます。
 GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md#デモで同じ疑問を追う)を参照してください。
 
-- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)：PRを読む、説明を頼む、コメントを渡す、修正後を確認する。
+- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
 - [CLI protocol](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
 - [実装仕様](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/architecture.md)：参照解決、保存、描画などの保証。
 - [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/7c054a0cc82205a01927bf4c26ac8560d0eeb853/SECURITY.md)。
