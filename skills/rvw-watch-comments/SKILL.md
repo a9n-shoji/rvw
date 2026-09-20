@@ -128,7 +128,23 @@ auto-ack claim durably binds either the supplied label or that deliberate absenc
 calling rvw. Every restart must use the same value. A changed, added, or removed label is rejected
 before rvw reads or writes any comment, so an acknowledgement retry keeps the original idempotency payload.
 
-Launch the driver through the runtime's long-lived streaming-process facility. Yield stdout to the
+In Claude Code, launch the driver command above with the `Monitor` tool's command source. Use
+`Monitor` for continuous intake, never `Bash` with `run_in_background`, `TaskOutput` polling, or a
+shell sleep loop. Keep the driver in the foreground of the monitored command, with stdout connected
+directly to Monitor; do not append `&` or redirect its events to a log. Each Monitor output event is
+a driver JSON line: handle `watch-ready`, immediately dispatch `batch-acknowledged`, and surface
+terminal failures using the contracts below. Check that Monitor is available before activating a
+new task or starting auto-ack; if unavailable, report that limitation and stop instead of silently
+falling back to Bash. Finite setup, state, and reply commands may still use Bash.
+
+Monitor watches have a deadline. When a deadline notice arrives and the user still wants monitoring,
+confirm the previous driver has stopped, then restart through Monitor using the same task state,
+author label, and reserved capacity. Follow the recovery steps above and never activate a new
+generation just to renew Monitor. Do not renew after user cancellation or a terminal driver failure.
+See the [Claude Code Monitor reference](https://code.claude.com/docs/en/tools-reference#monitor-tool).
+
+In other runtimes, launch the driver through the runtime's long-lived streaming-process facility.
+Yield stdout to the
 parent as soon as lines arrive; never wait for the driver to exit or buffer a group of lines before
 dispatch. Process every `batch-acknowledged` line already received before waiting for more driver
 output.

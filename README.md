@@ -143,6 +143,8 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 
 監視には子Agentを使えるローカル環境が必要です。**全登録PRの新しいコメント・返信**が対象で、
 新規に監視を始める前からあるコメントは拾いません。rvwを起動するだけでは監視は始まりません。
+Claude Codeでは`Monitor` toolで監視driverを起動し、出力イベントを受け取ります。Bashのbackground実行や
+出力pollingは使わず、Monitorの期限到達時は同じtask stateで再開します。
 監視を使わず一件ずつ渡す方法や、修正を依頼する方法は、
 [利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)にあります。
 
