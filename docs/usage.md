@@ -120,13 +120,10 @@ rvwを更新したら `rvw skill status` でSkillの状態も確認します。�
 
 ### PR全体をどこから読むかも任せる
 
-READMEの例と同じく、まずはPR全体を調べ、読む順序や説明の構成をAgentに任せられます。
+`rvw-review-compose` Skillを選び、PRのURLだけを渡します。読む順序や説明の構成はSkillに任せます。
 
 ```text
-rvw-review-compose Skillを使って、https://github.com/owner/repository/pull/123 を
-理解するためのWalkthrough / Structureを、おすすめの構成でrvwに作成してください。
-変更を理解するために必要な周辺コードも調べ、最初に読む入口と、説明に含めなかった範囲を教えてください。
-今回はコードの変更は不要です。
+https://github.com/owner/repository/pull/123
 ```
 
 ファイルや処理の関係を図から辿れる説明が **Structure** です。PR全体の構成では、
