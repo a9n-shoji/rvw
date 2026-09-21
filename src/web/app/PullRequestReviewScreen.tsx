@@ -111,14 +111,6 @@ import {
 import { transferStructureSession, type StructureNavigationTarget } from "../structure-session.js";
 import { useDocumentWorkspace } from "../use-document-workspace.js";
 import {
-  agentNotificationBody,
-  browserNotificationPermission,
-  notificationPermissionLabel,
-  readAgentNotificationsEnabled,
-  scanAgentPostNotifications,
-  storeAgentNotificationsEnabled,
-} from "../agent-notifications.js";
-import {
   documentForReadingHistoryRestore,
   parseReadingHistoryEntry,
   readingHistoryState,
@@ -676,9 +668,6 @@ export function PullRequestReviewScreen({
   const [reviewStateRevision, setReviewStateRevision] = useState(0);
   const [draftWorkspaceRevision, setDraftWorkspaceRevision] = useState(0);
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
-  const [agentNotificationsEnabled, setAgentNotificationsEnabled] = useState(
-    readAgentNotificationsEnabled,
-  );
   const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
@@ -709,8 +698,6 @@ export function PullRequestReviewScreen({
     localRepositoryPath: string;
     gitCommonDir: string;
   } | null>(null);
-  const observedAgentPostPullRequestId = useRef<string | null>(null);
-  const observedAgentPostSnapshot = useRef<Map<string, string> | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const commentsStackRef = useRef<HTMLElement>(null);
@@ -1251,76 +1238,6 @@ export function PullRequestReviewScreen({
     storeThemePreference(preference);
     themePreferenceMutation.mutate(preference);
   };
-  const notificationPermission = browserNotificationPermission();
-  const agentNotificationsActive =
-    agentNotificationsEnabled && notificationPermission === "granted";
-  const toggleAgentNotifications = async (): Promise<void> => {
-    setActionsMenuOpen(false);
-    if (agentNotificationsActive) {
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      setSyncFeedback("Agentのコメント通知をオフにしました。");
-      return;
-    }
-    if (notificationPermission === "unsupported") {
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      setSyncFeedback("このブラウザはBrowser Notificationに対応していません。");
-      return;
-    }
-    if (notificationPermission === "denied") {
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      setSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
-      return;
-    }
-    let permission: NotificationPermission;
-    try {
-      permission =
-        notificationPermission === "granted" ? "granted" : await Notification.requestPermission();
-    } catch (error) {
-      console.warn("ブラウザへ通知permissionを要求できませんでした。", error);
-      storeAgentNotificationsEnabled(false);
-      setAgentNotificationsEnabled(false);
-      setSyncFeedback("通知permissionを要求できませんでした。ブラウザの設定を確認してください。");
-      return;
-    }
-    const enabled = permission === "granted";
-    storeAgentNotificationsEnabled(enabled);
-    setAgentNotificationsEnabled(enabled);
-    setSyncFeedback(
-      enabled
-        ? "Agentのコメントをブラウザ通知します。"
-        : "通知は許可されませんでした。ブラウザのサイト設定から変更できます。",
-    );
-  };
-  const sendTestNotification = async (): Promise<void> => {
-    setActionsMenuOpen(false);
-    let permission = browserNotificationPermission();
-    if (permission === "unsupported") {
-      setSyncFeedback("このブラウザはBrowser Notificationに対応していません。");
-      return;
-    }
-    try {
-      if (permission === "default") permission = await Notification.requestPermission();
-      if (permission !== "granted") {
-        setSyncFeedback("ブラウザのサイト設定で通知を許可してください。");
-        return;
-      }
-      const notification = new Notification("rvw", { body: "通知テスト" });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-      setSyncFeedback(
-        "テスト通知を送信しました。表示されない場合はChromeまたはOSの通知設定を確認してください。",
-      );
-    } catch (error) {
-      console.warn("テスト通知を作成できませんでした。", error);
-      setSyncFeedback("テスト通知を作成できませんでした。ブラウザとOSの設定を確認してください。");
-    }
-  };
-
   const changeSequence = useQuery({
     queryKey: ["change-sequence"],
     queryFn: async () =>
@@ -1739,33 +1656,6 @@ export function PullRequestReviewScreen({
         : undefined,
   });
   const comments = commentsQuery.data?.comments ?? [];
-  useEffect(() => {
-    if (!commentsQuery.isSuccess || !commentsQuery.data || !pullRequestId) return;
-    if (observedAgentPostPullRequestId.current !== pullRequestId) {
-      observedAgentPostPullRequestId.current = pullRequestId;
-      observedAgentPostSnapshot.current = null;
-    }
-    const scan = scanAgentPostNotifications(
-      observedAgentPostSnapshot.current,
-      commentsQuery.data.comments,
-    );
-    observedAgentPostSnapshot.current = scan.snapshot;
-    if (!agentNotificationsEnabled || browserNotificationPermission() !== "granted") return;
-    for (const { post } of scan.notifications) {
-      try {
-        const notification = new Notification(`rvw · ${post.authorLabel}`, {
-          body: agentNotificationBody(post.body),
-          tag: `rvw-agent-post:${pullRequestId}:${post.id}`,
-        });
-        notification.onclick = () => {
-          window.focus();
-          notification.close();
-        };
-      } catch (error) {
-        console.warn("Agentのコメントをブラウザ通知できませんでした。", error);
-      }
-    }
-  }, [agentNotificationsEnabled, commentsQuery.data, commentsQuery.isSuccess, pullRequestId]);
   const unresolvedCommentCount = comments.filter((comment) => !comment.resolvedAt).length;
   const walkthroughsQuery = useQuery({
     queryKey: ["walkthroughs", pullRequestId],
@@ -3300,25 +3190,6 @@ export function PullRequestReviewScreen({
                   <span className="topbar-menu-check" aria-hidden="true">
                     {hideWhitespace ? "✓" : ""}
                   </span>
-                </button>
-              </div>
-              <div className="topbar-menu-section" role="group" aria-label="通知">
-                <span className="topbar-menu-section-label topbar-menu-section-heading">
-                  <span>通知</span>
-                  <span>権限: {notificationPermissionLabel(notificationPermission)}</span>
-                </span>
-                <button
-                  role="menuitemcheckbox"
-                  aria-checked={agentNotificationsActive}
-                  onClick={() => void toggleAgentNotifications()}
-                >
-                  <span>Agentのコメントを通知</span>
-                  <span className="topbar-menu-check" aria-hidden="true">
-                    {agentNotificationsActive ? "✓" : ""}
-                  </span>
-                </button>
-                <button role="menuitem" onClick={() => void sendTestNotification()}>
-                  <span>テスト通知を送る</span>
                 </button>
               </div>
               <div className="topbar-menu-section" role="group" aria-label="UIテーマ">

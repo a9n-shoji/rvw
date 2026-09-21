@@ -299,76 +299,34 @@ test("preserves a range ending at the old head when refresh publishes a new head
   );
 });
 
-test("notifies only after an Agent acknowledgement becomes a final reply", async ({
+test("renders Agent replies and edits without browser notifications despite legacy settings", async ({
   page,
   request,
 }) => {
   await page.addInitScript(() => {
-    type NotificationRecord = { title: string; options?: NotificationOptions };
-    class MockNotification {
-      static permission: NotificationPermission = "default";
-      static requestPermission(): Promise<NotificationPermission> {
-        MockNotification.permission = "granted";
-        return Promise.resolve(MockNotification.permission);
+    localStorage.setItem("rvw.agentNotifications", "enabled");
+    const state = window as typeof window & { notificationCalls: number };
+    state.notificationCalls = 0;
+    class ForbiddenNotification {
+      static permission = "granted";
+      static requestPermission() {
+        state.notificationCalls++;
+        return Promise.resolve("granted");
       }
-
-      onclick: (() => void) | null = null;
-
-      constructor(title: string, options?: NotificationOptions) {
-        const state = window as typeof window & { rvwNotifications?: NotificationRecord[] };
-        state.rvwNotifications ??= [];
-        state.rvwNotifications.push(options === undefined ? { title } : { title, options });
+      constructor() {
+        state.notificationCalls++;
       }
-
-      close(): void {}
     }
-
-    Object.defineProperty(window, "Notification", {
-      configurable: true,
-      value: MockNotification,
-    });
+    Object.defineProperty(window, "Notification", { value: ForbiddenNotification });
   });
-
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const actionsButton = page.getByRole("button", { name: "その他の操作", exact: true });
   await actionsButton.click();
-  const notificationToggle = page
-    .getByRole("menu")
-    .getByRole("menuitemcheckbox", { name: "Agentのコメントを通知" });
-  await expect(page.getByText("権限: 未確認", { exact: true })).toBeVisible();
-  await expect(notificationToggle).toHaveAttribute("aria-checked", "false");
-  await notificationToggle.click();
-  await expect
-    .poll(async () => await page.evaluate(() => localStorage.getItem("rvw.agentNotifications")))
-    .toBe("enabled");
-  await expect(page.getByRole("status")).toHaveText("Agentのコメントをブラウザ通知します。");
-  await actionsButton.click();
-  await expect(page.getByText("権限: 許可", { exact: true })).toBeVisible();
-  await page.getByRole("menuitem", { name: "テスト通知を送る" }).click();
-  await expect(page.getByRole("status")).toHaveText(
-    "テスト通知を送信しました。表示されない場合はChromeまたはOSの通知設定を確認してください。",
+  await expect(page.getByRole("menuitemcheckbox", { name: "Agentのコメントを通知" })).toHaveCount(
+    0,
   );
-  await expect
-    .poll(
-      async () =>
-        await page.evaluate(
-          () =>
-            (
-              window as typeof window & {
-                rvwNotifications?: Array<{ title: string; options?: NotificationOptions }>;
-              }
-            ).rvwNotifications ?? [],
-        ),
-    )
-    .toEqual([
-      {
-        title: "rvw",
-        options: { body: "通知テスト" },
-      },
-    ]);
-  await page.evaluate(() => {
-    (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications = [];
-  });
+  await expect(page.getByRole("menuitem", { name: "テスト通知を送る" })).toHaveCount(0);
+  await actionsButton.click();
   await openCommentsSidebar(page);
 
   let commentId: string | null = null;
@@ -390,9 +348,7 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
     await expect(thread).toBeVisible();
     expect(
       await page.evaluate(
-        () =>
-          (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications?.length ??
-          0,
+        () => (window as typeof window & { notificationCalls: number }).notificationCalls,
       ),
     ).toBe(0);
 
@@ -415,9 +371,7 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
     );
     expect(
       await page.evaluate(
-        () =>
-          (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications?.length ??
-          0,
+        () => (window as typeof window & { notificationCalls: number }).notificationCalls,
       ),
     ).toBe(0);
 
@@ -432,28 +386,6 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
     );
     expect(finalResponse.ok()).toBe(true);
     await expect(thread.getByText("Agent investigation finished.", { exact: true })).toBeVisible();
-    await expect
-      .poll(
-        async () =>
-          await page.evaluate(
-            () =>
-              (
-                window as typeof window & {
-                  rvwNotifications?: Array<{ title: string; options?: NotificationOptions }>;
-                }
-              ).rvwNotifications ?? [],
-          ),
-      )
-      .toEqual([
-        {
-          title: "rvw · Codex",
-          options: expect.objectContaining({
-            body: "Agent investigation finished.",
-            tag: expect.stringContaining(acknowledgement.post.id),
-          }),
-        },
-      ]);
-
     const humanEditResponse = await request.patch(
       `/api/comments/${commentId}/posts/${acknowledgement.post.id}`,
       { data: { body: "Human correction must stay silent." } },
@@ -470,11 +402,9 @@ test("notifies only after an Agent acknowledgement becomes a final reply", async
     );
     expect(
       await page.evaluate(
-        () =>
-          (window as typeof window & { rvwNotifications?: unknown[] }).rvwNotifications?.length ??
-          0,
+        () => (window as typeof window & { notificationCalls: number }).notificationCalls,
       ),
-    ).toBe(1);
+    ).toBe(0);
   } finally {
     if (commentId) await request.delete(`/api/comments/${commentId}`, { data: {} });
   }

@@ -375,12 +375,8 @@ empty fileは従来どおり明示的に扱う。
   light / dark / systemから選べる。選択はOS user data directoryの共通DBへ保存し、異なるPRや
   `--port 0`で自動割り当てしたviewerにも引き継ぐ。browser storageは初期表示用cacheに限る。
   systemはOS設定へ追従する。
-- その他menuからbrowser origin（portを含む）単位でAgentコメント通知を明示的に有効化できる。menuには
-  browserの通知permissionを`未確認` / `許可` / `拒否` / `未対応`として常時表示し、Agent更新経路と独立した
-  `rvw` / `通知テスト`のBrowser Notificationをその場で送れるactionを置く。初回のcomment読込は通知せず、
-  以後に追加または編集されたpostのうち、最終変更経路が`agent`で、空でない`authorLabel`があり`You`ではないものだけを対象とする。
-  `Unknown`と`🔎 確認中です…`は通知せず、watcherが同じpostを最終回答へ編集した時に通知する。
-  通知permissionと設定が有効な場合だけBrowser Notificationを作り、クリック時はviewerをfocusする。
+- ブラウザ通知は提供しない。旧localStorage設定は読み書きせず、権限要求も通知生成も行わない。
+  コメントのpolling、受付投稿と最終回答の画面反映、外部watch／Monitor連携は維持する。
 
 ### 5.3 File tree、検索、diff rendering
 
@@ -2259,9 +2255,7 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
 24. repository file headerのStructure actionで0件、1件popover、複数Nodeの`+N`、Edge-only除外、rename先を確認し、
     選択時は既存Structure tabとpane sessionを再利用してtarget Nodeだけを中央へfocusする。zoom、Node位置、depth、
     source file tabを維持し、Backで元fileとscroll位置を復元する。Escapeはpopoverを閉じてtriggerへfocusを戻す
-25. 通知menuでpermissionの全状態を表示し、テスト通知をAgent/comment更新なしで送れる。初回comment loadと
-    Agentの確認中postは通知せず、確認中postのfinal editをcomments domain revisionで再取得した時だけ
-    stubbed Notification constructorを一度呼ぶ
+25. 旧通知設定があっても通知UI・権限要求・通知生成がなく、受付投稿から最終回答への更新がpollingで画面へ反映される。
 
 CLI contract:
 

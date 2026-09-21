@@ -225,8 +225,7 @@ final-tab grace timer from invalidating the new URL. The process remains a brows
 a persistent daemon. `--foreground` explicitly owns a terminal-attached runtime and conflicts with an
 existing owner. `--no-open` disables only browser launch: it reuses an active runtime or starts a
 signal-managed one when none exists. When reusing a browser-managed runtime, the CLI holds a viewer lease
-until Ctrl+C. A new runtime uses the stable default port 43117 so origin-scoped browser permissions survive
-normal restarts; explicit `--port 0` opts into an ephemeral port. An omitted port reuses any active runtime,
+until Ctrl+C. A new runtime uses the stable default port 43117 for a stable URL across normal restarts; explicit `--port 0` opts into an ephemeral port. An omitted port reuses any active runtime,
 while an explicit nonzero port must match it; otherwise the command reports a conflict instead of starting a
 second server.
 

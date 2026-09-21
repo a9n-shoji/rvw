@@ -1,5 +1,14 @@
 # Architecture decisions
 
+## 2026-09-21: Remove browser notifications
+
+Browser Notifications did not provide reliable delivery in actual use. Remove the menu, permission
+requests, test notifications, post scanning/fingerprints and localStorage preference access. Old stored
+preferences are inert. Comment polling, invalidation, acknowledgement-to-final-post edits, event cursors,
+watch/Monitor intake, idempotency, runtime reuse and ports remain unchanged. Keep `lastModifiedBy` as
+public comment write-channel provenance and preserve the watcher’s independent acknowledgement text.
+No replacement notification surface is introduced. This supersedes earlier browser notification decisions.
+
 ## 2026-09-08: Require a PR-scoped file map and make Walkthrough visuals question-shaped
 
 ### Status

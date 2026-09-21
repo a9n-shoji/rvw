@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- ブラウザ通知の設定・権限要求・テスト通知・Agent投稿の通知処理を撤去。コメントのpollingとwatch／Monitor連携は維持。
+
 ## [0.9.0] - 2026-09-20
 
 ### Changed
