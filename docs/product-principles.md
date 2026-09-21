@@ -88,8 +88,7 @@ contract、side effectへ辿る。PR全体のdefault compositionはこれとは�
 このファイル地図は変更file一覧でもrepository全体のarchitecture inventoryでもなく、codeを読んだ途中で
 「いまの責務はどこに位置するか」へ戻るための土台である。最初に暗記するoverviewでも、mandatoryな
 reading orderでもない。Agentはsubject、scope、roleに応じたorigin、stableなNode / Edge ID、exact source
-anchorに加え、必要ならthesis、authorial start、optionalなconnected exact-Edge primary backbone、stable IDと
-責務summaryを持つcomprehension regionをauthorial semanticsとして提示できる。
+anchorに加え、必要ならthesis、authorial start、optionalなconnected exact-Edge primary backboneをauthorial semanticsとして提示できる。
 これは座標、importance layer、一本道のstepperではない。座標、focus hop、navigation history、pan、zoom、manual
 positionは人間の一時的なreading stateに留める。表示範囲を1-hop / 2-hopへ明示的に絞ることはでき、Homeは
 authorial start（nullならorigin）のexact 1-hopへ戻る。complete extentはminimap / All / Fitで回収できる。高次数になるsubjectはscopeを分ける。PRで検証するbehaviorに接地しない
@@ -100,28 +99,19 @@ authorial start（nullならorigin）のexact 1-hopへ戻る。complete extent�
 Structureはneutralなgraph viewerではなく、Walkthroughやcode readingで形成したmental modelを、変更された
 behaviorを成立させる責務とrelationへ位置付け直すreading surfaceである。factual graph、authorial presentation、
 derived rendering、ephemeral reviewer sessionを混ぜない。presentationがあればviewerはauthorial start、optionalな
-2〜12 Node / 1〜16 Edgeのconnected exact-relation backbone、stableなcomprehension regionをGuide cue、
-canonical map、Graph / Regions modeへ反映する。backboneまたはregionがspatial organizerとして存在する場合だけbase mapへ
+2〜12 Node / 1〜16 Edgeのconnected exact-relation backboneをGuide cueとcanonical mapへ反映する。backboneがspatial organizerとして存在する場合だけbase mapへ
 反映し、start-only presentationと`null`はfactsとentrypointから同じtopology projectionを作る。start-onlyでも
 意味のあるthesis、attention start、新規sessionのfocus、exportは失わない。
-regionはstable ID、label、thesisへの寄与を述べる責務summary、明示Node membershipを持つnamed comprehension
-chunkである。Region arrayにも各`nodeIds`にも順序の意味はなく、stable IDでcanonical化する。membershipは
-full label / responsibilityを持つRegions overviewと、Graph上のnamed Region lensによるexact member強調で示し、
-stable ID由来の略称を復号させたり、人間が動かしたNodeを囲うgeometryから推測させたりしない。Region間connectionはmember間の
-direct factual Edgeから導出し、別のauthorial relation graphを持たない。unassigned Nodeもfirst-classに残す。
 primary backboneはこの説明で先に掴む一つのconnectedなexact-relation coreを表し、path、fan-out、convergence、
 reciprocal relationを一本道へ歪めない。array順、runtime順、Edge方向、project全体でのarchitectural importance、
 completeness、review conclusionは主張しない。長いbackboneはderivedなdistance bandを保ったまま決定的な複数行へ
 折り返してよい。そのrowやlayerはauthorが与える意味論ではなく、全体像を読める面へ収めるrenderer detailである。
-人間は同じ空間をHome、局所focus、Region、exact source、再俯瞰の間で
+人間は同じ空間をHome、局所focus、exact source、再俯瞰の間で
 往復し、全Node / Edgeとsourceを自由に検証できる。backbone membershipという固定されたauthorial salience、focusからの
-hop数、frame中のregionという一時的なreviewer attentionは別のvisual channelで表す。Region frameはmembershipやfocus距離を
-書き換えず、そのchunkのmemberと内部relationを読む間だけfull relevanceにする。filterで配置を組み替えず、Home / Back / Allへ
+hop数という一時的なreviewer attentionは別のvisual channelで表す。Home / Back / Allへ
 戻ることで局所で確かめたことを同じ全体像へ位置付け直す。全体を自動で一画面へ詰め込まず、読めないscaleでは
 secondary detailを省略しても、その存在、件数、inspect方法を隠さない。viewer由来のgeometry、route、semantic zoom、
 人間のmanual layout geometryとreviewer sessionはStructureのclaimではない。
-Regions overviewはcanonical card geometryをpane幅へ合わせてcompact化しない。初期camera / ResetはStartを含む
-責務を読めるscaleへ置き、Fitは全体extentをframeする。独立したzoom / panで両者を往復し、このcameraもGraph viewportとは別の一時的reviewer stateとする。
 derived routeはartifact semanticsではないが、relationのsource / targetへvisible boundary portで接続し、distinctな
 visible relationが実質的な区間で同一またはほぼ同一のcorridorを通る場合は別laneとして追跡可能にする。parallel /
 reciprocal relationは必ずこの対象に含む。normal detailのrelation labelはNodeにも相互にも重ねず、inline配置が

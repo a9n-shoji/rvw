@@ -1,3 +1,4 @@
+import { routingPositions } from "../fixtures/structure-routing-positions.js";
 import { describe, expect, it } from "vitest";
 import type { Structure } from "../../src/domain/models.js";
 import {
@@ -393,7 +394,7 @@ describe("Structure shared render model", () => {
       baseOid: "a".repeat(40),
       firstHead: "b".repeat(40),
     })[2] as Structure;
-    const positions = initialStructureLayout(structure);
+    const positions = routingPositions.detail;
     const foundation = buildStructureRenderFoundation({
       structure,
       positions,
@@ -427,7 +428,7 @@ describe("Structure shared render model", () => {
       expect(bounds.right).toBeGreaterThanOrEqual(included.right);
       expect(bounds.bottom).toBeGreaterThanOrEqual(included.bottom);
     }
-    expect(bounds.right).toBeLessThan(positions["order-detail-contract"]!.x);
+    expect(bounds.right).toBeLessThan(positions["order-detail-contract"].x);
     expect(bounds).not.toEqual(
       selectStructureRenderModel(foundation, {
         nodeIds: new Set(structure.nodes.map(({ id }) => id)),
@@ -437,7 +438,7 @@ describe("Structure shared render model", () => {
     );
   });
 
-  it("derives exact region membership and factual primary-backbone Edges from presentation", () => {
+  it("derives factual primary-backbone Edges from presentation", () => {
     const structure: Structure = {
       ...renderStructure(),
       presentation: {
@@ -446,20 +447,6 @@ describe("Structure shared render model", () => {
         primaryBackbone: {
           edgeIds: ["parallel"],
         },
-        regions: [
-          {
-            id: "a-ingress",
-            label: "Ingress",
-            summary: "Request ingress and validation responsibilities.",
-            nodeIds: ["node-0", "node-2"],
-          },
-          {
-            id: "b-execution",
-            label: "Execution",
-            summary: "Request execution responsibilities.",
-            nodeIds: ["node-1", "node-3"],
-          },
-        ],
       },
     };
     const model = buildFullStructureRenderModel({
@@ -472,60 +459,22 @@ describe("Structure shared render model", () => {
     expect(model.presentation?.startNodeId).toBe("node-0");
     expect([...model.presentation!.primaryBackboneNodeIds].sort()).toEqual(["node-0", "node-1"]);
     expect([...model.presentation!.primaryBackboneEdgeIds]).toEqual(["parallel"]);
-    expect(
-      model.presentation?.regions.map(({ id, label, summary }) => ({ id, label, summary })),
-    ).toEqual([
-      {
-        id: "a-ingress",
-        label: "Ingress",
-        summary: "Request ingress and validation responsibilities.",
-      },
-      {
-        id: "b-execution",
-        label: "Execution",
-        summary: "Request execution responsibilities.",
-      },
-    ]);
-    expect(model.presentation?.regions.map(({ nodeIds }) => nodeIds)).toEqual([
-      ["node-0", "node-2"],
-      ["node-1", "node-3"],
-    ]);
-    const executionBounds = model.presentation!.regions[1]!.bounds;
-    const internalEdge = model.edges.find(({ edge }) => edge.id === "branch-1")!;
-    const internalLabel = model.labels.find(({ edge }) => edge.id === "branch-1")!;
-    const internalLabelBounds = labelBox(
-      internalLabel.x,
-      internalLabel.y,
-      internalLabel.boxWidth,
-      internalLabel.height,
-      4,
-    );
-    for (const bounds of [
-      internalEdge.geometry.bounds,
-      internalLabelBounds,
-      ...(internalLabel.leaderBounds ? [internalLabel.leaderBounds] : []),
-    ]) {
-      expect(executionBounds.left).toBeLessThanOrEqual(bounds.left);
-      expect(executionBounds.top).toBeLessThanOrEqual(bounds.top);
-      expect(executionBounds.right).toBeGreaterThanOrEqual(bounds.right);
-      expect(executionBounds.bottom).toBeGreaterThanOrEqual(bounds.bottom);
-    }
   });
 
   it("keeps generated presentation metadata deterministic across input order", () => {
     for (let caseIndex = 0; caseIndex < 40; caseIndex += 1) {
       const spineCount = 2 + (caseIndex % 4);
-      const regionCount = 1 + (caseIndex % Math.min(3, spineCount));
+      const branchCount = 1 + (caseIndex % Math.min(3, spineCount));
       const spineIds = Array.from({ length: spineCount }, (_, index) => `spine-${index}`);
-      const regionIndexBySpineIndex = spineIds.map((_, index) =>
-        Math.min(regionCount - 1, Math.floor((index * regionCount) / spineCount)),
+      const branchIndexBySpineIndex = spineIds.map((_, index) =>
+        Math.min(branchCount - 1, Math.floor((index * branchCount) / spineCount)),
       );
-      const regionExtraIds = Array.from({ length: regionCount }, (_, index) => [
-        `region-${index}-near`,
-        `region-${index}-far`,
+      const branchExtraIds = Array.from({ length: branchCount }, (_, index) => [
+        `branch-${index}-near`,
+        `branch-${index}-far`,
       ]);
       const unassignedIds = ["branch-z", "branch-m", "branch-a"];
-      const nodeIds = [...spineIds, ...regionExtraIds.flat(), ...unassignedIds];
+      const nodeIds = [...spineIds, ...branchExtraIds.flat(), ...unassignedIds];
       const spineEdgeIds = spineIds.slice(1).map((_, index) => `spine-edge-${index}`);
       const structure: Structure = {
         ...renderStructure(),
@@ -547,8 +496,8 @@ describe("Structure shared render model", () => {
             directed: true,
             anchors: [],
           })),
-          ...regionExtraIds.flatMap(([nearId, farId], regionIndex) => {
-            const spineIndex = regionIndexBySpineIndex.indexOf(regionIndex);
+          ...branchExtraIds.flatMap(([nearId, farId], branchIndex) => {
+            const spineIndex = branchIndexBySpineIndex.indexOf(branchIndex);
             return [
               {
                 id: `${nearId}-edge`,
@@ -597,17 +546,6 @@ describe("Structure shared render model", () => {
           thesis: "Generated presentation.",
           startNodeId: spineIds[0]!,
           primaryBackbone: caseIndex % 3 === 0 ? null : { edgeIds: spineEdgeIds },
-          regions: Array.from({ length: regionCount }, (_, regionIndex) => ({
-            id: `region-${regionIndex}`,
-            label: `Region ${regionIndex}`,
-            summary: `Responsibilities grouped in region ${regionIndex}.`,
-            nodeIds: [
-              ...spineIds.filter(
-                (_, spineIndex) => regionIndexBySpineIndex[spineIndex] === regionIndex,
-              ),
-              ...regionExtraIds[regionIndex]!,
-            ],
-          })),
         },
       };
       const firstPositions = initialStructureLayout(structure);
@@ -616,6 +554,9 @@ describe("Structure shared render model", () => {
         positions: firstPositions,
         sourceChangeKinds: new Map(),
       });
+      expect(model.nodes).toHaveLength(structure.nodes.length);
+      expect(model.edges).toHaveLength(structure.edges.length);
+      expect(model.labels).toHaveLength(structure.edges.length);
 
       expect(
         initialStructureLayout({
@@ -624,23 +565,6 @@ describe("Structure shared render model", () => {
           edges: [...structure.edges].reverse(),
         }),
       ).toEqual(firstPositions);
-      expect(
-        model.presentation?.regions.map(({ id, index, label, summary, nodeIds }) => ({
-          id,
-          index,
-          label,
-          summary,
-          nodeIds,
-        })),
-      ).toEqual(
-        structure.presentation!.regions.map((region, index) => ({
-          id: region.id,
-          index,
-          label: region.label,
-          summary: region.summary,
-          nodeIds: [...region.nodeIds].sort(),
-        })),
-      );
     }
   }, 15_000);
 
@@ -677,7 +601,7 @@ describe("Structure shared render model", () => {
     })[0] as Structure;
     const model = buildFullStructureRenderModel({
       structure,
-      positions: initialStructureLayout(structure),
+      positions: routingPositions.order,
       sourceChangeKinds: new Map(),
     });
     const conflicts = unrelatedRouteConflicts(model.edges);
@@ -692,7 +616,7 @@ describe("Structure shared render model", () => {
     expect(model.bounds!.bottom - model.bounds!.top).toBeLessThanOrEqual(1_100);
   });
 
-  it("keeps a partial-Region twelve-Node Context route bounded and crossing-free", () => {
+  it("keeps a twelve-Node backbone route bounded and crossing-free", () => {
     const nodeIds = Array.from(
       { length: 12 },
       (_, index) => `node-${String(index).padStart(2, "0")}`,
@@ -718,17 +642,9 @@ describe("Structure shared render model", () => {
       })),
       edges,
       presentation: {
-        thesis: "A small authored entry chunk exposes a longer factual Context chain.",
+        thesis: "A factual chain with an exact backbone.",
         startNodeId: nodeIds[0]!,
         primaryBackbone: { edgeIds: edges.map(({ id }) => id) },
-        regions: [
-          {
-            id: "entry",
-            label: "Entry",
-            summary: "The authored entry comprehension chunk.",
-            nodeIds: [nodeIds[0]!],
-          },
-        ],
       },
     };
     const model = buildFullStructureRenderModel({
@@ -750,7 +666,7 @@ describe("Structure shared render model", () => {
     expect(model.bounds!.bottom - model.bounds!.top).toBeLessThanOrEqual(950);
   });
 
-  it("keeps a fifty-Node Context fan-out bounded with finite route complexity", () => {
+  it("keeps a fifty-Node manually positioned fan-out bounded with finite route complexity", () => {
     const leafIds = Array.from(
       { length: 49 },
       (_, index) => `leaf-${String(index).padStart(2, "0")}`,
@@ -779,19 +695,11 @@ describe("Structure shared render model", () => {
         thesis: "The hub exposes many independent factual policies.",
         startNodeId: "hub",
         primaryBackbone: null,
-        regions: [
-          {
-            id: "coordination",
-            label: "Coordination",
-            summary: "The authored coordination responsibility.",
-            nodeIds: ["hub"],
-          },
-        ],
       },
     };
     const model = buildFullStructureRenderModel({
       structure,
-      positions: initialStructureLayout(structure),
+      positions: routingPositions.fanOut,
       sourceChangeKinds: new Map(),
     });
     const routeLengths = model.edges.map(({ geometry }) => structureRouteLength(geometry));
@@ -1309,12 +1217,7 @@ describe("Structure shared render model", () => {
       baseOid: "a".repeat(40),
       firstHead: "b".repeat(40),
     }).find(({ title }) => title === "Order placement behavior") as Structure;
-    const local = deriveLocalStructureLayout(
-      structure,
-      "hub",
-      1,
-      initialStructureLayout(structure),
-    )!;
+    const local = deriveLocalStructureLayout(structure, "hub", 1, routingPositions.order)!;
     const renderGraph = {
       nodes: local.graph.nodes,
       edges: local.graph.edges,

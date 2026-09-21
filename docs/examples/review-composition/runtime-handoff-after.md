@@ -1,5 +1,7 @@
 # runtime startup handoff の読書構成案
 
+> Regions 撤去前の比較評価記録です。本文の旧 presentation 案は評価時点の記録として残しています。現行の生成契約は protocol 6 と `rvw-structure` Skill を参照してください。
+
 対象は `c45bc91f4a0cfd071c3be3622eb6418059e236ff..a2f016c5e90886cce769aa0990c6a05c7ce02ae9` 全体。参照座標は変更後の `a2f016c5e90886cce769aa0990c6a05c7ce02ae9` とする。読者はプログラミング、TypeScript、Promise、HTTP、ローカルプロセスを理解しているが、rvw 固有の用語や状態は知らない。
 
 これはソースだけを使った推薦であり、rvw の既存 Artifact は読んでいない。公開・更新・preflight・preview は実施していない。以下の brief は評価用の著者メモで、rvw に保存する新しい形式ではない。ファイルマップの推薦は含むが、保存済みマップの存在や適合は未確認である。

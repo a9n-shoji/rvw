@@ -12,27 +12,7 @@
         "handoff-loads-walkthrough",
         "walkthrough-returns-recomposition"
       ]
-    },
-    "regions": [
-      {
-        "id": "composer-responsibilities",
-        "label": "Composer responsibilities",
-        "summary": "Bounds the question, activates one native producer, and reconsiders the composition after feedback.",
-        "nodeIds": ["composer-brief", "native-handoff", "recomposition"]
-      },
-      {
-        "id": "producer-responsibilities",
-        "label": "Producer responsibilities",
-        "summary": "Independently verifies candidate claims and preserves each Artifact's representation boundary.",
-        "nodeIds": ["structure-verifier", "walkthrough-verifier"]
-      },
-      {
-        "id": "static-verification",
-        "label": "Static verification",
-        "summary": "Protects the textual authority and verification boundary without exercising publication.",
-        "nodeIds": ["contract-guard"]
-      }
-    ]
+    }
   },
   "nodes": [
     {

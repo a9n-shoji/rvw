@@ -527,32 +527,6 @@ const orderPlacementStructurePresentation = {
       "order-calculates-total",
     ],
   },
-  regions: [
-    {
-      id: "application-coordination",
-      label: "Application coordination",
-      summary: "認可と再試行境界を確定し、注文作成のdecisionとeffectを調停する。",
-      nodeIds: ["authorization-policy", "hub", "idempotency-store"],
-    },
-    {
-      id: "atomic-persistence",
-      label: "Atomic persistence",
-      summary: "order recordとoutbox eventを同じtransactionとschemaへ閉じ込める。",
-      nodeIds: ["database-schema", "order-repository", "outbox", "transaction-runner"],
-    },
-    {
-      id: "domain-and-remote-effects",
-      label: "Domain and remote effects",
-      summary: "aggregateの価格決定と在庫・決済のremote side effectを担う。",
-      nodeIds: ["inventory-client", "order-aggregate", "payment-gateway", "pricing-policy"],
-    },
-    {
-      id: "request-boundary",
-      label: "Request boundary",
-      summary: "HTTP requestを認証・検証し、application commandへ変換する。",
-      nodeIds: ["auth-middleware", "http-controller", "http-routes", "request-schema"],
-    },
-  ],
 };
 
 const secondaryStructureNodes = primaryStructureNodes
@@ -575,7 +549,6 @@ const secondaryStructurePresentation = {
     "Payment reconciliationはpersist済みorderとprovider上のauthorizationを照合してrecovery判断を行う。",
   startNodeId: "payment-reconciliation",
   primaryBackbone: null,
-  regions: [],
 };
 const reciprocalStructureNodes = primaryStructureNodes.filter((node) =>
   ["hub", "order-aggregate", "pricing-policy"].includes(node.id),
@@ -590,20 +563,6 @@ const reciprocalStructurePresentation = {
   primaryBackbone: {
     edgeIds: ["handler-places-order", "order-calculates-total"],
   },
-  regions: [
-    {
-      id: "application-coordination",
-      label: "Application coordination",
-      summary: "注文生成を開始し、完成したresponse snapshotを受け取る。",
-      nodeIds: ["hub"],
-    },
-    {
-      id: "domain-construction",
-      label: "Domain construction",
-      summary: "Order aggregateを生成し、価格を計算してresponse snapshotを形成する。",
-      nodeIds: ["order-aggregate", "pricing-policy"],
-    },
-  ],
 };
 const topologyOnlyStructureNodes = primaryStructureNodes.filter((node) =>
   [
@@ -946,46 +905,6 @@ const fullStackStructurePresentation = {
       "detail-route-validates-id",
     ],
   },
-  regions: [
-    {
-      id: "backend-read-and-present",
-      label: "Read and present",
-      summary: "customer-scoped projectionを読み出し、成功またはnot-found responseへ写像する。",
-      nodeIds: [
-        "get-order-query",
-        "order-not-found",
-        "order-read-repository",
-        "order-response-presenter",
-        "orders-read-model",
-      ],
-    },
-    {
-      id: "frontend-rendering",
-      label: "React rendering",
-      summary: "typed query stateをcacheし、pageからsummary・items・status・error表示へ分配する。",
-      nodeIds: [
-        "order-detail-error",
-        "order-detail-page",
-        "order-detail-query-hook",
-        "order-line-items",
-        "order-query-cache",
-        "order-status-badge",
-        "order-summary-card",
-      ],
-    },
-    {
-      id: "http-boundary",
-      label: "HTTP boundary",
-      summary: "閲覧者とorder IDを検証し、customer-scoped detail queryを開始する。",
-      nodeIds: ["detail-actor-auth", "detail-params", "order-detail-route"],
-    },
-    {
-      id: "shared-response-contract",
-      label: "Shared response",
-      summary: "backend responseとfrontend clientの間で成功・error payloadの型境界を保つ。",
-      nodeIds: ["order-api-client", "order-detail-contract"],
-    },
-  ],
 };
 export const fullStackRepositoryPaths = [
   ...new Set([
@@ -1112,13 +1031,12 @@ export function validateContractStructureFixture() {
       typeof structure.presentation !== "object" ||
       Array.isArray(structure.presentation) ||
       Object.keys(structure.presentation).sort().join(",") !==
-        "primaryBackbone,regions,startNodeId,thesis" ||
+        "primaryBackbone,startNodeId,thesis" ||
       typeof structure.presentation.thesis !== "string" ||
       structure.presentation.thesis.trim() !== structure.presentation.thesis ||
       structure.presentation.thesis.length === 0 ||
       typeof structure.presentation.startNodeId !== "string" ||
-      !Object.hasOwn(structure.presentation, "primaryBackbone") ||
-      !Array.isArray(structure.presentation.regions)
+      !Object.hasOwn(structure.presentation, "primaryBackbone")
     ) {
       throw new Error(`${structure.title} has malformed presentation content`);
     }
@@ -1180,50 +1098,6 @@ export function validateContractStructureFixture() {
         throw new Error(`${structure.title} primary backbone is disconnected`);
       }
     }
-    const regionIds = structure.presentation.regions.map((region) => region.id);
-    if (new Set(regionIds).size !== regionIds.length) {
-      throw new Error(`${structure.title} repeats a Region identity`);
-    }
-    // Region array position carries no reading priority; keep fixture bytes canonical by stable ID.
-    if (regionIds.join("\0") !== [...regionIds].sort().join("\0")) {
-      throw new Error(`${structure.title} Region IDs are not canonical`);
-    }
-    const regionByNodeId = new Map();
-    structure.presentation.regions.forEach((region) => {
-      if (
-        typeof region !== "object" ||
-        region === null ||
-        Array.isArray(region) ||
-        Object.keys(region).sort().join(",") !== "id,label,nodeIds,summary" ||
-        typeof region.id !== "string" ||
-        !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(region.id) ||
-        typeof region.label !== "string" ||
-        region.label.length === 0 ||
-        region.label.trim() !== region.label ||
-        typeof region.summary !== "string" ||
-        region.summary.length === 0 ||
-        region.summary.trim() !== region.summary ||
-        !Array.isArray(region.nodeIds) ||
-        region.nodeIds.length === 0
-      ) {
-        throw new Error(`${structure.title} has malformed Region content`);
-      }
-      if (new Set(region.nodeIds).size !== region.nodeIds.length) {
-        throw new Error(`${structure.title} region ${region.label} repeats a Node`);
-      }
-      if (region.nodeIds.join("\0") !== [...region.nodeIds].sort().join("\0")) {
-        throw new Error(`${structure.title} region ${region.label} Node IDs are not canonical`);
-      }
-      for (const nodeId of region.nodeIds) {
-        if (!nodeIds.has(nodeId)) {
-          throw new Error(`${structure.title} region targets missing Node ${nodeId}`);
-        }
-        if (regionByNodeId.has(nodeId)) {
-          throw new Error(`${structure.title} repeats ${nodeId} across regions`);
-        }
-        regionByNodeId.set(nodeId, region.id);
-      }
-    });
   }
 
   for (const filePath of repositoryPaths) {

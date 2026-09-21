@@ -80,7 +80,7 @@ describe("protocol version contract", () => {
     expect(errorPolicy).not.toContain("presentation / focus / source anchor");
   });
 
-  it("documents primaryBackbone as required nullable version-5 content", () => {
+  it("documents primaryBackbone as required nullable version-6 content", () => {
     const protocol = readFileSync("docs/cli-protocol.md", "utf8");
     expect(protocol).toMatch(/required nullable\s+`primaryBackbone`/);
     expect(protocol).not.toMatch(/an optional\s+`primaryBackbone`/);

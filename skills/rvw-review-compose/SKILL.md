@@ -32,7 +32,7 @@ For every composition task, read
 
 ## Preflight
 
-1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 5 and
+1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 6 and
    `agent.transport`, and record the available Walkthrough and Structure capabilities, including
    `walkthrough.list` for Walkthrough discovery. Immediately
    before every producer invocation, including contextual discovery or a current-value read, require
@@ -91,9 +91,8 @@ comprehension cost:
   prose between stops, a required ending, or transitions that carry the meaning.
 - Use a normal behavior Structure when the question is which code reads or changes shared state,
   consumes a contract, or triggers an effect around one factual code entrypoint. Its optional presentation
-  may set initial attention, emphasize one connected exact-relation backbone, and identify stable named
-  comprehension Regions with summaries of the processing or definitions they connect while keeping the complete graph directly
-  reachable. Region array order is not authorial semantics. Do not omit an independently useful behavior
+  may set initial attention and emphasize one connected exact-relation backbone while keeping the
+  complete graph directly reachable. Do not omit an independently useful behavior
   Structure merely because the file map exists.
 - Direct the reviewer to code without creating an Artifact when the question is local, conditional,
   implementation-specific, or already clearer in source.
@@ -150,22 +149,12 @@ producer contract from this Skill.
 Pass the subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis as authoring authority: they control what the producer investigates, not what the code must
 say. For a Structure, also pass any requested thesis, semantic attention-start concept, connected
-exact-relation visual backbone, and named comprehension chunks to consider as Regions as presentation
-authority over verified claims. Describe a new backbone by the relationship claims it should emphasize
-and a new Region by the processing or definitions the chunk connects and how they support the thesis. The composer
-does not assign protocol IDs for a new Structure. The Structure producer builds the verified graph,
-resolves the attention-start concept to one current Node ID, resolves the backbone claims to exact
-current Edge IDs, resolves each accepted chunk to exact Node membership, and assigns each new Region a
-fresh ID that becomes stable across same-chunk updates. Refer to raw IDs only when they came from an
-existing Structure read. A suggested factual origin remains a separate claim to verify and is not
-automatically the attention start. A requested backbone must resolve to a compact connected exact Edge
-set with the start among its derived endpoint Nodes. A requested Region needs a concise statement of how
-its chunk contributes to the thesis and which reads, writes, calls, or definitions need to be seen together; the
-producer decides the exact unordered disjoint Node membership. Never require the start or every Node to
-belong to a Region, interpret Region array order as guidance, or request authored Region-to-Region
-relations; the Viewer derives cross-Region connections only from verified factual Edges.
-When a meaningful thesis and start exist but no honest backbone or useful named chunk does, request the
-exact start-only form rather than a fake backbone, dummy region, or decorative grouping.
+exact-relation visual backbone as presentation authority over verified claims. The composer does not
+assign protocol IDs for a new Structure. The producer verifies the graph, resolves the attention start
+to a current Node and backbone claims to exact current Edge IDs. Raw IDs may only come from a read of
+an existing Structure. A suggested factual origin remains a separate claim to verify and is not
+automatically the attention start. A requested backbone must be connected and include the start among its endpoint
+Nodes. Use the start-only form when a meaningful thesis and start have no honest backbone.
 Do not request authored layers or stages; spatial ranks remain renderer-derived.
 Pass `mustEstablish`, a suggested origin, relationship, invariant, and every other implementation
 assertion as claims to verify independently in committed source and tests. Do not reimplement the

@@ -373,7 +373,7 @@ export function reconcileDerivedLocalStructureLayout(
 /**
  * Canonical behavior map derived from factual topology and optional authorial
  * spatial presentation. Organizer-backed presentations use the optional exact
- * Edge backbone and stable comprehension Region memberships without accepting coordinates.
+ * Edge backbone without accepting coordinates.
  * A start-only presentation shares the factual topology projection with null,
  * while its thesis and attention start remain visible presentation semantics.
  * Stable IDs only resolve otherwise symmetric ordering, so Reset returns the

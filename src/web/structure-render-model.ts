@@ -102,21 +102,11 @@ export interface StructureRenderNode {
   changeKind: ChangeKind | null;
 }
 
-export interface StructureRenderRegion {
-  id: string;
-  index: number;
-  label: string;
-  summary: string;
-  nodeIds: readonly string[];
-  bounds: StructureBox;
-}
-
 export interface StructureRenderPresentation {
   thesis: string;
   startNodeId: string;
   primaryBackboneNodeIds: ReadonlySet<string>;
   primaryBackboneEdgeIds: ReadonlySet<string>;
-  regions: readonly StructureRenderRegion[];
 }
 
 export interface StructureRenderModel {
@@ -3065,60 +3055,11 @@ export function buildStructureRenderFoundation(
             .flatMap((edge) => [edge.from, edge.to])
             .sort(stableCompare),
         );
-        const regions = [...structure.presentation.regions]
-          .sort((left, right) => stableCompare(left.id, right.id))
-          .flatMap((region, index) => {
-            const regionNodeIds = [...new Set(region.nodeIds)]
-              .filter((nodeId) => positions[nodeId])
-              .sort(stableCompare);
-            const regionNodeIdSet = new Set(regionNodeIds);
-            const internalEdgeIds = new Set(
-              structure.edges
-                .filter((edge) => regionNodeIdSet.has(edge.from) && regionNodeIdSet.has(edge.to))
-                .map((edge) => edge.id),
-            );
-            const regionBounds = mergedBounds([
-              ...regionNodeIds.map((nodeId) => {
-                const point = positions[nodeId]!;
-                return {
-                  left: point.x,
-                  top: point.y,
-                  right: point.x + STRUCTURE_NODE_WIDTH,
-                  bottom: point.y + STRUCTURE_NODE_HEIGHT,
-                };
-              }),
-              ...structure.edges.flatMap((edge) => {
-                if (!internalEdgeIds.has(edge.id)) return [];
-                const route = routes.get(edge.id);
-                return route ? [route.bounds] : [];
-              }),
-              ...allLabels.flatMap((placement) => {
-                if (!internalEdgeIds.has(placement.edge.id)) return [];
-                return [
-                  labelBox(placement.x, placement.y, placement.boxWidth, placement.height, 4),
-                  ...(placement.leaderBounds ? [placement.leaderBounds] : []),
-                ];
-              }),
-            ]);
-            return regionBounds
-              ? [
-                  {
-                    id: region.id,
-                    index,
-                    label: region.label,
-                    summary: region.summary,
-                    nodeIds: regionNodeIds,
-                    bounds: regionBounds,
-                  },
-                ]
-              : [];
-          });
         return {
           thesis: structure.presentation.thesis,
           startNodeId: structure.presentation.startNodeId,
           primaryBackboneNodeIds,
           primaryBackboneEdgeIds,
-          regions,
         };
       })()
     : null;

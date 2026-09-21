@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### Removed
+
+- ブラウザ通知の設定・権限要求・テスト通知・Agent投稿の通知処理を撤去。コメントのpollingとwatch／Monitor連携は維持。
+- StructureのRegions表示・所属・配置・export・生成指示を撤去。通常Graph、Guide、thesis／start／backboneは維持。
+
+### Changed
+
+- Machine protocolを6へ更新。旧`presentation.regions`入力は拒否し、既存保存データはmigration 023でGraphを保ったまま移行。
+
 ## [0.9.0] - 2026-09-20
 
 ### Changed

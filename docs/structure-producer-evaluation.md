@@ -1,3 +1,7 @@
+> 2026-09-21 update: the evaluation below records historical protocol-5 authoring. Current JSON examples
+> have been migrated to protocol 6 by removing Regions metadata. Regions guidance and UI observations
+> below are historical, not current producer instructions.
+
 # Structure producer evaluation
 
 ## PR-scoped file-map evaluation (2026-09-08)

@@ -19,11 +19,10 @@ and authored claims. Do not mix file-granularity Nodes with symbol, responsibili
 or whole-PR Nodes in one file map. A Structure is a freely explorable spatial explanation whose complete factual graph remains
 available; a Walkthrough makes ordered prose and transitions the artifact. A Structure may name an
 attention start, emphasize at most
-one connected exact-relation visual backbone of at most 12 derived Nodes and 16 Edges, and identify stable,
-named comprehension Regions with concise responsibility summaries, but it remains freely explorable and
-is never a stepper or autoplay. Region array order is not authorial semantics. A path, hub,
+one connected exact-relation visual backbone of at most 12 derived Nodes and 16 Edges. It remains freely
+explorable and is never a stepper or autoplay. A path, hub,
 fan-out, convergence, reciprocal pair, or small cyclic skeleton can be the backbone. When a meaningful thesis
-and attention start exist but neither an honest backbone nor a useful comprehension region does, an exact
+and attention start exist but no honest backbone does, an exact
 start-only presentation is valid: topology still supplies the geometry while presentation supplies the
 overview, initial attention, and initial focus for a new Viewer session. If the clearest
 explanation needs a required reading order because prose between sequential stops, a required ending, or
@@ -80,7 +79,7 @@ select a node, or claim that publication changed rvw navigation.
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 5, `agent.transport`, and `structure.presentation` so version-5 current
+2. Require `protocolVersion` 6, `agent.transport`, and `structure.presentation` so version-6 current
    values can be parsed. Require only the operation capabilities the task uses: `structure.read` for
    `get`, `structure.list` for listing or uncertain-publication recovery, `structure.preview` before
    publish or update, and the corresponding `structure.publish`, `structure.update`, or
@@ -119,10 +118,8 @@ Prepare one complete JSON value. `sourceOid` is the single coordinate for all no
 Each node may have zero or one `anchor`; each edge may have zero or more `anchors`. For any anchor,
 provide both positive inclusive `startLine` and `endLine`, or omit both. Use repository-relative paths.
 `originNodeId` and `presentation` are required; use `presentation: null` when no authorial spatial
-semantics are justified. A non-null presentation includes `thesis`, `startNodeId`, `primaryBackbone`, and
-`regions` explicitly; `primaryBackbone` may be `null` and `regions` may be empty under the authoring contract.
-Stable-sort the backbone's exact Edge IDs, each Region's unordered Node membership, and the Region array
-by stable ID.
+semantics are justified. A non-null presentation includes `thesis`, `startNodeId`, and required nullable
+`primaryBackbone`. Stable-sort the backbone’s exact Edge IDs.
 Do not add authored layer, stage, coordinate, rank, or route fields.
 The origin Node must have a source anchor, and every Node must be reachable from it when relation direction
 is ignored. The complete Structure contains no more than 400 source anchors.
@@ -177,15 +174,7 @@ rvw structure publish --stdin --json <<'RVW_JSON'
     "startNodeId": "policy-input",
     "primaryBackbone": {
       "edgeIds": ["request-policy-consumes-policy-input"]
-    },
-    "regions": [
-      {
-        "id": "decision-contract",
-        "label": "Decision contract",
-        "summary": "Connects the committed policy input to the allow/deny decision.",
-        "nodeIds": ["policy-input", "request-policy"]
-      }
-    ]
+    }
   },
   "nodes": [
     {
@@ -230,9 +219,8 @@ failed and are not persisted graph content.
 ## Replace the current value
 
 Use an in-place update only when the requested subject identity remains the same. Preserve IDs for
-surviving Nodes and Edges even when their labels or anchors change, and preserve a Region ID while the
-same comprehension chunk survives. Never recycle removed Node, Edge, or Region IDs for new claims or
-chunks, and send the complete replacement value. rvw records all three retired ID kinds and rejects their reintroduction even
+surviving Nodes and Edges even when their labels or anchors change. Never recycle removed Node or Edge IDs for new claims,
+and send the complete replacement value. rvw records both retired ID kinds and rejects their reintroduction even
 when the current value no longer contains them:
 
 ```bash

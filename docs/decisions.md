@@ -1,5 +1,33 @@
 # Architecture decisions
 
+## 2026-09-21: Remove browser notifications
+
+Browser Notifications did not provide reliable delivery in actual use. Remove the menu, permission
+requests, test notifications, post scanning/fingerprints and localStorage preference access. Old stored
+preferences are inert. Comment polling, invalidation, acknowledgement-to-final-post edits, event cursors,
+watch/Monitor intake, idempotency, runtime reuse and ports remain unchanged. Keep `lastModifiedBy` as
+public comment write-channel provenance and preserve the watcher’s independent acknowledgement text.
+No replacement notification surface is introduced. This supersedes earlier browser notification decisions.
+
+## 2026-09-21: Remove Structure Regions (protocol 6)
+
+Regions did not deliver sufficient readability or practical value. Remove their public schema,
+validation, dedicated retired IDs, layout packing, overview, drill-down, export, session state and
+producer instructions. Keep the factual Graph, exact source anchors, Node/Edge identities and tombstones,
+thesis/start/backbone, Guide, selection, navigation, local exploration, manual placement and Graph export.
+No grouping replacement is introduced. Earlier Region decisions below remain historical records.
+
+Migration 023 removes only the saved `presentation.regions` field and dedicated tombstone table. No other durable
+store contains serialized Structure output: publish idempotency stores a request hash and Structure ID;
+HTTP/query and reading-history caches are browser-local. Public and internal socket protocols advance
+from 5 to 6. Old input is rejected rather than accepted by a weaker schema. Existing publication keys
+retain their original hash and identity; retrieve/update the existing URI rather than replay a changed payload.
+
+Removing packing intentionally changes initial geometry for formerly grouped graphs. The remaining
+topology and backbone algorithms are retained. Routing tests that relied on former packing use fixed
+reviewer coordinates to preserve the same collision, label, route-complexity and export regression checks;
+current canonical layouts remain covered for determinism and non-overlap, and Viewer performance gates remain.
+
 ## 2026-09-08: Require a PR-scoped file map and make Walkthrough visuals question-shaped
 
 ### Status
