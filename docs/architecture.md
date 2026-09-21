@@ -96,7 +96,7 @@ of a thesis, an attention start, at most one connected exact-Edge primary backbo
 and 1–16 Edges. A start-only presentation with no backbone is valid. Legacy graph JSON without the
 presentation field reads as `presentation: null`. Migration 023 removes the retired metadata from stored
 graph JSON and drops its dedicated ID tombstones. Retired Node and Edge IDs are
-kept in small tombstone tableskept in small tombstone tables so a client that missed intermediate whole-value updates cannot mistake a
+kept in small tombstone tables so a client that missed intermediate whole-value updates cannot mistake a
 removed-then-reused identity for a surviving claim. Continuously present identity semantics
 remain an authoring responsibility because ordinary claim edits are valid. Structure is not a semantic code index and has no revision
 history, comments, persisted semantic reverse index, inferred edges, or persisted coordinates. The

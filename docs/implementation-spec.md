@@ -728,7 +728,7 @@ type Structure = {
   surviving claimのIDを維持し、削除したIDを別claimへ再利用しない。
   削除済みNode / Edge IDは小さなtombstoneとして保持し、current valueへ再導入するupdateを拒否する。
   tombstoneは「一度current valueから消えたIDの再登場」だけを機械検証する。同じupdateで存続するIDの意味が
-  repurposeされたかはlabel、anchor、endpoint、membershipの変更だけから安全に判定できないためproducer contractとし、
+  repurposeされたかはlabel、anchor、endpointの変更だけから安全に判定できないためproducer contractとし、
   別subjectは新しいStructureにする。
 - Nodeは0または1件、Edgeは0件以上かつ20件以下のanchorを持つ。全anchorは一つの`sourceOid`で検証し、
   repository-relative UTF-8 text pathと、両方nullまたは両方positiveなinclusive line pairだけを受け付ける。
@@ -2291,7 +2291,7 @@ update許可ではなく、許可がなければ問題と修正案を報告す�
 producerを起動してpublish / updateするのはcreate / publish / produce / updateが明示された場合だけとし、既存URIの提示は
 read権限であってupdate権限ではない。production時はproducerをbatch起動せず、独立に有用で他候補を最も制約するsurfaceから
 順に実行する。成功時のclaim refinementを含む各producer結果の後に、残る未publish briefのoverlap、scope、terminology、
-couplingを再評価してから次へ進む。新規Structure briefは意図するrelation / comprehension chunkをsemanticに渡し、raw ID、
+couplingを再評価してから次へ進む。新規Structure briefは意図するrelation / backboneをsemanticに渡し、raw ID、
 payload normalization、connectivity validationは`rvw-structure`に委ねる。既存Structureのraw IDはreadしたcurrent valueからのみ
 参照し、retired Node / Edge IDの再利用を依頼しない。
 

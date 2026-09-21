@@ -195,6 +195,17 @@ describe("bundled Skill code-reference guidance", () => {
     expect(example.presentation).toHaveProperty("primaryBackbone");
   });
 
+  it("keeps the current Structure contract free of retired grouping semantics", () => {
+    const implementationSpec = readFileSync("docs/implementation-spec.md", "utf8");
+    for (const contract of [...structurePresentationContracts, implementationSpec]) {
+      expect(contract).not.toMatch(/comprehension\s+chunks?|spatial\s+groupings?|claim\/chunk/i);
+      expect(contract).not.toMatch(/new claims or\s+chunks|all three retired ID kinds/i);
+    }
+    expect(structureSkill).toContain("both retired ID kinds");
+    expect(structureAuthoring).toContain("both retired ID kinds");
+    expect(implementationSpec).toContain("relation / backboneをsemanticに渡し");
+  });
+
   it("contains no obsolete linear-spine or ordered-Region authoring contract", () => {
     for (const contract of structurePresentationContracts) {
       expect(contract).not.toContain("primarySpine");

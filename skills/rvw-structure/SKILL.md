@@ -219,8 +219,8 @@ failed and are not persisted graph content.
 ## Replace the current value
 
 Use an in-place update only when the requested subject identity remains the same. Preserve IDs for
-surviving Nodes and Edges even when their labels or anchors change. Never recycle removed Node or Edge IDs for new claims or
-chunks, and send the complete replacement value. rvw records all three retired ID kinds and rejects their reintroduction even
+surviving Nodes and Edges even when their labels or anchors change. Never recycle removed Node or Edge IDs for new claims,
+and send the complete replacement value. rvw records both retired ID kinds and rejects their reintroduction even
 when the current value no longer contains them:
 
 ```bash

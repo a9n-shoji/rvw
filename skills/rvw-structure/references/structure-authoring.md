@@ -213,9 +213,9 @@ Keep factual graph claims, authorial presentation, derived rendering, and review
 separate. Presentation contains only thesis, startNodeId, and required nullable primaryBackbone.
 Coordinates, routes, focus, history, pan, zoom, viewport, and manual positions belong to the Viewer.
 
-- - Write a nonblank `thesis` of 1–1000 characters that states what the whole map should help the reviewer
-    understand. It may synthesize the graph's source-supported claims, but must not announce a review
-    finding, approval, risk verdict, or completeness guarantee.
+- Write a nonblank `thesis` of 1–1000 characters that states what the whole map should help the reviewer
+  understand. It may synthesize the graph's source-supported claims, but must not announce a review
+  finding, approval, risk verdict, or completeness guarantee.
 - Choose one current `startNodeId` as the first authorial attention anchor. It may differ from
   `originNodeId`: start says where this explanation first asks the reviewer to look, while origin says
   where source verification of the selected Structure role factually begins. For a file map, origin does
@@ -236,15 +236,17 @@ Coordinates, routes, focus, history, pan, zoom, viewport, and manual positions b
   and 16-Edge caps are intentional: select the explanatory backbone instead of copying the whole factual
   graph. Narrow the behavior boundary, or choose a Walkthrough when ordered transitions and
   prose carry the explanation.
-  Do not author layers or stages: visual ranks and bands are derived layout, not explanation truth.
-  A non-null presentation influences the overview, initial attention, and visual emphasis; a backbone additionally organize canonical placement. A start-only presentation retains topology-derived
-  geometry; it is still presentation because its thesis and attention start shape the overview and a new
-  Viewer session initially focuses `startNodeId`.
-  `originNodeId` remains separately marked as the factual source-verification start for the selected role.
-  The initial focus is derived from the current artifact and does not persist reviewer focus or give the
-  producer browser control. All Nodes, Edges, factual directions, and source actions remain available for
-  free exploration. Presentation never changes the graph's factual claims or hides secondary content. Do
-  not author coordinates, viewport, focus, manual positions, multiple routes, stepper behavior, or autoplay.
+
+Do not author layers or stages: visual ranks and bands are derived layout, not explanation truth.
+A non-null presentation influences the overview, initial attention, and visual emphasis; a backbone additionally organizes
+canonical placement. A start-only presentation retains topology-derived
+geometry; it is still presentation because its thesis and attention start shape the overview and a new
+Viewer session initially focuses `startNodeId`.
+`originNodeId` remains separately marked as the factual source-verification start for the selected role.
+The initial focus is derived from the current artifact and does not persist reviewer focus or give the
+producer browser control. All Nodes, Edges, factual directions, and source actions remain available for
+free exploration. Presentation never changes the graph's factual claims or hides secondary content. Do
+not author coordinates, viewport, focus, manual positions, multiple routes, stepper behavior, or autoplay.
 
 Do not omit factual claims, manufacture a backbone, or distort file granularity to fit one screen.
 Split independent file-map areas into separate producer invocations without hiding a shared dependency.
@@ -258,11 +260,11 @@ IDs identify claims across whole-value replacements; labels are presentation.
   not match a symbol exactly.
 - Preserve an ID when the same claim survives an update, even if its label, description, kind, notation,
   anchor, or endpoint details change.
-- Assign a new ID for a genuinely new claim or comprehension chunk. Never recycle an ID removed from this
+- Assign a new ID for a genuinely new claim. Never recycle an ID removed from this
   Structure—whether it identified a Node or Edge—for a different meaning. rvw retains both retired ID kinds
   as tombstones and rejects their reintroduction without retaining prior graph values.
   This mechanically detects disappearance followed by reuse; it cannot determine whether a continuously
-  present ID was semantically repurposed, so compare the current claim/chunk before preserving it.
+  present ID was semantically repurposed, so compare the current claim before preserving it.
 - Give every edge its own stable ID, including parallel edges between the same endpoints.
 - In a behavior / review-question Structure, use `originNodeId` for the subject's factual code
   entrypoint. The entrypoint is the place a reviewer starts verifying the declared behavior: for example
@@ -341,7 +343,7 @@ Use this checklist internally; do not reproduce it as the Structure description.
 - [ ] A non-null presentation explicitly includes a current attention start, `primaryBackbone` (object or
       `null`). When `primaryBackbone` is non-null, the start belongs to its endpoint Nodes.
 - [ ] A non-null presentation has an honest thesis, start, and optional connected exact-Edge backbone.
-- [ ] Presentation describes at most one visual backbone and useful spatial groupings without coordinates,
+- [ ] Presentation describes at most one visual backbone without coordinates,
       multiple routes, hidden content, static repository inventory, stepper behavior, or autoplay.
 - [ ] IDs are unique, semantic, and stable across updates; removed IDs are not recycled.
 - [ ] For a behavior map, `originNodeId` names the source-established factual entrypoint where behavior

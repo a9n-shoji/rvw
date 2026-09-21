@@ -569,7 +569,7 @@ rvw structure get <STRUCTURE_URI> --json
 ```
 
 The response contains the complete Structure and its Pull Request identity, including the local
-repository path. Version-5 output always contains `presentation`; a legacy saved value without it is
+repository path. Version-6 output always contains `presentation`; a legacy saved value without it is
 normalized to `null`. It does not contain browser focus, positions, viewport, or expansion state.
 
 ### Preview
