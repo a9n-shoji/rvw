@@ -61,7 +61,7 @@ rvwが担うもの:
 - source commitをanchorに持つAgent Walkthrough、typed code reference、Mermaid図、static HTML visual
 - boundedなPR-relevant behavior / review question、またはPR-scoped file responsibility / dependency mapを表す
   Agent Structure、stable Node / Edge ID、source anchor、
-  optionalなthesis / authorial start / connected exact-Edge primary backbone / identified comprehension region
+  optionalなthesis / authorial start / connected exact-Edge primary backbone
 - platform非依存の`rvw` / `rvw-review-compose` / `rvw-walkthrough` / `rvw-structure` /
   `rvw-watch-comments` SkillのCodex / Claude Code向けinstall/status
 
@@ -298,10 +298,8 @@ empty fileは従来どおり明示的に扱う。
   単なるpane focus、tab close／move、pane幅、sidebar、検索入力、自動syncをentryにしない。commit範囲、
   全文／変更、stacked / split、
   tree modeはhistoryから復元せず、Back / Forward後も現在のglobal review scopeを維持する。
-- Structureのreading destinationはgenericなpane scrollではなく、Graph / Regions mode、focus、hop、
-  framed Region、exact Edge選択、Graph / Regions双方のcamera、artifact revisionとgeometry basisをruntime validation可能な
-  snapshotとして同じbrowser historyへ載せる。Structureを開く／activateする操作、Nodeのdouble clickによるneighborhood focus、状態が変わるHome、
-  Region / Context / exact EdgeからGraphへのdrill-downだけがentryをpushする。mode切替、hop変更、pan / zoom、
+- Structureのreading destinationはgenericなpane scrollではなく、focus、hop、exact Edge選択、Graph camera、artifact revisionとgeometry basisをruntime validation可能な
+  snapshotとして同じbrowser historyへ載せる。Structureを開く／activateする操作、Nodeのdouble clickによるneighborhood focus、状態が変わるHomeだけがentryをpushする。hop変更、pan / zoom、
   Fit / center / drag / layout reset、Nodeのsingle click selection、Guide disclosure、transient relation選択、poll updateはentryを増やさずcurrent
   entryをreplaceする。sourceへ移動する直前もcurrent Structure snapshotを同期し、Back / Forwardでsourceと空間的な
   読解地点を往復できる。Back / Forwardを適用した時点で、それ以前に開始した未完了のsource/reference解決は
@@ -656,8 +654,7 @@ Structureは一つのboundedなrelationship spaceを次の二つのauthoring rol
 
 artifactの必要十分性は宣言したsubjectの理解に必要なfactual responsibility / relationが揃うことを意味し、
 repository全体の網羅や全Node / Edge / labelを同じviewportで同時に読めることを意味しない。authorは任意の`presentation`で、
-spatial explanationの主張、attention start、一つのconnectedなexact-Edge primary backbone、stable IDと
-責務summaryを持つcomprehension Regionを宣言できる。Region arrayはauthorialな順序を持たず、これは一本道のstepperやautoplayではない。
+spatial explanationの主張、attention start、一つのconnectedなexact-Edge primary backboneを宣言できる。これは一本道のstepperやautoplayではない。
 順序とprose自体が理解の本体ならWalkthroughを使う。PR / change scopeへ接地しない
 静的なarchitecture／責務inventoryはreviewの停止条件を失うためStructureの対象にしない。file-map roleは
 この拒否境界の限定された例外であり、変更file一覧やrepository全体のimport graphを許可するものではない。Structureは
@@ -706,12 +703,6 @@ type StructurePresentation = {
   primaryBackbone: {
     edgeIds: string[];
   } | null;
-  regions: Array<{
-    id: string;
-    label: string;
-    summary: string;
-    nodeIds: string[];
-  }>;
 };
 
 type Structure = {
@@ -732,10 +723,10 @@ type Structure = {
 
 - `title`と`scope`はsubjectとboundaryを宣言する。producerはuser / caller / PR本文 / 上位composerの
   明示briefを優先し、commit済みcodeとtestで未指定部分だけを補う。
-- Node / Edge / Region IDは`^[A-Za-z][A-Za-z0-9_-]{0,63}$`を満たすlabelとは別のclaim identityである。
-  Node / Edgeは各collection内、Regionはpresentation内でuniqueとする。same-subject updateで
-  surviving claim / comprehension chunkのIDを維持し、削除したIDを別claim / chunkへ再利用しない。
-  削除済みNode / Edge / Region IDは小さなtombstoneとして保持し、current valueへ再導入するupdateを拒否する。
+- Node / Edge IDは`^[A-Za-z][A-Za-z0-9_-]{0,63}$`を満たすlabelとは別のclaim identityである。
+  Node / Edgeは各collection内でuniqueとする。same-subject updateで
+  surviving claimのIDを維持し、削除したIDを別claimへ再利用しない。
+  削除済みNode / Edge IDは小さなtombstoneとして保持し、current valueへ再導入するupdateを拒否する。
   tombstoneは「一度current valueから消えたIDの再登場」だけを機械検証する。同じupdateで存続するIDの意味が
   repurposeされたかはlabel、anchor、endpoint、membershipの変更だけから安全に判定できないためproducer contractとし、
   別subjectは新しいStructureにする。
@@ -771,42 +762,33 @@ type Structure = {
   roleに合うfactual startが移動した場合だけupdateで変更できる。
 - 独立した変更領域を同じPRという理由の架空Node / Edgeでconnectedにしない。意味のある共有contract / dependencyが
   あれば一つのmapに含め、不自然に隠さない。factual relationがない場合はcomposerが複数file-map Structureへ分け、
-  producerは一 invocation一Structureを維持する。大きいmapはpresentation / backbone / Regionsを使えるが、画面へ
+  producerは一 invocation一Structureを維持する。大きいmapはpresentation / backboneを使えるが、画面へ
   収めるためにrelation、重要fact、file粒度を歪めず、必要なら意味のある範囲で分割する。
 - 全Structure anchorは既存の単一`sourceOid` coordinateを維持し、通常は変更後snapshotを説明する。before / afterの
   比較元を調査しても異なるsnapshotのanchorを混在させない。削除fileをHEADに存在するようにanchorせず、renameは
   選択した`sourceOid`に実在するpathを使う。
-- `presentation`はfactual graphと分離したauthorial semanticsで、v5 producerは`null`を含め必ず送る。
+- `presentation`はfactual graphと分離したauthorial semanticsで、v6 producerは`null`を含め必ず送る。
   non-nullの場合、`thesis`は1〜1000文字、`startNodeId`は最初に注意を向けるcurrent Node IDとする。
-  `primaryBackbone: null`かつ`regions: []`のexact start-only presentationも有効で、thesisとattention startだけを
+  `primaryBackbone: null`のexact start-only presentationも有効で、thesisとattention startだけを
   宣言し、spatial organizerは宣言しない。non-null backboneは1〜16件のuniqueなcurrent Edge IDを持ち、
   endpointから2〜12件のuniqueなcurrent Node IDを導出する。`startNodeId`はそのNode集合に含まれ、選択Edgeは
   factual direction、parallel multiplicity、self-loopを無視したsimple graphで一つに接続しなければならない。
   self-loopだけをconnectionとは扱わない。`edgeIds`のarray順はsemanticではなく、validation後のcurrent valueでは
   stable Edge ID順へnormalizeする。path、star、fan-out、convergence、reciprocal pair、小さなcycleを同じ
   connected backboneのshapeとして許容する。
-  `regions`は0〜12件のunordered setで、各Regionはuniqueなstable `id`、1〜100文字の`label`、1〜500文字の
-  `summary`、1件以上のuniqueなcurrent Node IDからなる`nodeIds` membership setを持つ。`summary`はそのchunkが
-  Structureのthesisへ果たす責務を説明するauthorial semanticsであり、genericなmodule説明、review conclusion、
-  factual Edge predicateの代用にしない。Region arrayと各`nodeIds` arrayの順序には意味を持たせず、current valueでは
-  それぞれstable Region ID / Node ID順へnormalizeする。同じNodeを複数Regionへ所属させない一方、全Nodeの所属、
-  Region memberだけからなるconnected subgraph、`startNodeId`の所属は要求しない。backbone NodeもRegion未所属または
-  一つのRegion所属でよい。
 - factual graph（`originNodeId`、Node、Edge、source）、authorial `presentation`、derived rendering、reviewer sessionを
   別layerとして扱う。`startNodeId`はfactual entrypointとは別のauthorial attention anchorである。
   `primaryBackbone`は、この説明で最初に掴む一つのcoherentなexact-relation subgraphを表す。Node array、route、
   runtime data flow、control flow、因果、project全体でのarchitectural importanceを主張せず、Edgeの`from` / `to`を
   書き換えない。canonical coordinate、backboneからのgraph distance、visual rank、route、label slot、semantic
-  zoomはViewerのderived outputであってartifact fieldではない。focus、focusからのhop数、現在frame中のregionは
-  reviewer sessionであり、backbone membershipと一つのimportance scoreへ統合しない。Regionも新しいfactual relation、importance layer、
-  exhaustive partition、static inventoryを意味しない。Region間relationはdirectなcross-Region factual EdgeからViewerが
-  導出し、authorが第二のgraphとして入力しない。`presentation: null`と
+  zoomはViewerのderived outputであってartifact fieldではない。focusとhop数はreviewer sessionであり、
+  backbone membershipと一つのimportance scoreへ統合しない。`presentation: null`と
   start-only presentationは同じtopology-derived canonical geometryを選ぶが、後者はthesis、start cue、
   新しいsessionのfocus、export semanticsを持つ。旧`graph_json`にfieldがない保存値はread時に`null`へ
-  normalizeし、SQL migrationは追加しない。
+  normalizeする。migration 023は旧保存値の廃止metadataだけを取り除く。
 - primary backboneの12 Node / 16 Edge上限は、50 Nodeまでの全graphと独立したsemanticな制約とする。
   backboneは最初に掴むconnected skeletonであり、全Node / Edgeをprimaryへ分類するものではない。上限を超える
-  candidateは核心relationを選び直すか、regionでchunk化するか、behavior boundaryを狭める。transitionと
+  candidateは核心relationを選び直すか、behavior boundaryを狭める。transitionと
   ordered stopそのものが意味を持つ場合はWalkthroughを選ぶ。
 - Node descriptionとEdge labelはproducer claimであり、source anchorはそのclaimを検証する根拠である。
   Edge labelは`from`をactor/source、`to`をtargetとして自然に読めるverb / verb phraseを使い、
@@ -874,46 +856,16 @@ sessionのNode位置、depth、zoom scaleを保ったone-shot requestとしてta
 不在を確定せず、同じrevisionで不在の場合だけ削除済みとする。detailの方が新しければ逆引きresultをstaleとして
 再取得する。Structure一覧のfingerprintが実際に変わった場合だけ逆引きqueryをinvalidateする。
 
-探索はHome、Back、focus、1-hop / 2-hop / All、region frame、pan、zoom、fit、focus center、node dragを提供する。
-HomeはAllへ切り替えてartifactから導出したauthorial orientationへ戻す。Region frameはfocusを変えずAllへ切り替えて
-exact memberと内部relationを収め、そのmember Nodeと内部relationをfull relevanceで示す一時的なchunk lensとする。
-focusからのhop距離自体は変えず、Home、Node selection、明示的なdepth変更でchunk lensを解除する。
-Backはpane-localなfocus / depth / framed region / camera historyを戻す。
+探索はHome、Back、focus、1-hop / 2-hop / All、pan、zoom、fit、focus center、node dragを提供する。
+HomeはAllへ切り替えてauthorial orientationへ戻す。Backはfocus / depth / cameraを含むreading historyを戻す。
 どちらもproducerが指定するnavigation pathではない。trackpadの通常wheelは
 pan、pinchに相当するCtrl / Meta付きwheelはpointer位置を中心とするzoomとして扱い、pan / zoom感度は従来値の
 2倍とする。overflowするNode上では、修飾キーなしの縦wheelをその方向へNode内scrollできる間だけNodeへ渡す。
 横wheel、Ctrl / Meta付きwheel、Node内scrollの上端／下端から外向きのwheelはcanvasへ渡す。layoutはfactual graph、
 optionalな`presentation`、stable IDを入力とするdeterministicなbehavior projectionとする。non-nullの
-`presentation`では`startNodeId`をauthorial attention anchorとする。Regionが一つ以上ある場合は各Regionの全memberを
-compoundなcomprehension/spatial chunkとして先に配置し、direct cross-Region factual adjacencyでchunk間を近づける。
-`primaryBackbone.edgeIds`はcross-Region relationのweightとexact visual coreを与えるが、同じRegionのmemberをglobal bandへ
-引き離さない。Regionがなくbackboneだけがある場合は、そこからstart-rootedなconnected skeletonとvisual rankを導出する。
-backboneとRegionを別のvisual channelへ反映し、backbone外／Region外を
-含む全Nodeと全Edgeをartifactから削除しない。
-Edge方向やfactual claimを書き換えず、focus、source検証、自由探索を制限しない。Region arrayとRegion内`nodeIds`は
-どちらも順序のないsetであり、reviewerの読解優先順、sequence、runtime / causal flow、architectural importance、
-renderer座標を表さない。Region-bearing layoutはRegion間のdirect factual adjacency、start context、stable Region IDから
-bounded surfaceを導出し、Region上限付近でも一列に引き伸ばさない。小さなRegionのmember gridはinternal factual relationの
-crossingとspan、隣接Regionへのboundary affinityを決定的に評価する。3 memberの2×2 gridのような非full gridでは空cellも
-候補に含め、multi-boundary hubを自然なcornerへ置ける。memberが多い場合は探索量を上限化したdeterministic affinity
-placementへfallbackする。Regionがないbackbone-only layoutでは、actual backbone topologyをbranch / convergenceのまま
-visual bandへ展開し、一列へ平坦化しない。derived visual bandが十分に長い場合は、contiguousなband partitionを候補として
-serpentineな複数行へ折り返す。現在のprojectionは5:3のreference viewportに対するnormalized extentが最小候補の110%以内となる
-boundedな候補集合に絞り、その許容範囲ではrelation spanをnormalized extentとareaより優先して比較する。これにより極端な外形を
-避けながら、わずかな詰め込みよりrelationの追いやすさを優先する。Node / Edge / backbone Edge / region memberの入力配列順を変えても
-同じ座標を返す。候補探索のthreshold、reference aspect、score、row breakはprotocol fieldでもauthorial layerでもなく、
-readability metricに応じて置換できるprojection implementation detailである。
-Region外のNodeは、Region memberを除いたfactual topologyのmaximal connected componentごとにrenderer-ownedなContext
-compoundとして扱う。各Contextはinternal Edgeを使ったderived rank bandをboundedなserpentine surfaceへ畳み、internal
-geometryを崩さないrigid translationとして、declared Region envelopeの上下左右を含むglobal packing候補へ配置する。
-Region同士のrelative arrangementは維持し、全Nodeを正座標へ戻す最終global translationだけを許す。候補はdirect boundary
-Edge、とくにexact backbone Edgeの距離、boundary routeが既存Nodeを横切る数、全体extent、areaを決定的に比較する。これによりpartial Region
-membershipでも長い未割当chain、複数依存hub、cross-Region bridgeを縦一列へ伸ばさず、かつRegion間の暗黙relationへ
-畳み込まない。Context component、entry rank、band、envelopeはRegions viewとGraph projectionがcurrent factsから導出する
-renderer detailであり、artifactへIDやmembership、layout hintとして保存しない。Region packingはmemberのactual envelopeと
-cross-Region adjacencyを使い、空のtheoretical radiusを予約しない。Region membershipの正本は明示Node IDだけで、derived
-boundsはplacement内部の衝突回避に限り、artifact semanticsやmanual drag後のmembership表示には使わない。
-`startNodeId`がいずれかのRegionに属するとは限らない。
+`presentation`では`startNodeId`をauthorial attention anchorとする。backboneからstart-rootedなconnected skeletonと
+visual rankを導出する。長いbackboneは決定的に複数rowへ折り返し、全Node / Edgeとfactual directionを保持する。
+backbone外のNodeは接続先の近くの非重複slotへ配置する。入力配列順はgeometryへ影響させない。
 `presentation: null`とstart-only presentationは、topology、factualなEdge direction、`originNodeId` entrypointから
 同じprojectionを導出する。originを含むtopology componentでは、canonical directional linksのstrongly connected componentsを求め、
 directional weak componentごとにcondensation DAGをlongest-path layeringする。各SCCを連続したrank blockとして配置して
@@ -935,8 +887,8 @@ factualなoriginとrelation directionから導出するprojectionである。同
 両方向directed relationがあればdirectional signalから除外し、同方向parallelはpair-levelの1 link、self relationは
 0 linkとする。label、kind、description、path、変更種別は位置決定へ使わず、Edge label sizeはNode geometry決定後の
 placementだけに使う。stable IDは対称な配置を決定する最終tie-breakerに限る。non-nullの`presentation`は
-このtopology projectionへauthorial semanticsを加え、backboneまたはregionが存在する場合だけ別のcanonical
-geometryを組み立てる入力である。backboneのvisual bandはstartからのundirected distance、cross-Region adjacency、
+このtopology projectionへauthorial semanticsを加え、backboneが存在する場合だけ別のcanonical
+geometryを組み立てる入力である。backboneのvisual bandはstartからのundirected distance、
 crossing reduction、stable IDの順で決定的に導出する。factual directionはarrowとして保ち、backbone rankやauthorial
 reading directionへ変換しない。
 producer指定のlayer / stage / 座標、focus、viewport、manual positionは受け取らない。
@@ -949,35 +901,14 @@ retained neighborの重心を起点に全方向の空き候補を調べ、既存
 1-hop / 2-hopはfull layoutのfilterではなく、明示された局所中心とundirected factual distanceから導出したlocal graphを、局所専用のcanonical/manual layoutへ配置する。非表示Node / Edgeはrouting、label衝突、bounds、spacingの入力に含めない。局所のNode集合の両端を持つ実Edgeはすべて含め、合成Edgeを追加しない。local layoutはfull layoutの左右・上下の向きと相対順序、中心周辺のmental mapを可能な限り維持しつつ、非表示要素の抜けた空白を詰める。local中のdrag / Resetはlocal layoutだけを変更し、full positionsとAll cameraは保存してAll復帰時に復元する。
 Allから1-hop / 2-hopへ入る場合は選択中Nodeを局所中心とし、局所表示中の1-hop / 2-hop切り替えは現在の局所中心を維持して深さだけを変える。深さ変更では新しいvisible graphからautomatic local layoutを再導出し、以前の深さで自動配置されたNode座標を固定しない。Nodeの周辺表示またはdouble clickだけが局所中心を明示的に変更する。明示的な周辺表示のcamera frameは、Allではexact 1-hop、局所表示ではcurrent depthのvisible graph全体を対象にする。
 layout遷移中にpointer操作を開始した場合、補間中のNode座標はdrag継続用の一時的なrender stateとしてだけ取得し、full / local session layoutへ書き戻さない。drag閾値を超えた場合だけ操作対象Nodeの位置をreviewer-owned座標として確定する。Nodeとlabelの座標補間中は、新しい確定route、arrow、label guideを隠し、補間完了に合わせて表示する。
-Nodeのfull / local位置、Graph / Regions view mode、selected Node、local center、depth、Graphのactive / All viewport、独立したRegions viewport、Guide disclosureはbrowser session内だけでpaneとStructure IDの組へ
-保持し、tab往復とcurrent-value更新後もsurviving IDの状態を保つ。spatial-organizer identityは、organizerへ適用される
-canonical projection revision、organizerの有無、organizerがある場合の`startNodeId`、backbone Edge endpointから作る
-normalized simple adjacency、Regionのstable ID / membershipからなる。Region-first revisionはRegionを一つ以上持つ
-presentationだけに適用し、Regionなしのtopology / start-only / backbone-only layout basisは変更しない。organizerを追加、
-削除、adjacencyを変更、または該当projection revisionを変更した場合は、
-新しいauthorial spatial semanticsを優先して全Nodeをcanonical layoutへrebaseする。`presentation: null`とstart-onlyは
-同じtopology layout basisを共有するため、両者間の更新と、start-onlyのthesis / `startNodeId`だけの更新ではmanual
-geometryを維持する。thesisだけ、同じendpoint間のexact primary Edge差し替え／parallel relation追加削除、Region array / member
-arrayの並べ替え、Region label / summaryだけ、
-またはspatial organizerを変えないgraph更新でもrebaseしない。semantic emphasisはcurrent exact Edge setへ即時更新する。
-rebaseとlayout resetはreviewerのscaleを維持し、focus Nodeが存続する場合はその
-screen位置が変わらないようviewportを平行移動する。
-view mode、focus、depth、選択中Edge、Guide disclosureも維持する。明示的なreading destinationの履歴は
-Structure session内の別stackを持たず、document workspaceと同じbrowser reading historyを正本とする。
-Regionが存在しないcurrent valueではcurrent/history上のRegions modeだけをGraphへ正規化する。
-Regions viewportは初回 / ResetではStart Region（未所属ならそのContext）を可読scale floorでframeし、Fitだけが
-derived map全体をframeする。card geometry自体はpaneへ収めるためにcompact化しない。
-その後のbutton / 修飾key + wheel zoomとwheel / drag panはGraph viewportを変更しない。Region drill前のRegions viewportも
-history entryへsnapshotし、Backでその時点のoverview cameraへ戻す。mode切替、pane transfer、tab close/reopenでは両cameraを独立保持する。
-GraphのFit boundsはrenderer-derived geometryなので、snapshotしたartifact revisionとNode geometryがともに一致する
-場合だけ再適用する。artifact更新またはdrag/reset後のgeometry不一致時はstale boundsを破棄する一方、surviving
-Node / Regionを指すsemantic frameはcurrent geometryから再投影し、basisが一致するraw manual viewportは維持する。
-Regions projectionのbasisはRegion ID / label / membership、start、primary backbone Edge set、Node ID、Edge ID / endpoint /
-direction / labelをcanonical sortして作る。unorderedなserialization順とthesis / Region summaryだけの変更ではcameraを維持し、
-map geometry / routingを変え得るbasis変更時だけStartを読めるHome projectionへ戻す。map全体への縮小は
-明示的なFitだけが行う。
-frame中のRegionと同じstable IDが存続する場合は、organizer rebase後もchunk lensを維持し、current memberと
-内部relation / labelのderived boundsを新しいgeometryから解き直してframeする。削除されたRegion IDだけをpruneする。
+Nodeのfull / local位置、selected Node、local center、depth、Graphのactive / All viewport、Guide disclosureは
+paneとStructure IDの組でbrowser session内に保持し、tab往復・pane移動・current-value更新で存続IDの状態を保つ。
+layout basisはprojection revision、backboneの有無、backboneがある場合のstartとnormalized endpoint adjacencyからなる。
+backbone追加／削除／adjacency変更時はcanonical geometryへrebaseし、scaleとfocusの画面位置を保つ。
+nullとstart-onlyは同じbasisを使い、thesis／startだけの編集、exact parallel Edgeの差し替え、prose変更ではmanual geometryを保つ。
+focus、depth、選択EdgeとGuide disclosureは独立して維持する。履歴はworkspaceと同じbrowser reading historyを使う。
+Fitのboundsはartifact revisionとgeometryが一致する場合だけ復元し、不一致ではstale boundsを破棄する。
+Nodeを指すsemantic frameは存続IDをcurrent geometryへ再投影し、basisが一致するmanual viewportを維持する。
 左右paneで同じStructureを
 開いてもreading stateとDOM参照を共有しない。reload、別browser、CLI、SQLiteへ座標を持ち越さない。drag後は
 canonical layoutへ戻せる。
@@ -994,22 +925,14 @@ producerの新しい`originNodeId`へ移動せずfocusなしのAllへ戻す。�
 `originNodeId`、start-onlyは`startNodeId`をHomeのattention targetとし、そのNodeと1-hop Nodeのactual boundsを
 padding付きでframeする。backboneを持つpresentationでも同じstart-centered 1-hop frameを使い、全backbone endpointをcamera targetへ追加しない。
 scaleにはViewer共通のminimumと局所frame用maximumを適用し、全graphの大きさだけを理由に初期detailを読めないscaleへ
-縮小しない。Edge route / label boundsは明示的なRegion frameとFit以外の初期Home boundsへ含めない。
+縮小しない。Edge route / label boundsは明示的なFit以外の初期Home boundsへ含めない。
 Nodeのsingle click / pointer tap / keyboard activationはそのNodeをselected stateにし、highlightとdetailを更新するが、local center、depth、Node座標、route / label foundation、viewportのpan / zoom / fitを
 一切変更しない。double click判定のためにsingle clickを遅延させず、timerや永続focus modeも導入しない。selected Nodeとlocal centerは独立したstate / visual cueである。
 All中のNode double clickはselectionを保ったまま、clicked Nodeとexact factual 1-hop Nodeを読めるboundsへcameraをanimateするone-shot navigationとし、depthはAll、full layoutも不変とする。local中のdouble clickはselectionとlocal centerをclicked Nodeへ更新し、同じdepthのlocal graph / layoutを再導出して1-hopをframeする。Nodeにはこのdouble clickと同値のkeyboard / touch可能な明示actionを用意する。source actionはこのnavigationをbubbleさせない。
 明示的に1-hop / 2-hopを選んだ時だけ、selected Node（なければsurviving local center / Home）を中心にlocal graphとlocal layoutを導出する。現在と同じdepthの再選択はno-opである。depth切替時は中心Nodeのscreen位置とzoomを保ち、double click / 明示local actionだけが1-hopをframeする。座標、route、label、leaderは一回のgeometry更新で一緒に切り替え、camera / layoutは200–300msの取り消し可能なtransitionを使うが、フレームごとにgeometryを再計算しない。reduced motionでは直ちに最終状態へ移り、連続操作は最新のintentを勝たせる。
 局所へ絞る時もcomplete extentへ戻るminimap / All / Fit、visible / total件数、
 start-centeredなHome、Backを常時回収可能にし、
-隠れたNode / Edgeをartifactに存在しないよう見せない。HomeとRegions overviewのRegion選択はGraph / All lensへ切り替え、Regionはexact
-member Nodeと内部Edge / label boundsをframeするpane-local chunk lensを有効にする。focusとfocus-hop distance、artifactの
-membershipは変更せず、memberと内部relationだけをfull relevanceにする。Home、Node selection、depth変更はRegion lensを解除し、
-Back / Forwardは直前のStructureまたは別documentのreading destinationを復元する。Graph / Regionsの直接toggleは
-current entryを置換し、Region rectangleからGraphへdrill-downするsemantic navigationだけはRegions overviewを
-新しいentryの直前へ残す。表示中のgraphを一枚へ圧縮するのは
-「表示中を収める」という明示操作だけとする。
-Fitとtoolbar / wheel zoomは同じminimum scaleを使い、縮小操作がscaleを増加させない。
-poll updateもNode位置とviewportを維持し、自動fitしない。
+隠れたNode / Edgeをartifactに存在しないよう見せない。HomeはAllへ切り替え、Back / Forwardは直前のreading destinationを復元する。
 
 non-self Edgeのvisible routeはexactなsource / target Nodeのvisible boundary portへ接続する。clearanceはNode内部への
 侵入を避けるためだけに使い、endpointとの対応が曖昧になるvisible gapを残さない。directed Edgeはarrowheadを
@@ -1017,7 +940,7 @@ Nodeの下へ隠さず、markerを含むvisible routeの先端をtarget portへ�
 route modelで非endpoint Nodeを避ける。distinctなvisible relationのrouteが実質的な区間で同一またはほぼ同一の
 corridorを共有する場合はstable IDでlaneを分け、その区間を個別に追跡できるようにする。parallel / reciprocal Edgeは
 必ずこの対象に含む。endpoint直近だけ分岐して残りのpathを重ねることはlane分離とみなさない。self-loopは
-stable loopを使う。backbone Edgeはreserved corridorを優先し、branch / cross-region Edgeは必要に応じてgutterを使う。
+stable loopを使う。backbone Edgeはreserved corridorを優先し、branch Edgeは必要に応じてgutterを使う。
 Viewerとexportは同じroute geometry / label plannerを共有する。All / exportではfull graph、localではderived visible graphのEdgeのrouteとlabel slotをselection / hoverより先に解き、
 共通labelはselection変更で移動させない。normal detailでは全表示対象labelを一つの配置問題として解き、各labelを
 Node boxだけでなく他の全表示labelとも非重複にする。collision-freeなinline slotがなければassociation leader付きの
@@ -1030,30 +953,16 @@ Nodeはsource file identityをclaim titleと別の行に置き、source action�
 descriptionの本文領域はsource actionの下も含めて右端まで使う。Node内scrollはlayout座標、Edge route、session座標、
 canvas zoomを変更しない。
 Graph canvasはfocus名、可視／全体件数、zoom率とminimapを常時提示する。minimapはcomplete canonical extent、backbone、
-Region landmark、current viewport、focusを示し、局所lensから全体へのorientationを保つ。non-nullの`presentation`では
+current viewport、focusを示し、局所lensから全体へのorientationを保つ。non-nullの`presentation`では
 headerとbodyの間に一つのcompact Guideを置き、authorial startと個別にdiscloseできるthesisだけを示す。閉じたGuideは
-一つのcompact rowだけを占め、disclosureはsession stateである。全primary backbone EdgeやRegion関係図をheaderへ
+一つのcompact rowだけを占め、disclosureはsession stateである。全primary backbone Edgeをheaderへ
 重複列挙せず、Graph上のexact relation styleと必要ならcompactな凡例／件数で示す。start-onlyでもthesisとstart cueを
-省略しない。Regionを1件以上持つStructureでは本体にGraph / Regions mode controlを置く。Regions modeはGraphと同じ
-full-height bodyを使い、省略しないRegion label / responsibility summary / coverageを持つ矩形と、
-directなcross-Region factual Edgeだけから導出したcoarse connectionを矢印で示す。未所属Nodeのconnected componentと
-Region boundaryもneutralなContextとして残し、transitive Region connectionを合成しない。Region rectangleは
-keyboard-accessibleなdrill actionとしてGraphへ切り替え、stable Region IDに対応するexact member boundsへcameraを移動する。
-Region / Context間のaggregate relation labelもkeyboard / pointerから選択でき、current graphに由来するexact Edgeを
-stable Edge ID、endpoint、full predicate、source locator付きで一件ずつ開示する。各exact EdgeはGraphでその両端をframeして既存の
-relation selectionとして確認できる。Context rectangleは省略表示された先頭Nodeだけでなくderived componentの
-全exact member NodeをGraphでframeする。どちらも遷移前のRegions cameraをBackで復元し、Context identity、aggregate
-relation、inspector disclosureをartifact protocolへ永続化しない。
-Regions surfaceはtransform cameraを持ち、明示的な全体Fit、可読なHomeへのReset、zoom、wheel / drag panを提供する。狭いpaneでkeyboard focusが
-画面外のRegion / Context / aggregate relation actionへ移った場合は、そのcontrolをcamera内へrevealする。
-GraphのRegion lensはfull Region label、責務summary、exact member数、内部relation数をcanvas内へ明示し、member Nodeと
-内部relationを専用のvisual channelで強調する。通常GraphにもNodeのsemantic metadataとしてfull Region identityを残すが、
-stable ID由来の略称を読むことやmanual drag由来のenclosing rectangleからmembershipを推測することは要求しない。primary backboneのexact Node / Edgeを
+省略しない。primary backboneのexact Node / Edgeを
 focus proximityとは別の色、線、markerで強調し、minimapにもbackboneとauthorial startを示す。focusから2-hop以上の
 Nodeはbackbone membershipにかかわらず同じ距離opacityを使い、Edge / labelは両endpointの遠い側のhop層へ従う。
 backboneは距離によるdetail hierarchyを打ち消さず、固有の線／markerとminimapで識別可能に保つ。activeなexact
-Relation selectionまたはRegion lensはreviewerが明示した現在のtargetなのでhop表示より優先できるが、artifact由来の
-backbone / Region membershipだけでfocusから遠い要素のopacityやsemantic-zoom detailを復元しない。
+Relation selectionはreviewerが明示した現在のtargetなのでhop表示より優先できるが、artifact由来の
+backbone membershipだけでfocusから遠い要素のopacityやsemantic-zoom detailを復元しない。
 zoomはcardとRelation labelを一体として拡大縮小するが、読めないscaleではsecondary label / descriptionを
 semantic zoomで省略できる。省略はvisible / total count、selection / focusによるinspect、Home / Allによって明示的に
 回収できなければならない。広域の位置関係はminimapとHome、局所の読解はfocus / pan / zoom、complete graphはAllと
@@ -1074,8 +983,7 @@ association leader付きの退避位置を使い、Nodeにも他のlabelにも�
 XML text / attributeとしてescapeする。directed Edgeのarrowheadはchange presentationごとのresolved colorを持つ
 明示markerを参照し、context依存paintを要求しない。origin cueはnotation固有のshape境界内へ収める。
 non-null presentationのexportはstart-onlyを含めthesisとSTARTを必ず含め、存在するbackboneのcompactな識別、
-Region label / summary / Node数、direct factual Edgeから導出したRegion connectionを含め、各backbone endpointとRegion memberへ
-対応するlandmarkを描く。Region membershipはexportでも囲い枠から推測させず、exact member markerとdescriptionで表す。
+各backbone endpointのlandmarkを描く。
 PNGは同じSVGからbrowser標準Canvas APIで派生し、最大dimensionとpixel
 budgetに収まるscaleへ縮小する。安全な最低scaleを下回る場合は不完全なPNGを生成せず明示的に失敗する。
 exportはbackend、DB、CLI protocol、Structure data modelを変更せず、実行後もreading stateを一切変更しない。
@@ -1317,7 +1225,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは5とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは6とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -1638,13 +1546,12 @@ required nullableな`presentation`、全`nodes`、全`edges`を持つ。同じke
 `expectedUpdatedAt`と`pullRequest`を除く同じcurrent値の完全置換である。CLIとAgent socketは同じschemaと
 application validationを使用し、commit availability、PR ownership、UTF-8 document、line pair、ID、endpoint、
 `originNodeId`、anchor総数、count、byte上限に加え、presentationの文字数、current Node参照、backbone Edgeのunique性と
-stable normalization、derived Node数、start membership、weak connectivity、Region IDのunique性、summary、Region間の
-Node非重複を検証する。Regionとmemberのarray順はstable ID順へnormalizeし、入力順だけが違うretryを同じcontentとして扱う。
-start-only presentationはbackbone / regionがなくても受理する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
+stable normalization、derived Node数、start membership、weak connectivityを検証する。
+start-only presentationはbackboneがなくても受理する。publish成功は新しいstable `rvw://structure/<uuid>`、update成功は同じID / URI /
 `createdAt`と新しい`updatedAt`を返す。publish/update成功responseはexact persisted graphから導出したwarningsを
 additive optional fieldとして返し、warningは保存せず成功扱いを変えない。updateはcurrent `updatedAt`がexpected値と一致する時だけ保存し、不一致は
 409の`STRUCTURE_CONFLICT`を返す。どちらもretained commit refを確保してから一つのSQLite transactionで保存し、
-失敗時はref作成をrollbackする。過去graphは保存しないが、削除済みNode / Edge / Region IDのtombstoneは保持して
+失敗時はref作成をrollbackする。過去graphは保存しないが、削除済みNode / Edge IDのtombstoneは保持して
 stable identityの再利用を拒否する。
 
 `get`はcurrent Structureと対象PR identity、local repository pathを返し、旧保存値を含め`presentation`を必ず
@@ -1698,8 +1605,7 @@ passiveでviewerを操作しない。
   `references`をstdinで受け、
   viewerと同じtarget validationから未解決threadを一件作成する。batch作成は行わない。
 - comment postの`lastModifiedBy`は`human`、`agent`、既存行の`null`とする。viewer HTTPでの作成・返信・編集は
-  `human`、Agent CLI / Agent socket / `pr sync`による作成・返信・編集は`agent`を保存する。これは通知用の
-  経路情報であり、認証済みidentity、Agent専用comment state、caller入力にはしない。
+  `human`、Agent CLI / Agent socket / `pr sync`による作成・返信・編集は`agent`を保存する。これは公開protocolの書き込み経路情報であり、認証済みidentity、Agent専用comment state、caller入力にはしない。
 - `pr sync`の`commentUpdates`は最大500件で、各要素は`commentRef`、`reply`、`resolve`と任意の
   `references`、`idempotencyKey`を持つ。referenceは同期したcurrent GitHub headへ固定する。
 - breakingなprotocol schema変更ではprotocol versionを進める。additiveなcommandは同じversionへ新しい
@@ -1920,12 +1826,6 @@ CREATE TABLE structure_retired_edge_ids (
   PRIMARY KEY(structure_id, edge_id)
 );
 
-CREATE TABLE structure_retired_region_ids (
-  structure_id TEXT NOT NULL REFERENCES structures(id) ON DELETE CASCADE,
-  region_id TEXT NOT NULL,
-  retired_at TEXT NOT NULL,
-  PRIMARY KEY(structure_id, region_id)
-);
 ```
 
 commit table、review version table、PR revision tableは持たない。既存Phase 1 DBはmigrationで
@@ -2151,7 +2051,7 @@ Unit:
   producer exampleをschema parseし、source anchor、file-mapのpath uniqueness / file-level Node / evidenced Edge、
   Walkthrough reference reachability / diagram ID scope、同一changeに対する三surfaceの異なる問いを検証する
 - Structure schema、URI、neighborhood completeness、presentationのbackbone参照／connectedness／start membership／
-  Region identity / summary / 非重複、non-semantic array normalization、derived cross-Region relation、旧graphのnull normalization、逆引きtarget Nodeのundirected最短hop選択、
+  exact backbone Edgeのnon-semantic array normalization、旧graphのnull normalization、逆引きtarget Nodeのundirected最短hop選択、
   Node非衝突、presentation-aware／topology fallback canonical layout、source / target boundary-port接続、
   obstacle-free route、shared／near-coincident corridorを持つdistinct visible relation（parallel / reciprocalを含む）の
   実質的lane分離、normal-detail labelのNode／label相互非重複と
@@ -2231,13 +2131,10 @@ Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確�
     確認する。composerはtarget付近へ表示し、HTML内部threadは外側Markdown inlineへ重複せず、markerから
     Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
-    Home / Back / region frame、Graph / Regions mode、全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる。
+    Home / Back、全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる。
     non-null presentationではthesisとauthorial startがcompact Guide、start-centered exact 1-hopの初期Home、exportへ反映され、optionalな
-    connected exact-Edge primary backboneまたはidentified Regionがある場合だけcanonical geometryをorganizeする。
-    Guideはstart / thesisだけの一行まで折り畳めるsurfaceで、Region関係図はfull-height Regions modeへ表示する。
-    Region / Context rectangleはkeyboardからGraphのexact member boundsへ移動でき、aggregate relationはstable Edge ID / predicate / source一覧から
-    個別EdgeをGraphでselectでき、BackでRegions overviewへ戻れる。frame中のRegion memberと内部relationは
-    focus距離を変えずfull relevanceになり、Home / Node selection / depth変更で解除、Backで復元できる。Nodeのsingle clickはcameraを変更せず、
+    connected exact-Edge primary backboneがある場合だけcanonical geometryをorganizeする。
+    Guideはstart / thesisだけの一行まで折り畳める。Nodeのsingle clickはcameraを変更せず、
     double clickだけがclicked Nodeのexact 1-hopをmaximum scale付きでframeし、Backで復元できる。nullとstart-onlyは同じtopology
     projectionになり、どちらも全Node / Edgeを探索できる。Edgeはsource / target Nodeのvisible boundary portへ
     接続し、shared／near-coincident corridorを持つdistinct visible relationはparallel / reciprocalを含め実質的な区間を
@@ -2396,14 +2293,14 @@ read権限であってupdate権限ではない。production時はproducerをbatc
 順に実行する。成功時のclaim refinementを含む各producer結果の後に、残る未publish briefのoverlap、scope、terminology、
 couplingを再評価してから次へ進む。新規Structure briefは意図するrelation / comprehension chunkをsemanticに渡し、raw ID、
 payload normalization、connectivity validationは`rvw-structure`に委ねる。既存Structureのraw IDはreadしたcurrent valueからのみ
-参照し、retired Node / Edge / Region IDの再利用を依頼しない。
+参照し、retired Node / Edge IDの再利用を依頼しない。
 
 compositionはSkill-level strategyであり、Review Set / Review Plan / Sliceの永続entity、group ID、typed Artifact link、
 Artifact kind、URI、database row、migration、CLI capability、HTTP API、Viewer UIを追加しない。sibling producerの
 契約を利用するためのgenericなruntime sub-Skill invocation frameworkも作らない。composerはcanonical Skill名を各hostの
 native Skill mechanismへ渡してproducerの完全なcontractをloadし、`$name`や`/name`を共通runtime protocolとして
 hardcodeしない。producerがcurrent sessionでunavailable / disabledならArtifact操作前にfail closedする。composer自体は
-protocol capabilityを追加せず、protocol version 5の既存Walkthrough / Structure capabilityだけを使う。既存URIがuserまたは
+protocol capabilityを追加せず、protocol version 6の既存Walkthrough / Structure capabilityだけを使う。既存URIがuserまたは
 callerから明示された場合はmatching producerで
 current値を読んでsame-subject updateを優先し、無条件の改訂版をpublishしない。URI未指定時は
 `walkthrough list`を必要な全pageまで辿り、titleだけで判断せず候補を`walkthrough get`で読む。既存
@@ -2434,11 +2331,9 @@ PR全体のArtifact数、Walkthroughとの役割分担、隣接behaviorのcompan
 abstraction levelのNode、またはfile-map roleなら一実在file一Node、verb-based Edge label、stable claim ID、一つの
 exact `sourceOid`を要求する。
 concept-only Nodeはsource-establishedだが単一anchorを持たない概念またはsource-supported claimの必要な接続に限定し、
-必要ならthesis、authorial start、optionalなconnected exact-Edge primary backbone、stable IDと責務summaryを持つRegionからなるauthorial
+必要ならthesis、authorial start、optionalなconnected exact-Edge primary backboneからなるauthorial
 `presentation`を使うが、subject authorityだけでNode / Edgeを事実化しない。backboneはthesisを理解する最小の
 coherent relation setに絞り、複数route、importance layer、execution stage、全Nodeのprimary分類を作らない。
-Regionはworking-memoryを助けるnamed chunkに限り、各summaryでthesisへの役割を説明し、backboneの代用、exhaustive
-partition、architecture inventoryにしない。Region間relationはfactual EdgeからViewerが導出し、producerは別graphをauthorしない。
 巨大graph、changed-file dump、repository-wide import graph、AI推論edge、raw座標、review conclusion、PRに接地しない
 静的なarchitecture／責務inventoryを作らない。ordered prose pathやroleに合うfactual originのないgeneric inventoryを
 拒否するlocal routing判断を残す。file-map roleはfile-level Node、specific Edge evidence、singleton、disconnected-area
@@ -2548,8 +2443,8 @@ Manual acceptance:
 5. 人間が説明内の一部referenceとdiagram nodeだけを選び、説明tabを残したままexact codeを読む。binding非対応の
    message / transition / relationは近接するinline referenceから根拠を開く。
 6. AgentがPR-relevant behaviorをentrypointとpresentation付き通常Structureとしてpublishし、thesis、authorial start、optionalな
-   connected exact-Edge primary backbone、identified Regionとderived cross-Region relationが空間へ反映されても全Node / Edgeを自由に探索できることを
-   確認する。人間がpassiveなNode selection、double clickのone-shot neighborhood focus、Home / Back、近傍、Region frame、Allを往復しながらexact sourceを左右ペインへ開き、
+   connected exact-Edge primary backboneが空間へ反映されても全Node / Edgeを自由に探索できることを
+   確認する。人間がpassiveなNode selection、double clickのone-shot neighborhood focus、Home / Back、近傍、Allを往復しながらexact sourceを左右ペインへ開き、
    tab往復とcurrent値更新でorientationが保たれることを確認する。
 7. diff外fileを含む具体的なsourceへline commentを作り、そのURIをAgentへ渡す。
 8. Agentが対象sourceと周辺contextを調査し、authorizedな修正、test、commit、push、必要なPR本文更新を行う。
@@ -2563,7 +2458,7 @@ Manual acceptance:
 - review version、manual capture、version summaryを再導入しない
 - Walkthrough revision履歴、version selector、改訂版の自動複製を追加しない
 - Structure revision履歴、generic Artifact layer、comment、raw／durable座標、AI推論graphを追加しない。
-  `presentation.regions`をfactual graph groupingやreview findingへ拡張しない
+  新しいgroupingやreview findingのschemaを追加しない
 - PR本文履歴やPR revision selectorを追加しない
 - PR本文をcommitへ擬似的にbindingしない
 - Ask/AI chat/Agent spawnを追加しない

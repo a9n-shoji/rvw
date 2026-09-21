@@ -17,45 +17,16 @@
         "tests-assert-composer",
         "walkthrough-loads-authoring"
       ]
-    },
-    "regions": [
-      {
-        "id": "assurance-and-distribution",
-        "label": "Assurance and distribution",
-        "summary": "Locks key textual invariants and exposes the canonical Skill entrypoints outside the source checkout.",
-        "nodeIds": ["cli-skill-command-file", "skill-contract-test-file", "skill-installer-file"]
-      },
-      {
-        "id": "composition-contract",
-        "label": "Composition contract",
-        "summary": "Owns PR-wide surface selection, producer handoff, and whole-composition feedback.",
-        "nodeIds": ["composer-skill-file", "composition-reference-file"]
-      },
-      {
-        "id": "normative-source",
-        "label": "Normative source",
-        "summary": "Owns the product-level contract that the bundled Skills must implement.",
-        "nodeIds": ["implementation-spec-file"]
-      },
-      {
-        "id": "producer-contracts",
-        "label": "Producer contracts",
-        "summary": "Own one ordered Walkthrough or one relationship Structure and independently verify candidate claims.",
-        "nodeIds": [
-          "structure-authoring-file",
-          "structure-skill-file",
-          "walkthrough-authoring-file",
-          "walkthrough-skill-file"
-        ]
-      }
-    ]
+    }
   },
   "nodes": [
     {
       "id": "composer-skill-file",
       "label": "rvw-review-compose/SKILL.md",
       "description": "Owns PR-wide composition, native producer activation, and feedback into recomposition for this change.",
-      "anchor": { "path": "skills/rvw-review-compose/SKILL.md" }
+      "anchor": {
+        "path": "skills/rvw-review-compose/SKILL.md"
+      }
     },
     {
       "id": "composition-reference-file",
@@ -69,7 +40,9 @@
       "id": "walkthrough-skill-file",
       "label": "rvw-walkthrough/SKILL.md",
       "description": "Owns one ordered reading path and the independent verification boundary for Walkthrough claims.",
-      "anchor": { "path": "skills/rvw-walkthrough/SKILL.md" }
+      "anchor": {
+        "path": "skills/rvw-walkthrough/SKILL.md"
+      }
     },
     {
       "id": "walkthrough-authoring-file",
@@ -83,7 +56,9 @@
       "id": "structure-skill-file",
       "label": "rvw-structure/SKILL.md",
       "description": "Owns one bounded relationship space and the independent verification boundary for Structure claims.",
-      "anchor": { "path": "skills/rvw-structure/SKILL.md" }
+      "anchor": {
+        "path": "skills/rvw-structure/SKILL.md"
+      }
     },
     {
       "id": "structure-authoring-file",
@@ -97,25 +72,33 @@
       "id": "implementation-spec-file",
       "label": "docs/implementation-spec.md",
       "description": "States the product-level composer, producer, authority, and native-activation contract implemented by the Skills.",
-      "anchor": { "path": "docs/implementation-spec.md" }
+      "anchor": {
+        "path": "docs/implementation-spec.md"
+      }
     },
     {
       "id": "skill-contract-test-file",
       "label": "test/unit/skill-contracts.test.ts",
       "description": "Statically asserts adaptive composition and the composer-to-producer authority and verification boundaries.",
-      "anchor": { "path": "test/unit/skill-contracts.test.ts" }
+      "anchor": {
+        "path": "test/unit/skill-contracts.test.ts"
+      }
     },
     {
       "id": "cli-skill-command-file",
       "label": "src/cli/main.ts",
       "description": "Unchanged consumer that exposes Skill install/status and constructs the installer used to distribute the new composer entrypoint.",
-      "anchor": { "path": "src/cli/main.ts" }
+      "anchor": {
+        "path": "src/cli/main.ts"
+      }
     },
     {
       "id": "skill-installer-file",
       "label": "src/infrastructure/skills/skill-installer.ts",
       "description": "Adds the composer to the canonical Skill set and discovers every composer/producer entrypoint from the package root.",
-      "anchor": { "path": "src/infrastructure/skills/skill-installer.ts" }
+      "anchor": {
+        "path": "src/infrastructure/skills/skill-installer.ts"
+      }
     }
   ],
   "edges": [

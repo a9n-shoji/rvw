@@ -188,7 +188,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 5,
+      protocolVersion: 6,
       appVersion: "0.9.0",
       capabilities: [
         "agent.transport",
@@ -1159,7 +1159,6 @@ describe("CLI protocol discovery", () => {
         thesis: "Understand the transition into the terminal boundary.",
         startNodeId: "entry",
         primaryBackbone: { edgeIds: ["entry-terminal"] },
-        regions: [],
       },
       nodes: [
         {
@@ -1219,7 +1218,6 @@ describe("CLI protocol discovery", () => {
         thesis: "The hub integrates otherwise independent policies.",
         startNodeId: "hub",
         primaryBackbone: null,
-        regions: [],
       },
       nodes: [
         {
@@ -1302,7 +1300,6 @@ describe("CLI protocol discovery", () => {
         thesis: "Follow the forward flow.",
         startNodeId: "entry",
         primaryBackbone: { edgeIds: ["entry-next"] },
-        regions: [],
       },
       nodes: [
         {
@@ -1352,7 +1349,6 @@ describe("CLI protocol discovery", () => {
           thesis: "Follow the forward flow.",
           startNodeId: "entry",
           primaryBackbone: { edgeIds: ["entry-next"] },
-          regions: [],
         },
       },
     });

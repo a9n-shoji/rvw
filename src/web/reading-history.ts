@@ -10,12 +10,7 @@ import {
   type ReferenceDocumentContext,
   type SourceReferenceOrigin,
 } from "./document-workspace.js";
-import type {
-  StructureCameraFrame,
-  StructureRegionsViewState,
-  StructureViewMode,
-  StructureViewport,
-} from "./structure-session.js";
+import type { StructureCameraFrame, StructureViewport } from "./structure-session.js";
 import type { StructureNeighborhoodDepth, StructurePoint } from "./structure-graph.js";
 
 export const READING_HISTORY_STATE_KEY = "rvwReading";
@@ -23,13 +18,11 @@ export const READING_HISTORY_STATE_KEY = "rvwReading";
 export interface StructureReadingSnapshot {
   /** Artifact revision whose derived geometry the snapshot was captured against. */
   artifactUpdatedAt: string;
-  viewMode: StructureViewMode;
   focusId: string | null;
   /** Optional for compatibility with history entries captured before local centers were separate. */
   localCenterId?: string | null;
   selectedEdgeId: string | null;
   depth: StructureNeighborhoodDepth;
-  framedRegionId: string | null;
   cameraFrame: StructureCameraFrame | null;
   viewport: StructureViewport;
   surfaceSize: { width: number; height: number };
@@ -40,12 +33,8 @@ export interface StructureReadingSnapshot {
   positions?: Record<string, StructurePoint>;
   localPositions?: Record<string, StructurePoint> | null;
   localLayoutBasisKey?: string | null;
-  regionsViewport: StructureViewport;
-  regionsSurfaceSize: { width: number; height: number };
-  regionsCameraMode: StructureRegionsViewState["cameraMode"];
   layoutBasisKey: string;
   positionsKey: string;
-  regionsLayoutBasisKey: string;
 }
 
 export type ReadingLocator =
@@ -380,9 +369,6 @@ function parseCameraFrame(value: unknown): StructureCameraFrame | null | undefin
         : {}),
     };
   }
-  if (value.kind === "region" && typeof value.regionId === "string") {
-    return { kind: "region", regionId: value.regionId };
-  }
   if (
     value.kind === "center-node" &&
     typeof value.nodeId === "string" &&
@@ -419,8 +405,6 @@ function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot
   if (!isRecord(value)) return null;
   const viewport = parseViewport(value.viewport);
   const surfaceSize = parseSurfaceSize(value.surfaceSize);
-  const regionsViewport = parseViewport(value.regionsViewport);
-  const regionsSurfaceSize = parseSurfaceSize(value.regionsSurfaceSize);
   const cameraFrame = parseCameraFrame(value.cameraFrame);
   const allCameraFrame =
     value.allCameraFrame === undefined ? undefined : parseCameraFrame(value.allCameraFrame);
@@ -434,12 +418,10 @@ function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot
     value.localPositions === undefined ? undefined : parseStructurePositions(value.localPositions);
   if (
     typeof value.artifactUpdatedAt !== "string" ||
-    (value.viewMode !== "graph" && value.viewMode !== "regions") ||
     (value.focusId !== null && typeof value.focusId !== "string") ||
     !optionalNullableString(value.localCenterId) ||
     (value.selectedEdgeId !== null && typeof value.selectedEdgeId !== "string") ||
     (value.depth !== 1 && value.depth !== 2 && value.depth !== "all") ||
-    (value.framedRegionId !== null && typeof value.framedRegionId !== "string") ||
     cameraFrame === undefined ||
     (value.allCameraFrame !== undefined && allCameraFrame === undefined) ||
     !viewport ||
@@ -449,25 +431,17 @@ function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot
     (value.positions !== undefined && (positions === undefined || positions === null)) ||
     (value.localPositions !== undefined && localPositions === undefined) ||
     !optionalNullableString(value.localLayoutBasisKey) ||
-    !regionsViewport ||
-    !regionsSurfaceSize ||
-    (value.regionsCameraMode !== "home" &&
-      value.regionsCameraMode !== "fit" &&
-      value.regionsCameraMode !== "manual") ||
     typeof value.layoutBasisKey !== "string" ||
-    typeof value.positionsKey !== "string" ||
-    typeof value.regionsLayoutBasisKey !== "string"
+    typeof value.positionsKey !== "string"
   ) {
     return null;
   }
   return {
     artifactUpdatedAt: value.artifactUpdatedAt,
-    viewMode: value.viewMode,
     focusId: value.focusId,
     ...(value.localCenterId === undefined ? {} : { localCenterId: value.localCenterId }),
     selectedEdgeId: value.selectedEdgeId,
     depth: value.depth,
-    framedRegionId: value.framedRegionId,
     cameraFrame,
     viewport,
     surfaceSize,
@@ -479,12 +453,8 @@ function parseStructureReadingSnapshot(value: unknown): StructureReadingSnapshot
     ...(value.localLayoutBasisKey === undefined
       ? {}
       : { localLayoutBasisKey: value.localLayoutBasisKey }),
-    regionsViewport,
-    regionsSurfaceSize,
-    regionsCameraMode: value.regionsCameraMode,
     layoutBasisKey: value.layoutBasisKey,
     positionsKey: value.positionsKey,
-    regionsLayoutBasisKey: value.regionsLayoutBasisKey,
   };
 }
 

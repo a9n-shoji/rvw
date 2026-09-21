@@ -331,6 +331,8 @@ test("recenters a local graph at the same depth, restores it through history, an
     left: (element as HTMLElement).style.left,
     top: (element as HTMLElement).style.top,
   }));
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
+  await waitForGraphMotion(viewer);
   const hubGeometry = await graphGeometry(viewer);
   const hubTransform = await world.getAttribute("style");
   const pricing = viewer.locator('.structure-node[data-node-id="pricing-policy"]');
@@ -428,6 +430,7 @@ test("continues wheel and pointer pans from the camera's interpolated position",
       return { x: matrix.e, y: matrix.f, scale: matrix.a };
     });
 
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
   await waitForGraphMotion(viewer);
   await viewer.locator('.structure-node[data-node-id="database-schema"]').dblclick();
   await expect(world).toHaveClass(/camera-transition/u);
@@ -528,6 +531,8 @@ test("continues wheel and pointer pans from the camera's interpolated position",
   expect(await viewport()).toEqual(panResult);
 
   await viewer.getByRole("button", { name: "Home", exact: true }).click();
+  await waitForGraphMotion(viewer);
+  await viewer.getByRole("button", { name: "表示中を収める" }).click();
   await waitForGraphMotion(viewer);
   const draggedNode = viewer.locator('.structure-node[data-node-id="database-schema"]');
   await draggedNode.dblclick();

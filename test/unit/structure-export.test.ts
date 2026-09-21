@@ -98,7 +98,7 @@ function documentFor(
 }
 
 describe("Structure SVG export", () => {
-  it("exports authored thesis, canonical Regions, and exact explanation backbone without session state", () => {
+  it("exports authored thesis and exact explanation backbone without session state", () => {
     const structure = exportStructure();
     structure.edges.push({
       id: "edge-parallel",
@@ -112,38 +112,12 @@ describe("Structure SVG export", () => {
       thesis: 'Flow <starts> here & stays factual "throughout".',
       startNodeId: "node-0",
       primaryBackbone: { edgeIds: ["edge-0"] },
-      regions: [
-        {
-          id: "a-input-validation",
-          label: "Input & validation",
-          summary: "Input decoding and validation responsibilities.",
-          nodeIds: ["node-0", "node-2"],
-        },
-        {
-          id: "b-execution-core",
-          label: "Execution <core>",
-          summary: "Core execution responsibilities.",
-          nodeIds: ["node-1", "node-3"],
-        },
-      ],
     };
     const { model, document } = documentFor(structure);
 
     expect(document.source).toContain('data-layer="presentation-thesis"');
     expect(document.source).toContain(
       "Flow &lt;starts&gt; here &amp; stays factual &quot;throughout&quot;.",
-    );
-    expect(document.source).not.toContain("data-presentation-region-index");
-    expect(document.source).toContain('data-presentation-region-id="a-input-validation"');
-    expect(document.source).toContain('data-presentation-region-label="Input &amp; validation"');
-    expect(document.source).toContain('data-layer="presentation-region-members"');
-    expect(document.source.match(/data-presentation-region-member-node-id=/gu)).toHaveLength(4);
-    expect(document.source).toContain('data-presentation-region-member-node-id="node-0"');
-    expect(document.source).toContain("Region AIV: Input &amp; validation");
-    expect(document.source).toContain("REGIONS · AIV Input &amp; validation (2 Nodes)");
-    expect(document.source).toContain("Input decoding and validation responsibilities.");
-    expect(document.source).toContain(
-      "DIRECT REGION CONNECTIONS · AIV → BEC (2 Edges) · AIV — BEC (1 Edge)",
     );
     expect(document.source).toContain("START · Very long &lt;entry&gt; &amp; label");
     expect(document.source).toContain("BACKBONE · 1 exact relation highlighted");
@@ -160,13 +134,12 @@ describe("Structure SVG export", () => {
     expect(document.source).not.toContain("focus-id");
     expect(document.source).toContain("Explanation backbone member");
     expect(document.source).toContain("Factual graph origin");
-    expect(model.presentation?.regions).toHaveLength(2);
+    expect(model.presentation?.primaryBackboneEdgeIds.size).toBe(1);
 
     const reordered = documentFor({
       ...structure,
       presentation: {
         ...structure.presentation,
-        regions: [...structure.presentation.regions].reverse(),
       },
     });
     expect(reordered.document.source).toBe(document.source);
@@ -178,7 +151,6 @@ describe("Structure SVG export", () => {
       thesis: "Begin at the shared boundary without inventing another spatial organizer.",
       startNodeId: "node-1",
       primaryBackbone: null,
-      regions: [],
     };
 
     const { model, document } = documentFor(structure);
@@ -186,7 +158,6 @@ describe("Structure SVG export", () => {
     expect(model.presentation).toMatchObject({
       thesis: structure.presentation.thesis,
       startNodeId: "node-1",
-      regions: [],
     });
     expect(model.presentation?.primaryBackboneNodeIds.size).toBe(0);
     expect(model.presentation?.primaryBackboneEdgeIds.size).toBe(0);

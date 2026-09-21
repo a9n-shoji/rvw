@@ -57,7 +57,7 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 5 and `agent.transport`. Require only the operation capabilities the
+2. Require `protocolVersion` 6 and `agent.transport`. Require only the operation capabilities the
    task uses: `walkthrough.list` for discovery, `walkthrough.read` for `get` or another current-value
    read, and the corresponding
    `walkthrough.publish`, `walkthrough.update`, or `walkthrough.delete` capability for each requested

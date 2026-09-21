@@ -1609,14 +1609,6 @@ app.post("/api/fixture/structures/:structureId/source-lifecycle", async (context
     structure.edges = structure.edges.filter(
       (edge) => edge.from !== input.removeNodeId && edge.to !== input.removeNodeId,
     );
-    if (structure.presentation) {
-      structure.presentation.regions = structure.presentation.regions
-        .map((region) => ({
-          ...region,
-          nodeIds: region.nodeIds.filter((nodeId) => nodeId !== input.removeNodeId),
-        }))
-        .filter((region) => region.nodeIds.length > 0);
-    }
   }
   structure.updatedAt = new Date(Date.parse(structure.updatedAt) + 1_000).toISOString();
   bump("structures");

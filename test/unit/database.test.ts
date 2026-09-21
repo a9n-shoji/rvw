@@ -76,6 +76,160 @@ const github = {
 };
 
 describe("RvwDatabase", () => {
+  it("upgrades saved v5 Regions without changing graph identity or other review tables", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-remove-regions-"));
+    const filePath = path.join(directory, "rvw.db");
+    const oldMigrations = path.join(directory, "migrations");
+    mkdirSync(oldMigrations);
+    for (const file of readdirSync("migrations").filter(
+      (name) => name.endsWith(".sql") && name < "023",
+    )) {
+      writeFileSync(path.join(oldMigrations, file), readFileSync(path.join("migrations", file)));
+    }
+    const old = new RvwDatabase({ filePath, migrationsDirectory: oldMigrations });
+    const pr = old.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    old.createComment({
+      pullRequestId: pr.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Keep this feedback",
+    });
+    old.createWalkthrough({
+      pullRequestId: pr.id,
+      sourceOid: github.headOid,
+      title: "Keep this explanation",
+      body: "Unrelated reading",
+      diagramBindings: {},
+      references: [],
+    });
+    const node = {
+      id: "entry",
+      label: "Entry",
+      description: null,
+      kind: null,
+      notation: "plain" as const,
+      anchor: { path: "src/entry.ts", startLine: 1, endLine: 2 },
+    };
+    const saved = [
+      null,
+      { thesis: "Start here", startNodeId: "entry", primaryBackbone: null },
+      {
+        thesis: "Read this relation",
+        startNodeId: "entry",
+        primaryBackbone: { edgeIds: ["calls"] },
+      },
+    ].map((presentation, index) =>
+      old.createStructure({
+        pullRequestId: pr.id,
+        sourceOid: github.headOid,
+        title: `Map ${index}`,
+        scope: "Upgrade preserves exact facts",
+        originNodeId: "entry",
+        nodes: presentation?.primaryBackbone ? [node, { ...node, id: "target" }] : [node],
+        edges: presentation?.primaryBackbone
+          ? [
+              {
+                id: "calls",
+                from: "entry",
+                to: "target",
+                label: "calls",
+                directed: true,
+                anchors: [{ path: "src/entry.ts", startLine: null, endLine: null }],
+              },
+            ]
+          : [],
+        presentation,
+        idempotencyKey: `legacy-${index}`,
+        idempotencyRequestHash: `legacy-request-${index}`,
+      }),
+    );
+    old.close();
+    const raw = new DatabaseSync(filePath);
+    for (const structure of saved) {
+      const row = raw
+        .prepare("SELECT graph_json FROM structures WHERE id = ?")
+        .get(structure.id) as { graph_json: string };
+      const graph = JSON.parse(row.graph_json) as { presentation: Record<string, unknown> | null };
+      if (graph.presentation)
+        graph.presentation.regions = [
+          { id: "entry-region", label: "Entry", summary: "Legacy grouping", nodeIds: ["entry"] },
+        ];
+      raw
+        .prepare("UPDATE structures SET graph_json = ? WHERE id = ?")
+        .run(JSON.stringify(graph), structure.id);
+      raw
+        .prepare("INSERT INTO structure_retired_region_ids VALUES (?, ?, ?)")
+        .run(structure.id, "retired-region", structure.updatedAt);
+      raw
+        .prepare("INSERT INTO structure_retired_node_ids VALUES (?, ?, ?)")
+        .run(structure.id, "retired-node", structure.updatedAt);
+      raw
+        .prepare("INSERT INTO structure_retired_edge_ids VALUES (?, ?, ?)")
+        .run(structure.id, "retired-edge", structure.updatedAt);
+    }
+    const tableNames = (
+      raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+    )
+      .map(({ name }) => name)
+      .filter(
+        (name) =>
+          !["schema_migrations", "structures", "structure_retired_region_ids"].includes(name),
+      );
+    const before = tableNames.map((name) => raw.prepare(`SELECT * FROM "${name}"`).all());
+    raw.close();
+    const upgraded = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    saved.forEach((structure) => expect(upgraded.getStructure(structure.id)).toEqual(structure));
+    upgraded.close();
+    const verified = new DatabaseSync(filePath);
+    expect(tableNames.map((name) => verified.prepare(`SELECT * FROM "${name}"`).all())).toEqual(
+      before,
+    );
+    expect(
+      verified
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'structure_retired_region_ids'")
+        .get(),
+    ).toBeUndefined();
+    for (const row of verified.prepare("SELECT graph_json FROM structures").all()) {
+      expect(String(row.graph_json)).not.toContain('"regions"');
+    }
+    verified.close();
+    const current = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    for (const structure of saved) {
+      const input = { ...structure, title: `${structure.title} updated` };
+      expect(current.updateStructure(structure.id, structure.updatedAt, input).title).toBe(
+        input.title,
+      );
+      const latest = current.getStructure(structure.id)!;
+      expect(() =>
+        current.updateStructure(latest.id, latest.updatedAt, {
+          ...latest,
+          nodes: [...latest.nodes, { ...node, id: "retired-node" }],
+        }),
+      ).toThrow(/再利用/);
+      expect(() =>
+        current.updateStructure(latest.id, latest.updatedAt, {
+          ...latest,
+          edges: [
+            ...latest.edges,
+            {
+              id: "retired-edge",
+              from: "entry",
+              to: "entry",
+              label: "loops",
+              directed: true,
+              anchors: [],
+            },
+          ],
+        }),
+      ).toThrow(/再利用/);
+    }
+    current.close();
+  });
+
   it("serializes the same pending migration across concurrent processes", async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-concurrent-migration-"));
     const migrationsDirectory = path.join(directory, "migrations");
@@ -522,47 +676,18 @@ describe("RvwDatabase", () => {
         primaryBackbone: {
           edgeIds: ["effect-entry-reverse", "effect-audit"],
         },
-        regions: [
-          {
-            id: "effect-entry",
-            label: "Effect and entry",
-            summary: "Carries the entrypoint into its persisted effect.",
-            nodeIds: ["entry", "effect"],
-          },
-          {
-            id: "audit",
-            label: "Audit",
-            summary: "Records the persisted effect for later inspection.",
-            nodeIds: ["audit"],
-          },
-        ],
       },
       idempotencyKey: "structure-presentation",
       idempotencyRequestHash: "structure-presentation-request",
     });
     expect(structure.presentation).toMatchObject({
       primaryBackbone: { edgeIds: ["effect-audit", "effect-entry-reverse"] },
-      regions: [
-        {
-          id: "audit",
-          label: "Audit",
-          summary: "Records the persisted effect for later inspection.",
-          nodeIds: ["audit"],
-        },
-        {
-          id: "effect-entry",
-          label: "Effect and entry",
-          summary: "Carries the entrypoint into its persisted effect.",
-          nodeIds: ["effect", "entry"],
-        },
-      ],
     });
     expect(database.getStructure(structure.id)?.presentation).toEqual(structure.presentation);
     const startOnlyPresentation = {
       thesis: "Begin at the effect without inventing a path or grouping.",
       startNodeId: "effect",
       primaryBackbone: null,
-      regions: [],
     };
     const startOnly = database.createStructure({
       pullRequestId: pullRequest.id,
@@ -596,7 +721,6 @@ describe("RvwDatabase", () => {
     reopened.close();
 
     const presentation = structure.presentation!;
-    const validRegion = presentation.regions[0]!;
     const corruptionCases: Array<[string, unknown]> = [
       ["missing required keys", {}],
       ["unknown presentation key", { ...presentation, coordinates: [] }],
@@ -610,7 +734,6 @@ describe("RvwDatabase", () => {
           thesis: presentation.thesis,
           startNodeId: presentation.startNodeId,
           primarySpine: { nodeIds: ["entry", "effect"], edgeIds: ["entry-effect"] },
-          regions: presentation.regions,
         },
       ],
       [
@@ -663,79 +786,6 @@ describe("RvwDatabase", () => {
           startNodeId: "audit",
           primaryBackbone: { edgeIds: ["audit-self-loop"] },
         },
-      ],
-      [
-        "too many regions",
-        {
-          ...presentation,
-          regions: Array.from({ length: 13 }, (_, index) => ({
-            id: `region-${index + 1}`,
-            label: `Region ${index + 1}`,
-            summary: `Explains responsibility ${index + 1}.`,
-            nodeIds: ["entry"],
-          })),
-        },
-      ],
-      [
-        "unknown region key",
-        {
-          ...presentation,
-          regions: [{ ...validRegion, color: "blue" }],
-        },
-      ],
-      [
-        "obsolete branch-v5 region shape",
-        {
-          ...presentation,
-          regions: [{ label: validRegion.label, nodeIds: validRegion.nodeIds }],
-        },
-      ],
-      [
-        "missing region summary",
-        {
-          ...presentation,
-          regions: [{ id: validRegion.id, label: validRegion.label, nodeIds: validRegion.nodeIds }],
-        },
-      ],
-      [
-        "duplicate region ID",
-        {
-          ...presentation,
-          regions: [validRegion, { ...presentation.regions[1]!, id: validRegion.id }],
-        },
-      ],
-      ["invalid region ID", { ...presentation, regions: [{ ...validRegion, id: "1 invalid" }] }],
-      [
-        "non-canonical region label",
-        { ...presentation, regions: [{ ...validRegion, label: " Entry " }] },
-      ],
-      ["empty region summary", { ...presentation, regions: [{ ...validRegion, summary: "" }] }],
-      [
-        "non-canonical region summary",
-        { ...presentation, regions: [{ ...validRegion, summary: ` ${validRegion.summary}` }] },
-      ],
-      [
-        "overlong region summary",
-        { ...presentation, regions: [{ ...validRegion, summary: "s".repeat(501) }] },
-      ],
-      ["empty region", { ...presentation, regions: [{ ...validRegion, nodeIds: [] }] }],
-      [
-        "duplicate node within a region",
-        { ...presentation, regions: [{ ...validRegion, nodeIds: ["entry", "entry"] }] },
-      ],
-      [
-        "duplicate node across regions",
-        {
-          ...presentation,
-          regions: [
-            { ...validRegion, id: "first", nodeIds: ["entry"] },
-            { ...validRegion, id: "second", nodeIds: ["entry"] },
-          ],
-        },
-      ],
-      [
-        "dangling region node",
-        { ...presentation, regions: [{ ...validRegion, nodeIds: ["missing"] }] },
       ],
     ];
     const invalid = new DatabaseSync(filePath);
@@ -869,7 +919,6 @@ describe("RvwDatabase", () => {
           primaryBackbone: {
             edgeIds: edges.map(({ id }) => id),
           },
-          regions: [],
         },
         idempotencyKey: `structure-primary-backbone-${idempotencySuffix}`,
         idempotencyRequestHash: `structure-primary-backbone-request-${idempotencySuffix}`,
@@ -928,7 +977,6 @@ describe("RvwDatabase", () => {
           thesis: "The two responsibilities share several exact relations.",
           startNodeId: "parallel-a",
           primaryBackbone: { edgeIds: parallelEdges.slice(0, edgeCount).map(({ id }) => id) },
-          regions: [],
         },
         idempotencyKey: `structure-primary-backbone-parallel-${edgeCount}`,
         idempotencyRequestHash: `structure-primary-backbone-parallel-request-${edgeCount}`,
@@ -997,7 +1045,6 @@ describe("RvwDatabase", () => {
       primaryBackbone: {
         edgeIds: ["entry-effect", "effect-audit"],
       },
-      regions: [],
     };
     const created = database.createStructure({
       pullRequestId: pullRequest.id,

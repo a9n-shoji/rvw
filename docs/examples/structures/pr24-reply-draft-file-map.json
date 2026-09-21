@@ -14,8 +14,7 @@
         "thread-persists-reply-draft",
         "unit-test-verifies-draft-reset"
       ]
-    },
-    "regions": []
+    }
   },
   "nodes": [
     {
@@ -103,8 +102,16 @@
       "label": "renders with synchronized comments",
       "directed": true,
       "anchors": [
-        { "path": "src/web/app/App.tsx", "startLine": 1100, "endLine": 1132 },
-        { "path": "src/web/app/App.tsx", "startLine": 1781, "endLine": 1790 }
+        {
+          "path": "src/web/app/App.tsx",
+          "startLine": 1100,
+          "endLine": 1132
+        },
+        {
+          "path": "src/web/app/App.tsx",
+          "startLine": 1781,
+          "endLine": 1790
+        }
       ]
     },
     {

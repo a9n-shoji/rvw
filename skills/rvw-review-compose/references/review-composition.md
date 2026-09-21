@@ -77,8 +77,8 @@ after anchors inside one map.
 If one Pull Request contains genuinely independent change areas, use multiple bounded file maps rather
 than a fictional "same PR" Node or Edge. Conversely, do not split an area to hide a real shared contract
 or dependency. Include a meaningful intermediate file instead of drawing an indirect dependency as
-direct. A single-file map with one Node and no Edge is valid; never add a dependency, backbone, or Region
-for number matching. For a large map, use existing presentation, backbone, and Regions only when they
+direct. A single-file map with one Node and no Edge is valid; never add a dependency or backbone
+for number matching. For a large map, use existing presentation and backbone only when they
 express honest semantics, or split it along a meaningful boundary without losing file granularity.
 
 The file map is available as a reference surface during reading, not prerequisite study. The reviewer
@@ -243,7 +243,7 @@ independently useful ownership maps or every concept in the Pull Request.
 Choose a Structure when the reviewer needs to explore which code reads or writes state, consumes a
 contract, or triggers side effects from a factual code origin. It may contain factual
 direction and may use an authorial thesis, attention start, optional connected exact-relation primary
-backbone of at most 12 derived Nodes and 16 Edges, and stable named comprehension Regions with summaries of the processing or definitions they connect and disjoint membership to shape its canonical spatial overview. Presentation guides attention
+backbone of at most 12 derived Nodes and 16 Edges to shape its canonical spatial overview. Presentation guides attention
 and a new Viewer session's initial focus; it does not alter factual
 direction or turn the Structure into a reading sequence. Do not use it for a sequence whose meaning
 depends on prose between stops, route transitions, or a required ending.
@@ -274,7 +274,7 @@ Use these shape checks as counterexamples, not a template or required scenario l
   ending carry the meaning; use a Structure when the question is instead which callers use a contract or which code changes shared state
   around the entrypoint.
 - A hub/fan-out or convergence is usually a Structure when simultaneous branches and their joins are
-  the useful shape. It can have a star or converging backbone, Regions, or only a start; do not invent a
+  the useful shape. It can have a star or converging backbone or only a start; do not invent a
   sequence.
 - A cross-cutting lifecycle may justify one Walkthrough for ordered state changes and one Structure for
   independently explorable authority relationships, but only when each answers a useful question on
@@ -364,7 +364,7 @@ scope.exclude: incidental changed files, repository-wide inventory, independent 
 mustEstablish: candidate descriptions of file contents, one-file-per-Node paths, direct Edge predicates, evidence, boundaries, and source-coordinate claims for independent verification
 shared: source-supported facts and terminology to keep consistent
 doNotDuplicate: behavior, sequence, state, or contract explanation another surface owns
-presentation: optional semantic presentation request; never a fake backbone or Region added to make the map look complete
+presentation: optional semantic presentation request; never a fake backbone added to make the map look complete
 existingArtifact: optional supplied or structure-list-discovered same-subject candidate
 ```
 
@@ -382,36 +382,17 @@ mustEstablish: candidate node, relation, and boundary claims to verify from sour
 shared: source-supported facts and terminology to keep consistent
 doNotDuplicate: file-location or ordered explanation another surface already owns
 emphasis: optional user-requested detail or risk emphasis
-presentation: optional requested thesis, semantic attention-start concept, relationship claims to consider for at most one connected exact-relation visual backbone, and semantic comprehension chunks to consider as Regions; never protocol IDs for a new Structure, raw coordinates, authored Region relations, or reviewer state
+presentation: optional requested thesis, semantic attention-start concept, relationship claims to consider for at most one connected exact-relation visual backbone; never protocol IDs for a new Structure, raw coordinates, or reviewer state
 existingArtifact: optional explicitly supplied URI for the same subject
 ```
 
-For a new Structure, describe presentation semantically rather than drafting its protocol payload.
-State a meaningful thesis and semantic attention-start concept; describe the verified relationship
-claims that should be considered for one compact backbone, and the processing or definitions each chunk connects
-and how they support the thesis. The composer does not choose a new `startNodeId`,
-`edgeIds`, `nodeIds`, or Region `id`. The Structure producer owns graph identity: after building and
-verifying the graph, it resolves the attention-start concept to one current Node ID, backbone claims to
-exact current Edge IDs, and accepted chunk concepts to exact Node membership. It assigns each new Region
-a fresh ID, preserves that ID while the same chunk survives, enforces size/connectivity/disjointness,
-and normalizes unordered sets. A suggested factual origin is a separate candidate claim to verify; it
-does not become the attention start automatically. Raw IDs may be cited only when they came from an
-existing Structure read; surviving IDs must remain attached to the same claim or chunk, and retired
-Node, Edge, or Region IDs must not be recycled.
-
-The resulting `primaryBackbone` may be one honest backbone or `null`, and Regions may be empty, partial,
-and unordered. The start need not be a Region member. Do not request a miscellaneous Region for coverage
-or an authored Region-to-Region relation; direct factual Edges remain the only relationship truth. If a
-meaningful thesis and start exist but the verified shape has neither an honest backbone nor useful named
-comprehension chunks, request the exact start-only form with `primaryBackbone: null` and `regions: []`;
-topology supplies its geometry, while presentation still supplies attention, overview, and initial focus
-for a new Viewer session. Otherwise do not invent a fake backbone, dummy Region, or decorative grouping.
-Use `presentation: null` when no meaningful authorial presentation remains. Never request authored layers
-or stages; the Viewer derives spatial ranks.
-Do not put one-screen fit, Graph / Regions mode, Region relationship arrows, card packing, focus, framing,
-history, Reset / Fit, pan, zoom, or viewport into the brief. Those are derived rendering or pane-local
-reviewer-session concerns, and the producer must not alter verified claims or manufacture presentation
-semantics to control them.
+For a new Structure, describe presentation semantically: a thesis, attention-start concept, and
+verified relationship claims for at most one compact connected backbone. The producer owns graph
+identity and resolves these to current Node and exact Edge IDs. Reuse only IDs read from an existing
+Structure, keep surviving claims stable, and never recycle retired Node or Edge IDs.
+Use `primaryBackbone: null` when a meaningful thesis and start have no honest backbone, or
+`presentation: null` when no meaningful authorial presentation remains. Never request authored layers,
+stages, grouping, coordinates, focus, history, pan, zoom, or viewport through the brief.
 
 Do not use the brief to override a producer's representation rejection boundary or source-exactness
 contract. The producer may reject a Walkthrough that has no useful order, a normal Structure that is

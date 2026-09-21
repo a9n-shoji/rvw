@@ -359,20 +359,6 @@ describe("CLI input schemas", () => {
           primaryBackbone: {
             edgeIds: ["checks-policy"],
           },
-          regions: [
-            {
-              id: "request-boundary",
-              label: "  Request boundary  ",
-              summary: "  Validates the request before authorization.  ",
-              nodeIds: ["controller"],
-            },
-            {
-              id: "policy",
-              label: "Policy",
-              summary: "Makes the authorization decision.",
-              nodeIds: ["policy"],
-            },
-          ],
         },
       }),
     ).toMatchObject({
@@ -393,14 +379,6 @@ describe("CLI input schemas", () => {
         primaryBackbone: {
           edgeIds: ["checks-policy"],
         },
-        regions: [
-          { id: "policy", label: "Policy", summary: "Makes the authorization decision." },
-          {
-            id: "request-boundary",
-            label: "Request boundary",
-            summary: "Validates the request before authorization.",
-          },
-        ],
       },
     });
   });
@@ -557,20 +535,6 @@ describe("CLI input schemas", () => {
         primaryBackbone: {
           edgeIds: ["store-policy", "entry-policy-parallel", "entry-policy"],
         },
-        regions: [
-          {
-            id: "input-effect",
-            label: "Input and effect",
-            summary: "Connects the request boundary to the persisted effect.",
-            nodeIds: ["store", "entry"],
-          },
-          {
-            id: "decision",
-            label: "Decision",
-            summary: "Makes the policy decision shared by input and persistence.",
-            nodeIds: ["policy"],
-          },
-        ],
       },
     };
     expect(structureUpdateInputSchema.parse(valid).presentation).toMatchObject({
@@ -578,22 +542,8 @@ describe("CLI input schemas", () => {
       primaryBackbone: {
         edgeIds: ["entry-policy", "entry-policy-parallel", "store-policy"],
       },
-      regions: [
-        {
-          id: "decision",
-          label: "Decision",
-          summary: "Makes the policy decision shared by input and persistence.",
-          nodeIds: ["policy"],
-        },
-        {
-          id: "input-effect",
-          label: "Input and effect",
-          summary: "Connects the request boundary to the persisted effect.",
-          nodeIds: ["entry", "store"],
-        },
-      ],
     });
-    // Direction, parallel multiplicity, and region-member order do not define traversal order.
+    // Direction, parallel multiplicity, and serialization order do not define traversal order.
     expect(
       structureUpdateInputSchema.parse({
         ...valid,
@@ -674,76 +624,10 @@ describe("CLI input schemas", () => {
         presentation: { ...valid.presentation, unexpected: true },
       }).success,
     ).toBe(false);
-    // Regions and their Node memberships are unordered sets and need not be intervals of the backbone.
-    expect(
-      structureUpdateInputSchema.parse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [...valid.presentation.regions].reverse(),
-        },
-      }).presentation,
-    ).toEqual(structureUpdateInputSchema.parse(valid).presentation);
     expect(
       structureUpdateInputSchema.safeParse({
         ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              id: "related-boundaries",
-              label: "Related boundaries",
-              summary: "Keeps the entry and effect together around their decision.",
-              nodeIds: ["store", "entry"],
-            },
-          ],
-        },
-      }).success,
-    ).toBe(true);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              id: "input",
-              label: "Input",
-              summary: "Introduces the request.",
-              nodeIds: ["entry"],
-              unexpected: true,
-            },
-          ],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              label: "Obsolete branch-v5 Region",
-              nodeIds: ["entry"],
-            },
-          ],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              id: "missing-summary",
-              label: "Missing summary",
-              nodeIds: ["entry"],
-            },
-          ],
-        },
+        presentation: { ...valid.presentation, regions: [] },
       }).success,
     ).toBe(false);
     expect(
@@ -766,97 +650,6 @@ describe("CLI input schemas", () => {
           thesis: valid.presentation.thesis,
           startNodeId: valid.presentation.startNodeId,
           primarySpine: { nodeIds: ["entry", "policy"], edgeIds: ["entry-policy"] },
-          regions: valid.presentation.regions,
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              id: "first",
-              label: "First",
-              summary: "Contains the first responsibility.",
-              nodeIds: ["entry", "policy"],
-            },
-            {
-              id: "second",
-              label: "Second",
-              summary: "Contains the second responsibility.",
-              nodeIds: ["policy"],
-            },
-          ],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              id: "first",
-              label: "First",
-              summary: "Contains the decision responsibility.",
-              nodeIds: ["policy"],
-            },
-            {
-              id: "second",
-              label: "Second",
-              summary: "Contains the entry and persistence responsibilities.",
-              nodeIds: ["entry", "store"],
-            },
-          ],
-        },
-      }).success,
-    ).toBe(true);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            {
-              id: "missing",
-              label: "Missing",
-              summary: "References a missing responsibility.",
-              nodeIds: ["missing"],
-            },
-          ],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [
-            valid.presentation.regions[0]!,
-            { ...valid.presentation.regions[1]!, id: valid.presentation.regions[0]!.id },
-          ],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [{ ...valid.presentation.regions[0], summary: "   " }],
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      structureUpdateInputSchema.safeParse({
-        ...valid,
-        presentation: {
-          ...valid.presentation,
-          regions: [{ ...valid.presentation.regions[0], summary: "s".repeat(501) }],
         },
       }).success,
     ).toBe(false);
@@ -867,14 +660,6 @@ describe("CLI input schemas", () => {
           thesis: "Start from the hub and compare its peers.",
           startNodeId: "policy",
           primaryBackbone: null,
-          regions: [
-            {
-              id: "policies",
-              label: "Policies",
-              summary: "Shows how the hub relates the entry to persistence.",
-              nodeIds: ["entry", "policy", "store"],
-            },
-          ],
         },
       }).success,
     ).toBe(true);
@@ -885,7 +670,6 @@ describe("CLI input schemas", () => {
           thesis: "Begin at the policy hub without inventing a path or grouping.",
           startNodeId: "policy",
           primaryBackbone: null,
-          regions: [],
         },
       }).success,
     ).toBe(true);
@@ -921,7 +705,6 @@ describe("CLI input schemas", () => {
           primaryBackbone: {
             edgeIds: edges.map(({ id }) => id),
           },
-          regions: [],
         },
       };
     };
