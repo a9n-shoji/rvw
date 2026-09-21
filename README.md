@@ -67,6 +67,8 @@ Structureでは、処理やデータを表す要素と、それらの関係を�
 - GitHub CLIで対象PRを読める認証と、Gitで取得できる権限。
 - PRの**マージ先（base）リポジトリのclone**、またはそのcloneから作ったGit worktree。
   forkからのPRも読めますが、fork側だけのcloneでは開けません。
+- Claude Codeでコメント監視を使う場合は、`Monitor` toolと子Agentが利用できる環境。
+  Monitor非対応のClaude Code実行環境では継続監視を利用できません。
 - 新規登録するPRは **github.com上のOpenまたはDraft**。初回取得と同期にはネット接続が必要です。
 
 ```bash
@@ -117,13 +119,18 @@ rvw skill install claude
 rvw skill status
 ```
 
-Agent側でSkillが読み込まれていることを確認し、`rvw-review-compose`を選んでPRのURLだけを渡します。
+Agent側でSkillが読み込まれていることを確認し、`rvw-review-compose`を選んで、PRのURLと説明の作成依頼を渡します。
 `rvw-review-compose`はPRと周辺コードを調べ、どこを説明し、どこをコードで直接読むかを考えて、
 必要なWalkthroughやStructureを作成します。
 
 ```text
+rvw-review-compose Skillを使って、次のPull Requestをレビューするための構成を検討し、
+必要なStructureやWalkthroughをrvwに作成してください。
+
 https://github.com/owner/repository/pull/123
 ```
+
+URLだけを渡した場合や構成の提案だけを依頼した場合は、作成意図が明示されていないため、説明を作成せず提案で終了します。
 
 作成後は、Agentが案内した説明を左の **ウォークスルー** または **Structure** から開きます。
 気になる説明のリンクや図のコード参照を `Cmd` / `Ctrl`＋クリックし、横のコードで条件や呼び出し先を確かめてください。
@@ -137,7 +144,7 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 監視を開始できたら知らせてください。
 ```
 
-監視開始の知らせを待ってから、疑問のあるコード行にコメントします。
+Agentがdriverの `watch-ready` を受け取り、監視開始を知らせるのを待ってから、疑問のあるコード行にコメントします。
 「🔎 確認中です…」が付けばAgentが受け付けています。調査後はその投稿が回答に置き換わるので、
 返信とリンク先のコードを確認し、疑問が解消したら **解決** を押します。続けて質問する場合は同じコメントに返信できます。
 
@@ -146,7 +153,7 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 Claude Codeでは`Monitor` toolで監視driverを起動し、出力イベントを受け取ります。Bashのbackground実行や
 出力pollingは使わず、Monitorの期限到達時は同じtask stateで再開します。
 監視を使わず一件ずつ渡す方法や、修正を依頼する方法は、
-[利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)にあります。
+[利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)にあります。
 
 ## 使う前に知っておくこと
 
@@ -161,14 +168,14 @@ Claude Codeでは`Monitor` toolで監視driverを起動し、出力イベント�
   rvw自身はコード編集、テスト実行、commit、pushを行いません。
 - PRタイトルと本文は、常に**最後に成功したGitHub同期時点の内容**です。過去のコミットを選んでも過去のPR本文には戻りません。
 
-保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)にまとめています。
+保存場所、ファイル表示の制限、同期に失敗したときの確認は[利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)にまとめています。
 
 ## デモと関連文書
 
 ソースから `pnpm demo` を起動すると、上の画面と同じ注文サービスPRを試せます。
-GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md#デモで同じ疑問を追う)を参照してください。
+GitHub認証やAgentは不要です。[デモの起動と操作手順](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md#デモで同じ疑問を追う)を参照してください。
 
-- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/2f8ce1af320682b8904f2dbaae399d8b14c4385d/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
+- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)：PRを読む、説明を頼む、コメントへの応答を読む、修正後を確認する。
 - [CLI protocol](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/cli-protocol.md)：Agentや自動化向けのコマンドとJSON仕様。
 - [実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/implementation-spec.md) / [設計](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)：参照解決、保存、描画などの保証。
 - [開発・問い合わせ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [互換性](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/compatibility.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)。
