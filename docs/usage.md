@@ -120,11 +120,17 @@ rvwを更新したら `rvw skill status` でSkillの状態も確認します。�
 
 ### PR全体をどこから読むかも任せる
 
-`rvw-review-compose` Skillを選び、PRのURLだけを渡します。読む順序や説明の構成はSkillに任せます。
+`rvw-review-compose` Skillを選び、PRのURLと説明の作成依頼を渡します。読む順序や説明の構成はSkillに任せます。
 
 ```text
+rvw-review-compose Skillを使って、次のPull Requestをレビューするための構成を検討し、
+必要なStructureやWalkthroughをrvwに作成してください。
+
 https://github.com/owner/repository/pull/123
 ```
+
+URLだけを渡した場合や構成の提案だけを依頼した場合は、説明を作成・更新せず提案で終了します。
+この場合、必須のファイル地図も未作成の構成案に留まります。
 
 ファイルや処理の関係を図から辿れる説明が **Structure** です。PR全体の構成では、
 実在するファイルと具体的な依存関係を示す地図を必ず含みます。
@@ -168,7 +174,32 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 
 **監視開始の知らせを待ってからコメントしてください。** 新規に監視を始める前からあるコメントは処理せず、
 全登録PRの新しいコメントと返信を扱います。監視を実行するローカルAgentのタスクと、子Agentを使える環境が必要です。
-rvwだけを起動しても監視は始まりません。
+rvwだけを起動しても監視は始まりません。Agentはdriverの `watch-ready` を受け取ってから、監視開始を知らせます。
+
+### Claude Codeの起動条件と再開
+
+Claude Codeでは `Monitor` toolと子Agentが利用できる環境が必要です。
+Monitorが利用できない場合は、watchを開始せず、`activate` や自動受付（auto-ack）も実行せずに制約を知らせて停止します。
+[Claude Code公式Monitor仕様](https://code.claude.com/docs/en/tools-reference#monitor-tool)では、
+Amazon Bedrock、Google CloudのAgent Platform、Microsoft Foundry、および
+`DISABLE_TELEMETRY` または `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` 設定下ではMonitorを利用できません。
+
+SkillはMonitorのcommand sourceで同梱driverを起動し、標準出力のイベントを受け取ります。
+Bashのbackground実行、`TaskOutput` によるpolling、shellのsleep loopには切り替えません。
+driverに `&` を付けたり、イベントをログへリダイレクトしたりしません。
+
+Monitorのwatchは既定5分、最大30分で終了します（`-p` による単一プロンプトの非対話実行は最大10分）。
+期限通知後も監視を続ける場合、Agentは次の順で再開します。
+
+1. 旧driverが停止したことを確認します。
+2. 同じtask stateに対して、同梱 `watch-state.mjs` の `recover`、`status` を順に実行し、Skillの復旧手順に従います。
+3. 同じstate、author label、予約済みの子Agent capacity（`--max-in-flight`）で、Monitorからdriverを再起動します。
+4. `watch-ready` を受け取ってから、監視の再開を知らせます。
+
+再開時に `activate` を実行して新しいgenerationを作ってはいけません。
+ユーザーが中止した場合やdriverの回復不能なエラーでは、自動で再開しません。
+
+### コメントの受付と回答
 
 コメントを受け付けると、Agentが **「🔎 確認中です…」** を投稿します。
 調査が終わると、その投稿が根拠のコードへのリンクを含む回答に置き換わります。
