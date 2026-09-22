@@ -4,10 +4,10 @@ GitHub Pull Request の差分だけでなく、**そのコミット時点のコ�
 
 変更行からファイル全体のコード、未変更の呼び出し元、テストコードまでを手元のブラウザで確認できます。
 
-* **コードベース全体の探索**: 差分とファイル全文の切り替え、未変更ファイルの閲覧・全文検索に対応。
-* **根拠コードへのジャンプ**: Walkthrough（解説文）やStructure（関係図）内のリンクから該当コードを開く。
-* **2ペイン表示**: 説明とコード、呼び出し元と呼び出し先を左右に並べて比較。
-* **ローカルコメント & Agent調査**: 変更のない行にもコメント可能。Codex や Claude Code に行単位で質問し、その場で調査結果を確認できる。
+- **コードベース全体の探索**: 差分とファイル全文の切り替え、未変更ファイルの閲覧・全文検索に対応。
+- **根拠コードへのジャンプ**: Walkthrough（解説文）やStructure（関係図）内のリンクから該当コードを開く。
+- **2ペイン表示**: 説明とコード、呼び出し元と呼び出し先を左右に並べて比較。
+- **ローカルコメント & Agent調査**: 変更のない行にもコメント可能。Codex や Claude Code に行単位で質問し、その場で調査結果を確認できる。
 
 ---
 
@@ -15,12 +15,12 @@ GitHub Pull Request の差分だけでなく、**そのコミット時点のコ�
 
 ### 動作要件
 
-* Node.js 24.15.0 以上
-* Git
-* [GitHub CLI (`gh`)](https://cli.github.com/)（対象PRへのアクセス権限およびGit認証が完了していること）
-* PRのマージ先（base）リポジトリのローカルclone、またはそこから作成した Git worktree
-  * ※ fork元リポジトリ単体のcloneでは利用できません。
-* Claude Code でコメント監視を使う場合は、`Monitor` tool とサブAgentが利用可能な環境
+- Node.js 24.15.0 以上
+- Git
+- [GitHub CLI (`gh`)](https://cli.github.com/)（対象PRへのアクセス権限およびGit認証が完了していること）
+- PRのマージ先（base）リポジトリのローカルclone、またはそこから作成した Git worktree
+  - ※ fork元リポジトリ単体のcloneでは利用できません。
+- Claude Code でコメント監視を使う場合は、`Monitor` tool とサブAgentが利用可能な環境
 
 ### セットアップ
 
@@ -57,8 +57,8 @@ PR全体の流れを把握するために、Agentが生成した解説（Walkthr
 
 ![Walkthroughからコードを開き、コメントで質問する操作フロー](https://raw.githubusercontent.com/a9n-shoji/rvw/166871b5fbd78f258611553ca7c8acc0101737e2/docs/images/review-flow.gif)
 
-* 解説文中のリンク（`Cmd/Ctrl + クリック`）から、実装行へ直接ジャンプします。
-* 疑問点があればその場でコード行にコメントを残せます。
+- 解説文中のリンク（`Cmd/Ctrl + クリック`）から、実装行へ直接ジャンプします。
+- 疑問点があればその場でコード行にコメントを残せます。
 
 ### 3. Structure（関係図）からの依存関係の把握
 
@@ -66,8 +66,8 @@ PR全体の流れを把握するために、Agentが生成した解説（Walkthr
 
 ![Structureからコード参照を開く操作フロー](https://raw.githubusercontent.com/a9n-shoji/rvw/166871b5fbd78f258611553ca7c8acc0101737e2/docs/images/structure-flow.gif)
 
-* 図中の **`</>`** アイコンを `Cmd/Ctrl + クリック` すると、呼び出し元や条件分岐の実装を右ペインに開きます。
-* **1-hop / 2-hop** で着目したノードの周辺関係に絞り込み、**Fit** で全体表示に戻せます。
+- 図中の **`</>`** アイコンを `Cmd/Ctrl + クリック` すると、呼び出し元や条件分岐の実装を右ペインに開きます。
+- **1-hop / 2-hop** で着目したノードの周辺関係に絞り込み、**Fit** で全体表示に戻せます。
 
 ---
 
@@ -109,18 +109,18 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 
 ![コメントに対するAgentの返信例](https://raw.githubusercontent.com/a9n-shoji/rvw/166871b5fbd78f258611553ca7c8acc0101737e2/docs/images/review-comment.png)
 
-* コメント送信後、調査中は「🔎 確認中です…」と表示され、完了すると回答に置き換わります。
-* 疑問が解消したら **解決** を押してクローズします。
+- コメント送信後、調査中は「🔎 確認中です…」と表示され、完了すると回答に置き換わります。
+- 疑問が解消したら **解決** を押してクローズします。
 
 ---
 
 ## 仕様・注意点
 
-* **完全ローカル管理**: コメント、返信、生成された Walkthrough / Structure はローカルに保存されます。**GitHub上のPRには一切投稿・送信されません**。Approve や Merge 等は通常通り GitHub 上で行ってください。
-* **参照の検証**: rvw は指定コミット・ファイル・行が存在することのみを検証します。Agentが生成した解説自体の妥当性は保証しません。
-* **接続要件**: 初回取得・同期時のみ GitHub への接続が必要です。取得済みのPRはオフラインでも表示可能です。
-* **未対応環境**: GitHub Enterprise、および新規登録時点ですでに Closed / Merged になっているPRには非対応です（登録済みPRのクローズ追従は可能）。
-* **変更操作の非保持**: rvw 単独でコード編集、テスト実行、Git コミット等を行う機能はありません。
+- **完全ローカル管理**: コメント、返信、生成された Walkthrough / Structure はローカルに保存されます。**GitHub上のPRには一切投稿・送信されません**。Approve や Merge 等は通常通り GitHub 上で行ってください。
+- **参照の検証**: rvw は指定コミット・ファイル・行が存在することのみを検証します。Agentが生成した解説自体の妥当性は保証しません。
+- **接続要件**: 初回取得・同期時のみ GitHub への接続が必要です。取得済みのPRはオフラインでも表示可能です。
+- **未対応環境**: GitHub Enterprise、および新規登録時点ですでに Closed / Merged になっているPRには非対応です（登録済みPRのクローズ追従は可能）。
+- **変更操作の非保持**: rvw 単独でコード編集、テスト実行、Git コミット等を行う機能はありません。
 
 ---
 
@@ -128,19 +128,19 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 
 ※ `Cmd`（macOS） / `Ctrl`（Windows, Linux）
 
-| 操作 | ショートカット | 補足 |
-| :--- | :--- | :--- |
-| ファイル・解説をクイックオープン | `Cmd/Ctrl + P` | `↑`/`↓` で選択、`Enter` で開く |
-| コードベース全体の全文検索 | `Cmd/Ctrl + Shift + F` | 選択コミットのリポジトリ全体が対象 |
-| ペイン内検索 | `Cmd/Ctrl + F` | 文書ペインを選択中に有効 |
-| 次／前の検索一致箇所 | `Enter` / `Shift + Enter` | 検索窓フォーカス時（`F3` / `Shift + F3` も可） |
-| ファイル・参照先を右ペインに開く | `Cmd/Ctrl + クリック` | 一覧、リンク、Structure上の参照に対応 |
-| コメント・返信の投稿 / 保存 | `Cmd/Ctrl + Enter` | 各入力欄 |
-| コメント入力のキャンセル | `Esc` | 未投稿内容を破棄 |
-| 前／次のタブへ移動 | `←` / `→` | タブヘッダーにフォーカス時 |
-| コミットの範囲選択 | `Shift + クリック` | コミット一覧で範囲指定 |
-| Structure: ノードの詳細展開 | ノードをダブルクリック | コード参照ボタン以外の部分 |
-| Structure: 拡大・縮小 | `Cmd/Ctrl + ホイール` | ホイール単体はキャンバス移動 |
+| 操作                             | ショートカット            | 補足                                           |
+| :------------------------------- | :------------------------ | :--------------------------------------------- |
+| ファイル・解説をクイックオープン | `Cmd/Ctrl + P`            | `↑`/`↓` で選択、`Enter` で開く                 |
+| コードベース全体の全文検索       | `Cmd/Ctrl + Shift + F`    | 選択コミットのリポジトリ全体が対象             |
+| ペイン内検索                     | `Cmd/Ctrl + F`            | 文書ペインを選択中に有効                       |
+| 次／前の検索一致箇所             | `Enter` / `Shift + Enter` | 検索窓フォーカス時（`F3` / `Shift + F3` も可） |
+| ファイル・参照先を右ペインに開く | `Cmd/Ctrl + クリック`     | 一覧、リンク、Structure上の参照に対応          |
+| コメント・返信の投稿 / 保存      | `Cmd/Ctrl + Enter`        | 各入力欄                                       |
+| コメント入力のキャンセル         | `Esc`                     | 未投稿内容を破棄                               |
+| 前／次のタブへ移動               | `←` / `→`                 | タブヘッダーにフォーカス時                     |
+| コミットの範囲選択               | `Shift + クリック`        | コミット一覧で範囲指定                         |
+| Structure: ノードの詳細展開      | ノードをダブルクリック    | コード参照ボタン以外の部分                     |
+| Structure: 拡大・縮小            | `Cmd/Ctrl + ホイール`     | ホイール単体はキャンバス移動                   |
 
 ---
 
@@ -148,8 +148,8 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 
 ソースから `pnpm demo` を実行すると、デモ環境（認証・Agent不要）をローカルで試せます。
 
-* [利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)
-* [CLI Protocol 仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/cli-protocol.md)
-* [アーキテクチャ設計・実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)
-* [コントリビューション](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)
-* [ライセンス (MIT)](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/LICENSE)
+- [利用ガイド](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md)
+- [CLI Protocol 仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/cli-protocol.md)
+- [アーキテクチャ設計・実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)
+- [コントリビューション](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)
+- [ライセンス (MIT)](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/LICENSE)
