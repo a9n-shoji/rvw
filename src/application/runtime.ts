@@ -22,5 +22,14 @@ export function createRuntime(
   const git = options.git ?? new GitClient();
   const github = options.github ?? new GitHubClient();
   const service = new RvwService(database, git, github);
-  return { database, git, github, service, close: () => database.close() };
+  return {
+    database,
+    git,
+    github,
+    service,
+    close: () => {
+      service.close();
+      database.close();
+    },
+  };
 }

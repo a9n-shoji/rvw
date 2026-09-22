@@ -1,0 +1,14 @@
+{
+  "apiVersion": 1,
+  "id": "typescript",
+  "family": "javascript",
+  "extensions": [".ts", ".mts", ".cts"],
+  "filenames": [],
+  "grammar": "tree-sitter-typescript/tree-sitter-typescript.wasm",
+  "queries": [
+    "tree-sitter-javascript/queries/tags.scm",
+    "./queries/javascript.scm",
+    "tree-sitter-typescript/queries/tags.scm",
+    "./queries/typescript.scm"
+  ]
+}

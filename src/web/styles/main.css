@@ -6081,3 +6081,89 @@ path.structure-edge-label-leader.selected,
     opacity: 1;
   }
 }
+
+.code-navigation-hint {
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.code-navigation {
+  position: fixed;
+  z-index: 100;
+  padding: 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px #0003;
+  font-size: 13px;
+}
+
+.code-navigation-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.code-navigation p {
+  margin: 8px 0;
+}
+.code-navigation ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.code-navigation li button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.code-navigation li button > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.code-navigation button {
+  background: transparent;
+  color: var(--text);
+  border-color: transparent;
+}
+.code-navigation button:hover {
+  background: var(--accent-soft);
+}
+.code-navigation li + li {
+  border-top: 1px solid var(--line);
+}
+.code-navigation small,
+.code-navigation li button > span + span {
+  color: var(--muted);
+}
+
+.code-navigation-origin,
+.code-navigation-help {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.code-navigation li code {
+  font-size: 12px;
+  margin-top: 4px;
+  white-space: pre-wrap;
+  text-align: left;
+}
+.code-navigation-warning {
+  background: var(--warning);
+  color: var(--warning-text);
+  padding: 8px;
+  border-radius: 4px;
+}

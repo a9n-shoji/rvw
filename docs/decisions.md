@@ -3732,3 +3732,30 @@ Git, SQLite, and browser path without a manual reload.
   count as successful completion.
 - The automatic call belongs to the Agent Skill workflow; rvw does not observe arbitrary pushes made
   outside that workflow or start an Agent itself.
+
+## 2026-09-22: Ruby search-based code navigation MVP
+
+- レビュー中にdiffから周辺の定義へ移動するため、同梱Tree-sitter WASMと公式Ruby tags queryを採用する。
+- sourceOid/pathのGit objectモデル、既存repository-file Viewer、左右pane、reading historyへ接続する。
+- 仕様の「semantic search、LSPは担わない」は維持する。syntaxから抽出した同名定義候補の探索を追加する。
+- 常にpossibleとして表示し、1候補でも自動的にexactとはしない。References、TS/JS、Rails magicはMVP外。
+- blob単位の解析cacheとcommitごとのpath配置を分離する。初回query時にboundedなmemory indexを作る。
+  永続SQLite schemaや独自parserは追加しない。制限・精度・比較と検証は[設計記録](code-navigation.md)を参照。
+
+## 2026-09-22: Isolate Ruby parsing and bound navigation work
+
+- productionのHTTP応答性を保つため解析を遅延起動するworkerへ移す。file単位hard timeout、queue上限、idle解放、runtime終了時の停止を持つ。
+- 初回queryのfileごとのGit subprocessを`cat-file --batch`へ置き換え、既存のblob decode処理を共有する。
+- timeoutによる不完全結果を恒久cacheせず、理由を表示して完了済みblobを再利用するretryを提供する。
+- 候補はportal popupに置き、コードのlayoutと既存paneの読み取り位置を維持する。宣言preview・矢印キー選択・focus復元を追加する。
+- 実Gitと本番service/parserを使うローカルRailsデモを追加する。GitHub metadataだけをfixtureとし、架空の定義APIは使わない。
+
+## 2026-09-22: Ship standard languages through the language-pack contract
+
+- 初期Ruby sliceをJS/TS/Reactへ広げる。標準言語もdata-only JSON manifestのpackとして登録し、grammar/queryはpackの責務にする。
+- 拡張子判定、parser loader、Git index family、build assetとlicense収集が同じ登録を参照する。コアに言語別解析分岐を持たない。
+- blob cache keyにgrammarを区別するpack IDを含める。同じblobでも拡張子が変わりgrammarが異なる場合は再解析する。
+- JS/TS/JSX/TSXを同じfamilyで探索する。import aliasやmodule/type resolutionは実装せず、possible candidatesの契約を維持する。
+- アドオンのdownload/update/外部登録は別の変更とする。現在の標準pack登録はbuild時であり、実行時の任意pack install機能とは区別する。
+- JS/TS/TSX WASMは約3.27 MB（個別gzip合計約338 KB）。全体の圧縮後budget 6 MiBを維持し、展開後budgetは28 MiBへ改定する。
+- UXはmodifier hoverのpointer、自己宣言の除外、繰り返す注意文の削除、長いpath/多数候補のbounded popupを採用する。

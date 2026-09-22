@@ -1,3 +1,4 @@
+import { navigationPacks } from "../src/shared/navigation-packs.ts";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
@@ -91,7 +92,8 @@ const packageJson = packageJsonSchema.parse(
   JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")),
 );
 const maxTarballBytes = 6 * 1024 * 1024;
-const maxUnpackedBytes = 25 * 1024 * 1024;
+// JS/TS/TSX grammar assets add ~3.27 MB; compressed budget remains unchanged.
+const maxUnpackedBytes = 28 * 1024 * 1024;
 
 function requestedPackDirectory() {
   const args = process.argv.slice(2);
@@ -273,6 +275,13 @@ try {
     "package.json",
     "dist/cli.mjs",
     "dist/cli.mjs.map",
+    "dist/parser-worker.mjs",
+    "dist/parser-worker.mjs.map",
+    "dist/navigation/web-tree-sitter.wasm",
+    ...navigationPacks.flatMap((pack) => [
+      `dist/navigation/${pack.id}/grammar.wasm`,
+      ...pack.queries.map((_, index) => `dist/navigation/${pack.id}/${index}.scm`),
+    ]),
     "dist/cli-THIRD_PARTY_NOTICES.txt",
     "dist/web/index.html",
     "dist/web/THIRD_PARTY_NOTICES.txt",

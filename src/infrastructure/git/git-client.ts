@@ -11,6 +11,7 @@ import type {
   TreeEntryKind,
 } from "../../domain/models.js";
 import {
+  GIT_OBJECT_ID_PATTERN,
   MAX_MARKDOWN_ASSET_BYTES,
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
@@ -50,6 +51,41 @@ export interface BlobContent {
   entryKind: TreeEntryKind;
   oid: string | null;
   normalizedLineEndings: boolean;
+}
+
+function decodeTextBlob(entry: TreeEntry, buffer: Buffer): BlobContent {
+  if (buffer.includes(0)) {
+    return {
+      availability: "binary",
+      text: null,
+      byteLength: buffer.length,
+      entryKind: entry.kind,
+      oid: entry.oid,
+      normalizedLineEndings: false,
+    };
+  }
+  let decoded: string;
+  try {
+    decoded = utf8Fatal.decode(buffer);
+  } catch {
+    return {
+      availability: "binary",
+      text: null,
+      byteLength: buffer.length,
+      entryKind: entry.kind,
+      oid: entry.oid,
+      normalizedLineEndings: false,
+    };
+  }
+  const normalized = decoded.replace(/\r\n?/g, "\n");
+  return {
+    availability: "available",
+    text: normalized,
+    byteLength: buffer.length,
+    entryKind: entry.kind,
+    oid: entry.oid,
+    normalizedLineEndings: normalized !== decoded,
+  };
 }
 
 export interface RepositoryAsset {
@@ -539,38 +575,61 @@ export class GitClient {
       cwd,
       maxStdoutBytes: MAX_TEXT_DOCUMENT_BYTES + 1,
     });
-    if (content.stdout.includes(0)) {
-      return {
-        availability: "binary",
-        text: null,
-        byteLength: content.stdout.length,
-        entryKind: entry.kind,
-        oid: entry.oid,
-        normalizedLineEndings: false,
-      };
+    return decodeTextBlob(entry, content.stdout);
+  }
+
+  /** Read only verified blob OIDs, with strict framing and bounded output. No path expressions. */
+  async readBlobDocuments(
+    cwd: string,
+    entries: readonly TreeEntry[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, BlobContent>> {
+    const unique = [...new Map(entries.map((entry) => [entry.oid, entry])).values()];
+    if (unique.length === 0) return new Map();
+    if (
+      unique.length > 32 ||
+      unique.some(
+        (entry) =>
+          !GIT_OBJECT_ID_PATTERN.test(entry.oid) ||
+          entry.kind !== "file" ||
+          entry.type !== "blob" ||
+          entry.size === null ||
+          entry.size < 0 ||
+          entry.size > MAX_TEXT_DOCUMENT_BYTES,
+      ) ||
+      unique.reduce((bytes, entry) => bytes + entry.size!, 0) > 4 * 1024 * 1024
+    ) {
+      throw new RvwError("INVALID_INPUT", "blob batchの対象またはサイズが不正です。");
     }
-    let decoded: string;
-    try {
-      decoded = utf8Fatal.decode(content.stdout);
-    } catch {
-      return {
-        availability: "binary",
-        text: null,
-        byteLength: content.stdout.length,
-        entryKind: entry.kind,
-        oid: entry.oid,
-        normalizedLineEndings: false,
-      };
+    const result = await runProcess("git", ["cat-file", "--batch"], {
+      cwd,
+      ...(signal ? { signal } : {}),
+      input: unique.map((entry) => entry.oid).join("\n") + "\n",
+      maxStdoutBytes: 4 * 1024 * 1024 + 8192,
+      timeoutMs: 10_000,
+    });
+    const documents = new Map<string, BlobContent>();
+    let offset = 0;
+    for (const entry of unique) {
+      const newline = result.stdout.indexOf(10, offset);
+      const expected = `${entry.oid} blob ${entry.size}`;
+      const end = newline + 1 + entry.size!;
+      if (
+        newline < 0 ||
+        result.stdout.subarray(offset, newline).toString("ascii") !== expected ||
+        result.stdout[end] !== 10
+      ) {
+        throw new RvwError(
+          "PROCESS_FAILED",
+          "Git blob batchの結果が要求したobjectと一致しません。",
+        );
+      }
+      documents.set(entry.oid, decodeTextBlob(entry, result.stdout.subarray(newline + 1, end)));
+      offset = end + 1;
     }
-    const normalized = decoded.replace(/\r\n?/g, "\n");
-    return {
-      availability: "available",
-      text: normalized,
-      byteLength: content.stdout.length,
-      entryKind: entry.kind,
-      oid: entry.oid,
-      normalizedLineEndings: normalized !== decoded,
-    };
+    if (offset !== result.stdout.length)
+      throw new RvwError("PROCESS_FAILED", "Git blob batchに余分な出力があります。");
+    return documents;
   }
 
   async readRepositoryAsset(
