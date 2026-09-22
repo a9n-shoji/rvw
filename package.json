@@ -44,6 +44,7 @@
     "dev": "tsx src/cli/main.ts open --no-open",
     "demo": "node scripts/build.mjs && tsx scripts/demo.mjs",
     "demo:dogfood": "node scripts/build.mjs && tsx scripts/dogfood.mjs",
+    "demo:navigation": "node scripts/build.mjs && tsx scripts/navigation-demo.ts",
     "check": "tsc --noEmit && eslint . && prettier --check .",
     "test": "vitest run",
     "test:dogfood": "node --import tsx scripts/dogfood-smoke.ts",
@@ -90,11 +91,15 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "tree-sitter-javascript": "0.25.0",
+    "tree-sitter-ruby": "0.23.1",
+    "tree-sitter-typescript": "0.23.2",
     "tsx": "^4.23.11",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.66.0",
     "vite": "^8.2.1",
     "vitest": "^4.1.11",
+    "web-tree-sitter": "0.27.0",
     "zod": "^4.4.3"
   }
 }

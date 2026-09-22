@@ -1245,7 +1245,7 @@ test("selects and copies code text with native browser selection", async ({ cont
   const diff = page.locator("diffs-container");
   const fixtureIdentifier = diff
     .locator('[data-line="1"] span')
-    .filter({ hasText: /^ fixture$/ })
+    .filter({ hasText: /^\s*fixture$/ })
     .first();
   await expect(fixtureIdentifier).toBeVisible();
   await page.waitForTimeout(1_100);

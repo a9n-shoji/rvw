@@ -1,3 +1,5 @@
+import { GitCodeNavigation } from "../infrastructure/navigation/git-code-navigation.js";
+import type { DefinitionResult } from "../domain/code-navigation.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fromMarkdown } from "mdast-util-from-markdown";
@@ -751,6 +753,30 @@ async function mapWithConcurrency<T, R>(
 }
 
 export class RvwService {
+  private codeNavigation: GitCodeNavigation | undefined;
+
+  close(): void {
+    this.codeNavigation?.close();
+  }
+
+  async findDefinitions(
+    pullRequestId: string,
+    sourceOid: string,
+    filePath: string,
+    line: number,
+    column: number,
+  ): Promise<DefinitionResult> {
+    const pullRequest = this.getPullRequest(pullRequestId);
+    await this.assertCommitAvailable(pullRequest, sourceOid);
+    this.codeNavigation ??= new GitCodeNavigation(this.git);
+    return this.codeNavigation.definitions(
+      pullRequest.localRepositoryPath,
+      { kind: "repository-file", pullRequestId, sourceOid, path: filePath },
+      line,
+      column,
+    );
+  }
+
   constructor(
     readonly database: RvwDatabase,
     readonly git: GitClient,

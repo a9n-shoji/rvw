@@ -1,0 +1,31 @@
+{
+  "id": "tsx",
+  "family": "javascript",
+  "extensions": [".tsx"],
+  "filenames": [],
+  "grammar": "tree-sitter-typescript/tree-sitter-tsx.wasm",
+  "queries": [
+    "tree-sitter-javascript/queries/tags.scm",
+    "./queries/javascript.scm",
+    "tree-sitter-typescript/queries/tags.scm",
+    "./queries/typescript.scm",
+    "tree-sitter-javascript/queries/locals.scm",
+    "./queries/javascript-context.scm",
+    "tree-sitter-typescript/queries/locals.scm"
+  ],
+  "relativeImportSuffixes": [
+    "",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+    "/index.ts",
+    "/index.tsx",
+    "/index.js",
+    "/index.jsx"
+  ]
+}

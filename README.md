@@ -142,6 +142,16 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 | Structure: ノードの詳細展開      | ノードをダブルクリック    | コード参照ボタン以外の部分                     |
 | Structure: 拡大・縮小            | `Cmd/Ctrl + ホイール`     | ホイール単体はキャンバス移動                   |
 
+### コードの定義候補を辿る
+
+Ruby・JS/TS・React（JSX/TSX）の全文・diff上の名前を **Cmd/Ctrl + click** すると、同じcommit内の定義候補を表示します。
+候補をclickすると対象行を開き、Cmd/Ctrl + clickなら右ペインに開きます。ブラウザのBackで元へ戻れます。
+候補は宣言行をプレビューでき、↑↓/Enterで選択、Escapeで閉じられます。
+開発checkoutでは `pnpm demo:navigation` で実Git履歴を使うRuby/Reactデモを起動できます。
+対応言語の解析機能を同梱するので、RubyやLSPの追加セットアップは不要です。構文に基づく候補であり、呼び先は確定しません。
+ローカル変数の代入・引数を候補にし、JS/TSの相対named import（`import { Button as Action } from "./Button"`のような別名も含む）先を優先します。型位置と`import type`の相対named aliasにも対応しますが、型・値のsemanticな解決は行いません。
+default / namespace / package import、re-export、tsconfig paths、完全なmodule resolution、型に基づくreceiver解決、Railsの動的生成method、外部gem、Find usagesは未対応です。[対象と制限](https://github.com/a9n-shoji/rvw/blob/main/docs/code-navigation.md)を参照してください。
+
 ---
 
 ## ドキュメント

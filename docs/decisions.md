@@ -3732,3 +3732,17 @@ Git, SQLite, and browser path without a manual reload.
   count as successful completion.
 - The automatic call belongs to the Agent Skill workflow; rvw does not observe arbitrary pushes made
   outside that workflow or start an Agent itself.
+
+## 2026-09-22: Search-based code navigation
+
+レビュー中の識別子から周辺実装へ辿るため、Tree-sitter WASMを同梱し、Gitのexact source commitに対する定義候補の探索を採用する。
+外部LSPや言語環境のsetupを要求せず、既存repository-file、左右pane、reading historyへ接続する。候補をsemanticな確定結果とは扱わない。
+
+- Ruby / JS / TS / JSX / TSXを標準対応する。言語設定と構文queryは内部dataとして共有する。公開plugin APIは設けない。
+- local scopeの代入・引数と相対named import（別名を含む）を限定的な候補選択・順位付けに使う。型、実行順、Rails magic、完全なmodule resolutionは対象外。
+- local heuristicの不完全さで通常定義を失わないよう、local候補だけで早期returnせず、commit指定のgit grepで候補fileを絞り、Tree-sitterで定義を確認する。解析結果は言語ID + blob OIDでcacheし、commitのpath配置とは分離する。
+- 全commit索引は保持しない。snapshot方式は多数の同名宣言を繰り返し探索する場合に速いが、先行解析と索引cache・build queue・容量制御が増える。通常の探索を必要なblobへ限定する方式を、初回応答と保守の単純さから採用する。
+- parserはisolated workerで実行する。入力・探索・cacheにresource budgetを設け、不完全結果は明示する。worker障害は実行中のfileだけを失敗させ、未実行のjobはfresh workerで継続する。
+- 配布はNode/OS別native binaryを増やさず、CLI側へruntime・grammar・query・licenseを同梱する。browserへparserは配らない。
+
+精度、cache、failureとresource budgetの詳細は[code-navigation.md](code-navigation.md)を参照する。

@@ -437,6 +437,24 @@ empty fileは従来どおり明示的に扱う。
   layout上の行、生成HTMLはtargetへ保存しない。
   line commentはSourceのgutter/range selectionとPreviewの文字列選択、file commentは両表示から作成できる。
 
+### 5.3.0 コードの定義候補
+
+Ruby・JS/TS・JSX/TSX sourceのCmd/Ctrl+clickから、同じexact source commit内の定義候補を表示できる。
+ローカル変数は最も近い可視scopeのbindingを優先して通常定義候補と統合し、相対named importは別名を含め参照先の候補を優先する。
+抽出規則は言語packのquery、探索と順位付けは共通coreに置く。実行順や型に基づく確定解決は行わない。
+標準言語用の内部設定で同梱するTree-sitter WASMと公式tags queryを使い、外部LSPやRuby環境のsetupは要求しない。
+候補が一つでもsemanticなexact definitionとは扱わず、選択後に既存repository-file tabの全文へ
+対象行を開く。通常clickは左、Cmd/Ctrl+clickは右。diff削除側はold ref、追加側はnew refを使う。
+Back/Forwardは既存reading historyを使う。未対応言語のViewer動作を変えない。
+blob解析結果とcommitのpath配置を分離する。local候補があっても通常定義を除外せず、commit指定のgit grepを同じ言語familyのpathspecへ限定し、Tree-sitterで定義を抽出する。
+探索の制限や構文エラーによる不完全さをUI/APIに明示する。blob cacheは言語IDを含み、commit索引は保持しない。
+候補は相対import先、同じfile、同じ言語設定、同じfamilyの順に優先する。JS/TS/JSX/TSXは横断し、Rubyと混ぜない。
+current fileの解析済み候補を先に確保し、残りも最終順位に沿って探索する。source byte budgetは新規read / parseだけに使う。
+クリックした定義自身は候補から除外する。modifier中の名前hoverはpointerで示す。
+解析は専用workerに隔離し、Git blobはbatchで読む。query・queue・解析時間・cache容量に上限を設ける。
+一時的な解析上限は恒久cacheせず再試行できる。候補popupは宣言preview、矢印キー選択、Escapeでのfocus復元を提供する。
+詳細な対象構文、上限、配布と精度限界は[code-navigation.md](code-navigation.md)を参照。
+
 ### 5.3.1 画像assetとrepository画像viewer
 
 - GitHub user attachment URLは`https:`、exact `github.com`、空のusername/password/port/query/fragment、
@@ -1848,6 +1866,7 @@ POST /api/pull-requests/:id/reset
 
 GET /api/pull-requests/:id/commits
 GET /api/pull-requests/:id/tree?oid=<oid>
+GET /api/pull-requests/:id/definitions?sourceOid=<oid>&path=<path>&line=<line>&column=<column>
 GET /api/pull-requests/:id/changed-files?oldOid=<oid>&newOid=<oid>
 GET /api/pull-requests/:id/document?kind=...&sourceOid=...&path=...
 GET|HEAD /api/pull-requests/:id/markdown-asset?sourceOid=...&path=...

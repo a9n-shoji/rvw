@@ -18,7 +18,12 @@ export default tseslint.config(
     languageOptions: {
       parserOptions: {
         projectService: {
-          allowDefaultProject: ["eslint.config.js", "scripts/*.mjs", "test/e2e/*.mjs"],
+          allowDefaultProject: [
+            "eslint.config.js",
+            "scripts/*.mjs",
+            "test/e2e/*.mjs",
+            "src/infrastructure/navigation/parser-worker-bootstrap.mjs",
+          ],
         },
         tsconfigRootDir: import.meta.dirname,
       },

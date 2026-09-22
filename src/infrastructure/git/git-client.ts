@@ -1,3 +1,4 @@
+import { navigationPathspecs } from "../../shared/navigation-packs.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { TextDecoder } from "node:util";
@@ -11,6 +12,10 @@ import type {
   TreeEntryKind,
 } from "../../domain/models.js";
 import {
+  GIT_OBJECT_ID_PATTERN,
+  NAVIGATION_LOOKUP_MS,
+  NAVIGATION_BATCH_FILES,
+  NAVIGATION_BATCH_BYTES,
   MAX_MARKDOWN_ASSET_BYTES,
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
@@ -50,6 +55,41 @@ export interface BlobContent {
   entryKind: TreeEntryKind;
   oid: string | null;
   normalizedLineEndings: boolean;
+}
+
+function decodeTextBlob(entry: TreeEntry, buffer: Buffer): BlobContent {
+  if (buffer.includes(0)) {
+    return {
+      availability: "binary",
+      text: null,
+      byteLength: buffer.length,
+      entryKind: entry.kind,
+      oid: entry.oid,
+      normalizedLineEndings: false,
+    };
+  }
+  let decoded: string;
+  try {
+    decoded = utf8Fatal.decode(buffer);
+  } catch {
+    return {
+      availability: "binary",
+      text: null,
+      byteLength: buffer.length,
+      entryKind: entry.kind,
+      oid: entry.oid,
+      normalizedLineEndings: false,
+    };
+  }
+  const normalized = decoded.replace(/\r\n?/g, "\n");
+  return {
+    availability: "available",
+    text: normalized,
+    byteLength: buffer.length,
+    entryKind: entry.kind,
+    oid: entry.oid,
+    normalizedLineEndings: normalized !== decoded,
+  };
 }
 
 export interface RepositoryAsset {
@@ -539,38 +579,61 @@ export class GitClient {
       cwd,
       maxStdoutBytes: MAX_TEXT_DOCUMENT_BYTES + 1,
     });
-    if (content.stdout.includes(0)) {
-      return {
-        availability: "binary",
-        text: null,
-        byteLength: content.stdout.length,
-        entryKind: entry.kind,
-        oid: entry.oid,
-        normalizedLineEndings: false,
-      };
+    return decodeTextBlob(entry, content.stdout);
+  }
+
+  /** Read only verified blob OIDs, with strict framing and bounded output. No path expressions. */
+  async readBlobDocuments(
+    cwd: string,
+    entries: readonly TreeEntry[],
+    signal?: AbortSignal,
+  ): Promise<Map<string, BlobContent>> {
+    const unique = [...new Map(entries.map((entry) => [entry.oid, entry])).values()];
+    if (unique.length === 0) return new Map();
+    if (
+      unique.length > NAVIGATION_BATCH_FILES ||
+      unique.some(
+        (entry) =>
+          !GIT_OBJECT_ID_PATTERN.test(entry.oid) ||
+          entry.kind !== "file" ||
+          entry.type !== "blob" ||
+          entry.size === null ||
+          entry.size < 0 ||
+          entry.size > MAX_TEXT_DOCUMENT_BYTES,
+      ) ||
+      unique.reduce((bytes, entry) => bytes + entry.size!, 0) > NAVIGATION_BATCH_BYTES
+    ) {
+      throw new RvwError("INVALID_INPUT", "blob batchの対象またはサイズが不正です。");
     }
-    let decoded: string;
-    try {
-      decoded = utf8Fatal.decode(content.stdout);
-    } catch {
-      return {
-        availability: "binary",
-        text: null,
-        byteLength: content.stdout.length,
-        entryKind: entry.kind,
-        oid: entry.oid,
-        normalizedLineEndings: false,
-      };
+    const result = await runProcess("git", ["cat-file", "--batch"], {
+      cwd,
+      ...(signal ? { signal } : {}),
+      input: unique.map((entry) => entry.oid).join("\n") + "\n",
+      maxStdoutBytes: NAVIGATION_BATCH_BYTES + 8192,
+      timeoutMs: NAVIGATION_LOOKUP_MS,
+    });
+    const documents = new Map<string, BlobContent>();
+    let offset = 0;
+    for (const entry of unique) {
+      const newline = result.stdout.indexOf(10, offset);
+      const expected = `${entry.oid} blob ${entry.size}`;
+      const end = newline + 1 + entry.size!;
+      if (
+        newline < 0 ||
+        result.stdout.subarray(offset, newline).toString("ascii") !== expected ||
+        result.stdout[end] !== 10
+      ) {
+        throw new RvwError(
+          "PROCESS_FAILED",
+          "Git blob batchの結果が要求したobjectと一致しません。",
+        );
+      }
+      documents.set(entry.oid, decodeTextBlob(entry, result.stdout.subarray(newline + 1, end)));
+      offset = end + 1;
     }
-    const normalized = decoded.replace(/\r\n?/g, "\n");
-    return {
-      availability: "available",
-      text: normalized,
-      byteLength: content.stdout.length,
-      entryKind: entry.kind,
-      oid: entry.oid,
-      normalizedLineEndings: normalized !== decoded,
-    };
+    if (offset !== result.stdout.length)
+      throw new RvwError("PROCESS_FAILED", "Git blob batchに余分な出力があります。");
+    return documents;
   }
 
   async readRepositoryAsset(
@@ -599,6 +662,57 @@ export class GitClient {
       maxStdoutBytes: MAX_MARKDOWN_ASSET_BYTES + 1,
     });
     return { content: content.stdout, oid: entry.oid, byteLength: content.stdout.length };
+  }
+
+  /** File names only: line-result limits must not hide definitions behind many usages.
+   * -a avoids working-tree attributes affecting a search of an immutable commit.
+   * Tree entries and the blob decoder still reject binary/oversized parser input.
+   */
+  async navigationPaths(
+    cwd: string,
+    oid: string,
+    names: string[],
+    language: string,
+    signal?: AbortSignal,
+  ): Promise<{ paths: Set<string>; truncated: boolean }> {
+    if (!GIT_OBJECT_ID_PATTERN.test(oid) || names.length === 0)
+      throw new RvwError("INVALID_INPUT", "定義探索のcommitまたは名前が不正です。");
+    const result = await runProcess(
+      "git",
+      [
+        "grep",
+        "--full-name",
+        "--no-color",
+        "-l",
+        "-z",
+        "-a",
+        "-F",
+        "--no-textconv",
+        ...names.flatMap((name) => ["-e", name]),
+        oid,
+        "--",
+        ...navigationPathspecs(language),
+      ],
+      {
+        cwd,
+        ...(signal ? { signal } : {}),
+        allowExitCodes: [1],
+        timeoutMs: NAVIGATION_LOOKUP_MS,
+        maxStdoutBytes: MAX_SEARCH_STDOUT_BYTES,
+        truncateStdout: true,
+      },
+    );
+    // Ignore a trailing partial filename when stdout is truncated.
+    const records = result.stdout.toString("utf8").split("\0");
+    records.pop();
+    return {
+      paths: new Set(
+        records
+          .filter((name) => name.startsWith(oid + ":"))
+          .map((name) => name.slice(oid.length + 1)),
+      ),
+      truncated: result.stdoutTruncated,
+    };
   }
 
   async search(

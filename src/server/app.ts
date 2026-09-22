@@ -273,6 +273,23 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     context.json({ ok: true, ...(await service.getPullRequestView(context.req.param("id"))) }),
   );
 
+  app.get("/api/pull-requests/:id/definitions", async (context) => {
+    const sourceOid = oidQuery(context.req.query("sourceOid"), "sourceOid");
+    const filePath = z.string().min(1).max(4096).parse(context.req.query("path"));
+    const line = z.coerce.number().int().min(1).max(1_000_000).parse(context.req.query("line"));
+    const column = z.coerce.number().int().min(1).max(1_000_000).parse(context.req.query("column"));
+    return context.json({
+      ok: true,
+      ...(await service.findDefinitions(
+        context.req.param("id"),
+        sourceOid,
+        filePath,
+        line,
+        column,
+      )),
+    });
+  });
+
   app.get("/api/pull-requests/:id/tree", async (context) => {
     const oid = oidQuery(context.req.query("oid"), "oid");
     return context.json({ ok: true, ...(await service.getTree(context.req.param("id"), oid)) });

@@ -1,3 +1,5 @@
+import { useCodeNavigation } from "./CodeNavigation.js";
+import { supportsCodeNavigation, type NavigationTarget } from "../../domain/code-navigation.js";
 import {
   MarkdownCommentContainer,
   MarkdownCommentContainerContext,
@@ -15,6 +17,8 @@ import type {
   File as FileRendererInstance,
   FileDiff as DiffRendererInstance,
   PostRenderPhase,
+  TokenEventBase,
+  DiffTokenEventBaseProps,
 } from "@pierre/diffs";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -1017,7 +1021,9 @@ export function DocumentViewer({
   onOpenSelectedRangeFile,
   onReresolveSourceReference,
   onOpenStructureReference,
+  onOpenDefinition,
 }: {
+  onOpenDefinition: (target: NavigationTarget, right: boolean) => void;
   pullRequestId: string;
   paneId: DocumentPaneId;
   latestHeadOid: string;
@@ -1055,6 +1061,7 @@ export function DocumentViewer({
   if (activeDocument.kind === "walkthrough" || activeDocument.kind === "structure") {
     throw new Error("この文書は専用Viewerで表示してください。");
   }
+  const codeNavigation = useCodeNavigation(onOpenDefinition);
   const queryClient = useQueryClient();
   const markdownCapable =
     activeDocument.kind === "pull-request-markdown" ||
@@ -1372,6 +1379,20 @@ export function DocumentViewer({
       new: diffQuery.data?.new?.ref ?? null,
     };
   }, [effectiveDisplayMode, fullRef, diffQuery.data, repositoryImageRefs]);
+  const handleFullTokenClick = useCallback(
+    (token: TokenEventBase, event: MouseEvent) =>
+      codeNavigation.onTokenClick(fullRef, token, event),
+    [codeNavigation.onTokenClick, fullRef],
+  );
+  const handleDiffTokenClick = useCallback(
+    (token: DiffTokenEventBaseProps, event: MouseEvent) =>
+      codeNavigation.onTokenClick(
+        token.side === "deletions" ? renderedRefs.old : renderedRefs.new,
+        token,
+        event,
+      ),
+    [codeNavigation.onTokenClick, renderedRefs],
+  );
   const placementDestinations = useMemo(
     () =>
       [renderedRefs.new, renderedRefs.old].flatMap((ref) =>
@@ -2301,6 +2322,10 @@ export function DocumentViewer({
   };
   return (
     <div className="document-viewer">
+      {codeNavigation.panel}
+      {activeDocument.kind === "repository-file" && supportsCodeNavigation(activeDocument.path) && (
+        <div className="code-navigation-hint">⌘ / Ctrl + clickで定義候補を表示</div>
+      )}
       <ErrorNotice error={annotationQuery.error} />
       {staleReference && referenceStaleness && (
         <div className="reference-fallback-banner reference-stale-banner" role="status">
@@ -2465,6 +2490,13 @@ export function DocumentViewer({
                 themeType: themePreference,
                 unsafeCSS: viewerUnsafeCss,
                 onPostRender: handleFullPostRender,
+                ...(fullRef.kind === "repository-file" && supportsCodeNavigation(fullRef.path)
+                  ? {
+                      onTokenClick: handleFullTokenClick,
+                      onTokenEnter: codeNavigation.onTokenEnter,
+                      onTokenLeave: codeNavigation.onTokenLeave,
+                    }
+                  : {}),
               }}
             />
           ) : (
@@ -2496,6 +2528,14 @@ export function DocumentViewer({
                 themeType: themePreference,
                 unsafeCSS: viewerUnsafeCss,
                 onPostRender: handleDiffPostRender,
+                ...(activeDocument.kind === "repository-file" &&
+                supportsCodeNavigation(activeDocument.path)
+                  ? {
+                      onTokenClick: handleDiffTokenClick,
+                      onTokenEnter: codeNavigation.onTokenEnter,
+                      onTokenLeave: codeNavigation.onTokenLeave,
+                    }
+                  : {}),
               }}
             />
             {hideWhitespace && renderedDiff.hunks.length === 0 && (

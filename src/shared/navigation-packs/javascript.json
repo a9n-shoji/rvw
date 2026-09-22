@@ -1,0 +1,28 @@
+{
+  "id": "javascript",
+  "family": "javascript",
+  "extensions": [".js", ".jsx", ".mjs", ".cjs"],
+  "filenames": [],
+  "grammar": "tree-sitter-javascript/tree-sitter-javascript.wasm",
+  "queries": [
+    "tree-sitter-javascript/queries/tags.scm",
+    "./queries/javascript.scm",
+    "tree-sitter-javascript/queries/locals.scm",
+    "./queries/javascript-context.scm"
+  ],
+  "relativeImportSuffixes": [
+    "",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+    "/index.ts",
+    "/index.tsx",
+    "/index.js",
+    "/index.jsx"
+  ]
+}

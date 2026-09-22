@@ -3015,6 +3015,19 @@ export function PullRequestReviewScreen({
           <LazyLoadBoundary label="文書ビューアー">
             <Suspense fallback={<div className="viewer-loading">文書を準備しています…</div>}>
               <DocumentViewer
+                onOpenDefinition={(target, right) =>
+                  navigateToDocument(
+                    {
+                      kind: "repository-file",
+                      path: target.document.path,
+                      sourceOid: target.document.sourceOid,
+                      comparisonPolicy: "exact-source",
+                    },
+                    right ? "right" : "left",
+                    { kind: "line", line: target.line },
+                    true,
+                  )
+                }
                 key={`${reviewStateRevision}:${draftWorkspaceRevision}:${paneId}:${paneSelectedOid}:${paneOldOid ?? ""}:${paneViewerState.effectiveDisplayMode}:${documentTabKey(paneViewerDocument)}:${paneViewerDocument.kind === "repository-file" ? `${paneViewerDocument.sourceOid ?? ""}:${paneViewerDocument.comparisonPolicy ?? ""}:${paneViewerDocument.referenceContext?.latestHeadOid ?? ""}` : ""}`}
                 pullRequestId={pullRequest.id}
                 paneId={paneId}
