@@ -6,7 +6,12 @@ export interface ScopedSymbol extends SymbolTag {
   scope: number;
 }
 export interface SymbolContext {
-  scopes: { id: number; parent: number | null; inherits: boolean }[];
+  scopes: {
+    id: number;
+    parent: number | null;
+    inherits: boolean;
+    range: { startLine: number; startColumn: number; endLine: number; endColumn: number } | null;
+  }[];
   definitions: ScopedSymbol[];
   references: ScopedSymbol[];
   imports: { localName: string; importedName: string; source: string; scope: number }[];
@@ -51,11 +56,17 @@ export function extractContext(
   };
   const context: SymbolContext = {
     scopes: [
-      { id: 0, parent: null, inherits: false },
+      { id: 0, parent: null, inherits: false, range: null },
       ...[...scopes.values()].map(({ node, inherits }) => ({
         id: node.id,
         parent: scopeOf(node.parent),
         inherits,
+        range: {
+          startLine: node.startPosition.row + 1,
+          startColumn: node.startPosition.column + 1,
+          endLine: node.endPosition.row + 1,
+          endColumn: node.endPosition.column + 1,
+        },
       })),
     ],
     definitions: [],
@@ -83,10 +94,19 @@ export function extractContext(
   for (const match of bounded) {
     for (const capture of match.captures) {
       if (capture.name === "context.nonlocal") excluded.add(capture.node.id);
-      if (capture.name === "local.definition" || capture.name === "local.reference") {
-        const definition = capture.name === "local.definition";
+      if (
+        capture.name === "local.definition" ||
+        capture.name === "local.definition.outer" ||
+        capture.name === "local.reference"
+      ) {
+        const definition = capture.name !== "local.reference";
         const value = symbol(capture.node, definition);
-        if (value) (definition ? definitions : references).set(capture.node.id, value);
+        if (value) {
+          // A declaration binds in its containing scope, not its own function scope.
+          if (capture.name === "local.definition.outer")
+            value.scope = scopeOf(capture.node.parent?.parent ?? null);
+          (definition ? definitions : references).set(capture.node.id, value);
+        }
       }
     }
     const imported = match.captures.find((capture) => capture.name === "import.name")?.node;
@@ -121,4 +141,28 @@ export function visibleScopes(context: SymbolContext, scope: number): number[] {
     current = byId.get(current.parent);
   }
   return result;
+}
+
+/** Scope for syntax tags (including type positions), independent of value references. */
+export function scopeAtPosition(context: SymbolContext, line: number, column: number): number {
+  let innermost = context.scopes[0]!;
+  for (const scope of context.scopes) {
+    const r = scope.range;
+    if (
+      !r ||
+      line < r.startLine ||
+      line > r.endLine ||
+      (line === r.startLine && column < r.startColumn) ||
+      (line === r.endLine && column >= r.endColumn)
+    )
+      continue;
+    const previous = innermost.range;
+    if (
+      !previous ||
+      r.startLine > previous.startLine ||
+      (r.startLine === previous.startLine && r.startColumn >= previous.startColumn)
+    )
+      innermost = scope;
+  }
+  return innermost.id;
 }

@@ -6,7 +6,7 @@ Tree-sitter WASMと標準言語の構文queryを同梱し、外部LSPや言語�
 対象は表示中のGit commitのblobのみ。dirty working tree、未追跡file、外部gemやnode_modulesを探索しない。
 diff削除側はold sourceOid、追加側はnew sourceOidを使う。
 
-local候補がなければ、commit指定の `git grep -l -z -a -F --no-textconv` で識別子を含むfile名を取得し、
+local候補と通常の定義候補を統合する。commit指定の `git grep -l -z -a -F --no-textconv` で識別子を含むfile名を取得し、
 標準言語設定の拡張子・basenameから導出した `:(top,glob)` pathspecで同じfamilyのsourceだけを検索し、Tree-sitterで宣言だけを抽出する。
 Gemfile / Rakefileはrootとsubdirectoryの両方を対象にする。利用者由来のpathをpathspecとして挿入しない。
 同じfamilyの拡張子を持つvendor fileやbinaryはgrepの対象に残り、binaryの解析はblob decoderが拒否する。grepの文字列一致自体は候補として返さない。
@@ -29,9 +29,11 @@ search-firstは毎回Git検索を行う代わりに、必要なblobだけを解�
 ReactはJSX/TSXとして扱い、function / arrow componentやmemo等へ代入した変数を探索できる。
 RubyとJS familyの同名候補は混ぜない。JS / TS / JSX / TSXは横断する。
 
-- local参照は、最も近い可視scopeの同名代入・引数に絞る。複数代入はすべて候補に残す。
+- local参照は、取得できたbindingのうち最も近い可視scopeを優先し、同じfileの既知の外側bindingは除く。複数代入はすべて候補に残す。contextがpartialならこの除外は行わない。
+- JS/TSのfunction / class宣言名は宣言の外側scopeへ登録する。local候補だけで探索を打ち切らず、locals queryで扱っていない通常定義も残す。
 - `import { Button as Action } from "./Button"` のような相対named importは別名も含めてfile候補を優先する。他の同名候補は残す。
-- 優先順は相対import先、同じfile、同じ言語設定、同じfamily。型と値の区別を推測して候補を削除しない。
+- local候補を先頭に置き、通常定義の優先順は相対import先、同じfile、同じ言語設定、同じfamily。型と値の区別を推測して候補を削除しない。
+- 型位置でもクリック位置のlexical scopeから相対named importを照合する。`import type`も同様。type identifierをvalueのlocal参照へ混ぜず、型・値のnamespaceは解決しない。
 - UIにはlocalの根拠を「同じスコープ」、相対importの根拠を「import先」として表示する。
 - 1件でも「定義候補」とし、自動ジャンプやsemanticにexactという扱いはしない。クリックした宣言自身だけを除外する。
 

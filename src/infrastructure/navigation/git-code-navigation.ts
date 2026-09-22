@@ -11,7 +11,7 @@ import { RvwError } from "../../shared/errors.js";
 import type { BlobContent, GitClient } from "../git/git-client.js";
 import { ParserWorkerClient } from "./parser-worker-client.js";
 import type { BlobSymbols, SymbolTag } from "./tree-sitter-tags.js";
-import { visibleScopes } from "./symbol-context.js";
+import { scopeAtPosition, visibleScopes } from "./symbol-context.js";
 import { navigationPack } from "../../shared/navigation-packs.js";
 import path from "node:path";
 import {
@@ -111,7 +111,7 @@ export class GitCodeNavigation {
   private async search(
     repository: string,
     sourceOid: string,
-    current: { entry: TreeEntry; symbols: BlobSymbols },
+    current: { entry: TreeEntry; symbols: BlobSymbols; tags: SymbolTag[] },
     names: string[],
     comparePaths: (a: string, b: string) => number,
     compare: (a: Candidate, b: Candidate) => number,
@@ -120,9 +120,9 @@ export class GitCodeNavigation {
     const language = navigationLanguage(current.entry.path)!;
     const result: SearchCandidates = { definitions: [], skippedFiles: 0, issues: [] };
     const issues = new Set<NavigationIssue>();
-    const collect = (entry: TreeEntry, symbols: BlobSymbols) => {
+    const collect = (entry: TreeEntry, symbols: BlobSymbols, tags = symbols.tags) => {
       for (const issue of symbols.issues) issues.add(issue);
-      for (const tag of symbols.tags)
+      for (const tag of tags)
         if (tag.kind && accepts({ path: entry.path, tag }))
           result.definitions.push({ path: entry.path, tag });
       result.definitions.sort(compare);
@@ -131,7 +131,7 @@ export class GitCodeNavigation {
     };
     // This document is already parsed. Even a truncated grep or exhausted search
     // must retain its candidates, using the same collector and ranking as other files.
-    collect(current.entry, current.symbols);
+    collect(current.entry, current.symbols, current.tags);
     const found = await this.git.navigationPaths(
       repository,
       sourceOid,
@@ -298,32 +298,25 @@ export class GitCodeNavigation {
       definitions.push(tag);
       localDefinitions.set(tag.scope, definitions);
     }
-    // The nearest scope containing declarations wins. Multiple assignments remain
-    // candidates: this is lexical context, not reaching-definition/data-flow analysis.
-    for (const scope of scopes) {
-      const locals = localDefinitions.get(scope) ?? [];
-      if (!locals.length) continue;
-      const matches = locals.filter((tag) => !atPosition(tag));
-      return {
-        ...empty,
-        symbol,
-        status: matches.length ? "possible" : "none",
-        targets: matches.slice(0, NAVIGATION_CANDIDATES).map((tag) => ({
-          document,
-          name: tag.name,
-          kind: "variable",
-          preview: tag.preview,
-          line: tag.line,
-          column: tag.column,
-          evidence: "local-scope",
-        })),
-        partial: symbols.partial,
-        issues: symbols.issues,
-        truncated: matches.length > NAVIGATION_CANDIDATES,
-      };
-    }
+    // Prefer the nearest known local bindings, but do not let incomplete locals
+    // queries suppress ordinary definitions (e.g. methods or uncaptured declarations).
+    const locals =
+      scopes.map((scope) => localDefinitions.get(scope) ?? []).find((tags) => tags.length) ?? [];
+    const positionKey = (tag: SymbolTag) => `${tag.line}:${tag.column}`;
+    const localKeys = new Set(locals.map(positionKey));
+    const knownLocalKeys = new Set((symbols.context?.definitions ?? []).map(positionKey));
+    const localCandidate = (candidate: Candidate) =>
+      candidate.path === document.path && localKeys.has(positionKey(candidate.tag));
+    // Merge through the normal bounded collector, preserving declaration kinds.
+    const currentTags = new Map(symbols.tags.map((tag) => [positionKey(tag), tag]));
+    for (const tag of locals)
+      if (!currentTags.get(positionKey(tag))?.kind) currentTags.set(positionKey(tag), tag);
     const suffixes = navigationPack(language).relativeImportSuffixes ?? [];
-    const visible = new Set(scopes);
+    const visible = new Set(
+      symbols.context
+        ? visibleScopes(symbols.context, scopeAtPosition(symbols.context, line, column))
+        : [],
+    );
     const imports = (symbols.context?.imports ?? []).filter(
       (binding) => binding.localName === symbol && visible.has(binding.scope),
     );
@@ -351,14 +344,25 @@ export class GitCodeNavigation {
     const comparePaths = (a: string, b: string) =>
       Number(preferredPaths.has(b)) - Number(preferredPaths.has(a)) || compareContext(a, b);
     const compare = (a: Candidate, b: Candidate) =>
-      Number(imported(b)) - Number(imported(a)) || compareContext(a.path, b.path);
+      Number(localCandidate(b)) - Number(localCandidate(a)) ||
+      Number(imported(b)) - Number(imported(a)) ||
+      compareContext(a.path, b.path);
     const accepts = (candidate: Candidate) =>
       (candidate.tag.name === symbol || imported(candidate)) &&
-      !(candidate.path === document.path && atPosition(candidate.tag));
+      !(candidate.path === document.path && atPosition(candidate.tag)) &&
+      // Preserve nearest-local shadowing only for bindings actually captured by
+      // the locals query; ordinary definitions still participate in the search.
+      !(
+        locals.length > 0 &&
+        !symbols.partial &&
+        candidate.path === document.path &&
+        knownLocalKeys.has(positionKey(candidate.tag)) &&
+        !localCandidate(candidate)
+      );
     const result = await this.search(
       repository,
       document.sourceOid,
-      { entry, symbols },
+      { entry, symbols, tags: [...currentTags.values()] },
       [...searchNames],
       comparePaths,
       compare,
@@ -374,7 +378,11 @@ export class GitCodeNavigation {
         preview: tag.preview,
         line: tag.line,
         column: tag.column,
-        ...(imported({ path, tag }) ? { evidence: "relative-import" as const } : {}),
+        ...(localCandidate({ path, tag })
+          ? { evidence: "local-scope" as const }
+          : imported({ path, tag })
+            ? { evidence: "relative-import" as const }
+            : {}),
       }));
     const issues = [...new Set([...symbols.issues, ...result.issues])];
     return {

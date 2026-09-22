@@ -191,6 +191,119 @@ export const identity = <T>(value: T): T => value;
     ).toEqual([2]);
   });
 
+  it.each(["js", "ts", "tsx"])(
+    "keeps inner function bindings ahead of outer locals in %s",
+    async (extension) => {
+      const { repository, index } = fixture();
+      const source = [
+        'const choose = () => "outer";',
+        "function run() {",
+        "  function choose() {",
+        '    return "inner";',
+        "  }",
+        "  return choose();",
+        "}",
+      ].join("\n");
+      const file = `caller.${extension}`;
+      const oid = commitFile(repository, file, source, "function shadowing");
+      const result = await index.definitions(repository, document(oid, file), 6, 10);
+      expect(result.status).toBe("possible");
+      expect(result.targets[0]).toMatchObject({
+        line: 3,
+        kind: "function",
+        evidence: "local-scope",
+      });
+      expect(result.targets.some((target) => target.line === 1)).toBe(false);
+      const declaration = await index.definitions(repository, document(oid, file), 3, 12);
+      expect(declaration.targets.some((target) => target.line === 3)).toBe(false);
+      index.close();
+    },
+  );
+
+  it("preserves nearest variables and class bindings while keeping uncaptured definitions", async () => {
+    const { repository, index } = fixture();
+    commitFile(repository, "other.js", "export function choose() {}\n", "ordinary definition");
+    const oid = commitFile(
+      repository,
+      "caller.js",
+      [
+        "const value = 1;",
+        "function run() {",
+        "  const value = 2;",
+        "  return value;",
+        "}",
+        "const Model = other;",
+        "function create() {",
+        "  class Model {}",
+        "  return new Model();",
+        "}",
+        "const choose = unknown;",
+        "class Service { choose() {} }",
+        "choose();",
+      ].join("\n"),
+      "mixed bindings",
+    );
+    expect(
+      (await index.definitions(repository, document(oid, "caller.js"), 4, 10)).targets.map(
+        (t) => t.line,
+      ),
+    ).toEqual([3]);
+    expect(
+      (await index.definitions(repository, document(oid, "caller.js"), 9, 14)).targets[0],
+    ).toMatchObject({ line: 8, kind: "class" });
+    const mixed = await index.definitions(repository, document(oid, "caller.js"), 13, 1);
+    expect(mixed.targets.map((t) => [t.document.path, t.line])).toEqual([
+      ["caller.js", 11],
+      ["caller.js", 12],
+      ["other.js", 1],
+    ]);
+    index.close();
+  });
+
+  it.each(["import", "import type"])(
+    "uses %s aliases in type positions without value-local interference",
+    async (keyword) => {
+      const { repository, index } = fixture();
+      commitFile(repository, "model.ts", "export class Model {}\n", "model");
+      const oid = commitFile(
+        repository,
+        "caller.ts",
+        [
+          `${keyword} { Model as Item } from "./model";`,
+          ...(keyword === "import" ? ["const instance = new Item();"] : ["// type-only import"]),
+          "let value: Item;",
+          "function run(Item: unknown) {",
+          "  let nested: Item;",
+          "  return Item;",
+          "}",
+        ].join("\n"),
+        "typed aliases",
+      );
+      const positions = [
+        [3, 12],
+        [5, 15],
+      ];
+      if (keyword === "import") positions.push([2, 22]);
+      for (const [line, column] of positions) {
+        const result = await index.definitions(
+          repository,
+          document(oid, "caller.ts"),
+          line!,
+          column!,
+        );
+        expect(result.status).toBe("possible");
+        expect(result.targets[0]).toMatchObject({
+          name: "Model",
+          evidence: "relative-import",
+          document: { path: "model.ts", sourceOid: oid },
+        });
+      }
+      const value = await index.definitions(repository, document(oid, "caller.ts"), 6, 10);
+      expect(value.targets[0]).toMatchObject({ line: 4, evidence: "local-scope" });
+      index.close();
+    },
+  );
+
   it("ranks relative named imports, handles aliases and resolves reused blobs relative to each path", async () => {
     const { repository, index, extract } = fixture();
     mkdirSync(repository + "/a");
