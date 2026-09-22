@@ -111,43 +111,68 @@ export class GitCodeNavigation {
   private async search(
     repository: string,
     sourceOid: string,
-    language: NavigationLanguage,
+    current: { entry: TreeEntry; symbols: BlobSymbols },
     names: string[],
-    preferredPaths: Set<string>,
+    comparePaths: (a: string, b: string) => number,
     compare: (a: Candidate, b: Candidate) => number,
     accepts: (candidate: Candidate) => boolean,
   ): Promise<SearchCandidates> {
+    const language = navigationLanguage(current.entry.path)!;
+    const result: SearchCandidates = { definitions: [], skippedFiles: 0, issues: [] };
+    const issues = new Set<NavigationIssue>();
+    const collect = (entry: TreeEntry, symbols: BlobSymbols) => {
+      for (const issue of symbols.issues) issues.add(issue);
+      for (const tag of symbols.tags)
+        if (tag.kind && accepts({ path: entry.path, tag }))
+          result.definitions.push({ path: entry.path, tag });
+      result.definitions.sort(compare);
+      // One extra candidate is sufficient to report a truncated response.
+      result.definitions.length = Math.min(result.definitions.length, NAVIGATION_CANDIDATES + 1);
+    };
+    // This document is already parsed. Even a truncated grep or exhausted search
+    // must retain its candidates, using the same collector and ranking as other files.
+    collect(current.entry, current.symbols);
     const found = await this.git.navigationPaths(
       repository,
       sourceOid,
       names,
+      language,
       this.shutdown.signal,
     );
+    if (found.truncated) issues.add("search-limit");
     const family = navigationFamily(language);
     const entries = (await this.git.tree(repository, sourceOid)).filter((entry) => {
       const id = navigationLanguage(entry.path);
-      return found.paths.has(entry.path) && id !== null && navigationFamily(id) === family;
+      return (
+        entry.path !== current.entry.path &&
+        found.paths.has(entry.path) &&
+        id !== null &&
+        navigationFamily(id) === family
+      );
     });
-    // Read likely candidates first if the request exhausts its work budget.
-    entries.sort((a, b) => Number(preferredPaths.has(b.path)) - Number(preferredPaths.has(a.path)));
-    const result: SearchCandidates = {
-      definitions: [],
-      skippedFiles: 0,
-      issues: found.truncated ? ["search-limit"] : [],
-    };
-    const issues = new Set<NavigationIssue>(result.issues);
+    entries.sort((a, b) => comparePaths(a.path, b.path));
     const deadline = performance.now() + NAVIGATION_LOOKUP_MS;
-    let bytes = 0;
+    // Include the query document read. Cached/in-flight candidate blobs cost no
+    // new source work; metadata scanning is bounded by the deadline instead.
+    let bytes = current.entry.size!;
     for (let offset = 0; offset < entries.length;) {
       this.assertOpen();
-      if (performance.now() > deadline || bytes >= NAVIGATION_LOOKUP_BYTES) {
+      if (performance.now() > deadline) {
         issues.add("search-limit");
         result.skippedFiles += entries.length - offset;
         break;
       }
       const batch: TreeEntry[] = [];
+      const uncached: TreeEntry[] = [];
+      // Pin reused values/promises through this bounded batch so an LRU eviction
+      // cannot cause an unbudgeted read later. Also share work across copied paths.
+      const work = new Map<string, BlobSymbols | Promise<BlobSymbols> | undefined>();
       let batchBytes = 0;
-      while (offset < entries.length && batch.length < NAVIGATION_BATCH_FILES) {
+      while (
+        offset < entries.length &&
+        batch.length < NAVIGATION_BATCH_FILES &&
+        performance.now() <= deadline
+      ) {
         const entry = entries[offset]!;
         if (entry.kind !== "file" || entry.size === null || entry.size > MAX_TEXT_DOCUMENT_BYTES) {
           offset++;
@@ -155,23 +180,33 @@ export class GitCodeNavigation {
           result.skippedFiles++;
           continue;
         }
-        if (batchBytes + entry.size > NAVIGATION_BATCH_BYTES) break;
-        if (bytes + entry.size > NAVIGATION_LOOKUP_BYTES) {
-          issues.add("search-limit");
-          result.skippedFiles += entries.length - offset;
-          offset = entries.length;
-          break;
+        const key = this.blobKey(entry);
+        if (!work.has(key)) {
+          const reused =
+            key === this.blobKey(current.entry)
+              ? current.symbols
+              : (this.cachedSymbols(key) ?? this.parsing.get(key));
+          if (!reused) {
+            if (bytes + entry.size > NAVIGATION_LOOKUP_BYTES) {
+              offset++;
+              issues.add("search-limit");
+              result.skippedFiles++;
+              // Later entries can still be cached or fit the remaining budget.
+              continue;
+            }
+            if (batchBytes + entry.size > NAVIGATION_BATCH_BYTES) break;
+            bytes += entry.size;
+            batchBytes += entry.size;
+            uncached.push(entry);
+          }
+          work.set(key, reused);
         }
         offset++;
-        bytes += entry.size;
-        batchBytes += entry.size;
         batch.push(entry);
       }
       const documents = await this.git.readBlobDocuments(
         repository,
-        batch.filter(
-          (entry) => !this.blobs.has(this.blobKey(entry)) && !this.parsing.has(this.blobKey(entry)),
-        ),
+        uncached,
         this.shutdown.signal,
       );
       for (let position = 0; position < batch.length; position++) {
@@ -184,23 +219,12 @@ export class GitCodeNavigation {
         }
         const entry = batch[position]!;
         const key = this.blobKey(entry);
-        const cached = this.cachedSymbols(key) ?? (await this.parsing.get(key));
-        const content = cached
-          ? null
-          : (documents.get(entry.oid) ??
-            (await this.git.readBlobDocuments(repository, [entry], this.shutdown.signal)).get(
-              entry.oid,
-            )!);
-        const symbols = cached ?? (await this.symbols(entry, content!));
-        for (const issue of symbols.issues) issues.add(issue);
-        for (const tag of symbols.tags)
-          if (tag.kind && accepts({ path: entry.path, tag }))
-            result.definitions.push({ path: entry.path, tag });
-        // One extra candidate is sufficient to report a truncated response.
-        result.definitions.sort(compare);
-        if (result.definitions.length > NAVIGATION_CANDIDATES + 1) {
-          result.definitions.length = NAVIGATION_CANDIDATES + 1;
+        let symbols = work.get(key);
+        if (!symbols) {
+          symbols = this.symbols(entry, documents.get(entry.oid)!);
+          work.set(key, symbols);
         }
+        collect(entry, await symbols);
       }
     }
     result.issues = [...issues];
@@ -321,20 +345,22 @@ export class GitCodeNavigation {
     );
     const imported = (candidate: Candidate) =>
       hints.has(JSON.stringify([candidate.path, candidate.tag.name]));
+    const compareContext = (a: string, b: string) =>
+      Number(b === document.path) - Number(a === document.path) ||
+      Number(navigationLanguage(b) === language) - Number(navigationLanguage(a) === language);
+    const comparePaths = (a: string, b: string) =>
+      Number(preferredPaths.has(b)) - Number(preferredPaths.has(a)) || compareContext(a, b);
     const compare = (a: Candidate, b: Candidate) =>
-      Number(imported(b)) - Number(imported(a)) ||
-      Number(b.path === document.path) - Number(a.path === document.path) ||
-      Number(navigationLanguage(b.path) === language) -
-        Number(navigationLanguage(a.path) === language);
+      Number(imported(b)) - Number(imported(a)) || compareContext(a.path, b.path);
     const accepts = (candidate: Candidate) =>
       (candidate.tag.name === symbol || imported(candidate)) &&
       !(candidate.path === document.path && atPosition(candidate.tag));
     const result = await this.search(
       repository,
       document.sourceOid,
-      language,
+      { entry, symbols },
       [...searchNames],
-      preferredPaths,
+      comparePaths,
       compare,
       accepts,
     );

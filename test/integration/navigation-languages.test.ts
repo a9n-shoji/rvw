@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { navigationLanguage } from "../../src/domain/code-navigation.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import { GitCodeNavigation } from "../../src/infrastructure/navigation/git-code-navigation.js";
@@ -34,6 +34,38 @@ describe("language-independent Git navigation", () => {
     expect(navigationLanguage("a.tsx")).toBe("tsx");
     expect(navigationLanguage("app/Gemfile")).toBe("ruby");
     expect(navigationLanguage("a.vue")).toBeNull();
+  });
+
+  it("restricts Git grep itself to family extensions and basenames at any depth", async () => {
+    const { repository } = fixture();
+    mkdirSync(repository + "/nested");
+    const ruby = [
+      "a.rb",
+      "nested/a.rake",
+      "a.gemspec",
+      "Gemfile",
+      "Rakefile",
+      "nested/Gemfile",
+      "nested/Rakefile",
+      "odd:line\n[glob]*?.rb",
+    ];
+    const js = ["a.js", "nested/a.jsx", "a.mjs", "a.cjs", "a.ts", "nested/a.tsx", "a.mts", "a.cts"];
+    for (const file of [...ruby, ...js, "Gemfile.lock", "asset.svg", "vendor.txt"])
+      writeFileSync(repository + "/" + file, "Needle");
+    writeFileSync(repository + "/asset.bin", Buffer.from("Needle\0binary"));
+    git(repository, "add", ".");
+    git(repository, "commit", "-m", "families");
+    const oid = git(repository, "rev-parse", "HEAD");
+    writeFileSync(repository + "/.gitattributes", "* -diff\n");
+    git(repository, "config", "color.grep", "always");
+    const client = new GitClient();
+    expect((await client.navigationPaths(repository, oid, ["Needle"], "ruby")).paths).toEqual(
+      new Set(ruby),
+    );
+    for (const language of ["javascript", "typescript", "tsx"])
+      expect((await client.navigationPaths(repository, oid, ["Needle"], language)).paths).toEqual(
+        new Set(js),
+      );
   });
 
   it("extracts JS/JSX functions, classes, arrow components, wrapped components and dollar identifiers", async () => {

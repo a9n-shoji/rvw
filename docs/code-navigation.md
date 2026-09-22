@@ -7,7 +7,9 @@ Tree-sitter WASMと標準言語の構文queryを同梱し、外部LSPや言語�
 diff削除側はold sourceOid、追加側はnew sourceOidを使う。
 
 local候補がなければ、commit指定の `git grep -l -z -a -F --no-textconv` で識別子を含むfile名を取得し、
-同じ言語familyのGit tree entryへ絞り、Tree-sitterで宣言だけを抽出する。grepの文字列一致自体は候補として返さない。
+標準言語設定の拡張子・basenameから導出した `:(top,glob)` pathspecで同じfamilyのsourceだけを検索し、Tree-sitterで宣言だけを抽出する。
+Gemfile / Rakefileはrootとsubdirectoryの両方を対象にする。利用者由来のpathをpathspecとして挿入しない。
+同じfamilyの拡張子を持つvendor fileやbinaryはgrepの対象に残り、binaryの解析はblob decoderが拒否する。grepの文字列一致自体は候補として返さない。
 相対named importの別名では元の名前も検索する。行検索の件数上限による取りこぼしを避けるため、既存の行検索APIとは別にfile名を取得する。
 `-a` と `--no-textconv` によりworking treeの属性やtextconv設定を検索結果へ持ち込まない。binaryの除外はblob decoderで行う。
 
@@ -61,6 +63,14 @@ popupはlayoutを押し広げず、長いpathを折り返し、候補多数な�
 `GitCodeNavigation`が言語ID + blob OIDのLRU cacheと同時parseの共有を持つ。
 cacheにpathやcommitを入れず、rename/copyでも再利用する。grammarが変わる拡張子変更では再解析する。
 queryごとにsource commitのtreeと結合し、SQLiteへ派生索引を保存しない。
+current documentの解析済みsymbolsは共通の候補収集処理へ先に渡し、grepのtruncationや探索budgetで失わないようにする。
+残りのfileは相対import先、同じ言語設定、同じfamilyの順で解析する。最終候補のsame-file優先と合わせて、重要な候補を先に確保する。
+
+lookup byte budgetは、このrequestが新しくread / parseするsource量を対象にする。query documentの実際の読み取りも1回分含める。
+候補のcache hit・共有中のparseは加算せず、同じbatchのコピーも言語ID + blob OID単位で一度だけ処理する。
+batch中は再利用するsymbols / promiseを保持し、LRUからのevictionで未計上の読み直しが起こらないようにする。
+byte budgetに入らないfileはskipするが、後続のcached entryや残量に入るfileは引き続き見る。
+cached metadataの走査は10秒deadlineで制限する。Git検索・tree列挙には既存のprocess制限を使う。
 Git読み取りはfull OIDとbatch framingを検証し、Viewerと同じUTF-8判定・改行正規化を使う。
 
 parserは遅延起動する専用workerで動かす。timeout、crash、不正replyは実行中のjobだけを失敗させる。
@@ -80,7 +90,7 @@ cacheのbyte数はserialized metadataであり、JS object / WASMの実メモリ
 | 制限                                   | 現在値                        | 理由                                                                                     |
 | -------------------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
 | file                                   | 1 MiB                         | 既存Viewerと共通。未知の入力のparse・転送量を制限                                        |
-| 1探索のsource / 解析走査時間           | 16 MiB / 10秒                 | 広い名前による全repository解析と長時間待機を制限。partialを返す                          |
+| 1探索の新規source / 解析走査時間       | 16 MiB / 10秒                 | 広い名前による全repository解析と長時間待機を制限。partialを返す                          |
 | blob cache                             | 16 MiB                        | processに残る派生metadataの量を制限。別のentry数上限は持たない                           |
 | 同時lookup / worker待機                | 各8                           | Git processの多重起動と未解析textの滞留を制限。共通のconcurrency値                       |
 | 表示候補                               | 100                           | 応答とpopupの量を制限。順位付き100件と超過判定用1件だけ保持                              |

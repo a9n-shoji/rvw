@@ -29,3 +29,19 @@ export function navigationPack(id: string): NavigationLanguagePack {
   if (!pack) throw new Error(`Unsupported navigation language pack: ${id}`);
   return pack;
 }
+
+/** Git wildmatch pathspecs derived only from our bundled source-file settings. */
+export function navigationPathspecs(language: string): string[] {
+  const family = navigationPack(language).family;
+  const escape = (value: string) => value.replace(/[?*[\]\\]/g, "\\$&");
+  return [
+    ...new Set(
+      navigationPacks
+        .filter((pack) => pack.family === family)
+        .flatMap((pack) => [
+          ...pack.extensions.map((extension) => `:(top,glob)**/*${escape(extension)}`),
+          ...pack.filenames.map((filename) => `:(top,glob)**/${escape(filename)}`),
+        ]),
+    ),
+  ];
+}

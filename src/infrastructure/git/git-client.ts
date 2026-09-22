@@ -1,3 +1,4 @@
+import { navigationPathspecs } from "../../shared/navigation-packs.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { TextDecoder } from "node:util";
@@ -671,6 +672,7 @@ export class GitClient {
     cwd: string,
     oid: string,
     names: string[],
+    language: string,
     signal?: AbortSignal,
   ): Promise<{ paths: Set<string>; truncated: boolean }> {
     if (!GIT_OBJECT_ID_PATTERN.test(oid) || names.length === 0)
@@ -689,6 +691,7 @@ export class GitClient {
         ...names.flatMap((name) => ["-e", name]),
         oid,
         "--",
+        ...navigationPathspecs(language),
       ],
       {
         cwd,

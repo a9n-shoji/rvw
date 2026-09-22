@@ -58,7 +58,7 @@ export const DEFAULT_PROCESS_STDERR_BYTES = 2 * 1024 * 1024;
 
 // Navigation resource budgets. Internal tuning values, not language-pack/API contracts.
 export const NAVIGATION_CACHE_BYTES = 16 * 1024 * 1024; // Retained derived blob metadata.
-export const NAVIGATION_LOOKUP_BYTES = 16 * 1024 * 1024; // Per-request source/parse work.
+export const NAVIGATION_LOOKUP_BYTES = 16 * 1024 * 1024; // Newly read/parsed source per lookup; reused metadata is free.
 export const NAVIGATION_LOOKUP_MS = 10_000; // Bound broad-name exploration.
 export const NAVIGATION_CONCURRENCY = 8; // Bound simultaneous Git work and queued parser input.
 export const NAVIGATION_CANDIDATES = 100; // Keep the popup and API response usable.
