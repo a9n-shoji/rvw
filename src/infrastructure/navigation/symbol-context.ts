@@ -1,3 +1,4 @@
+import { NAVIGATION_CAPTURES } from "../../shared/constants.js";
 import type { Node, QueryMatch } from "web-tree-sitter";
 import type { SymbolTag } from "./tree-sitter-tags.js";
 
@@ -26,7 +27,7 @@ export function extractContext(
     if (!match.captures.some((capture) => /^(local\.|import\.|context\.)/.test(capture.name)))
       continue;
     count += match.captures.length;
-    if (count > 20_000) {
+    if (count > NAVIGATION_CAPTURES) {
       limited = true;
       break;
     }

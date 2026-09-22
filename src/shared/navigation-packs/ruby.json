@@ -1,5 +1,4 @@
 {
-  "apiVersion": 1,
   "id": "ruby",
   "family": "ruby",
   "extensions": [".rb", ".rake", ".gemspec"],

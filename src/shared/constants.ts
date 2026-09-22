@@ -55,3 +55,13 @@ export const MAX_SEARCH_STDOUT_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_PROCESS_TIMEOUT_MS = 30_000;
 export const DEFAULT_PROCESS_STDOUT_BYTES = 16 * 1024 * 1024;
 export const DEFAULT_PROCESS_STDERR_BYTES = 2 * 1024 * 1024;
+
+// Navigation resource budgets. Internal tuning values, not language-pack/API contracts.
+export const NAVIGATION_CACHE_BYTES = 16 * 1024 * 1024; // Retained derived blob metadata.
+export const NAVIGATION_LOOKUP_BYTES = 16 * 1024 * 1024; // Per-request source/parse work.
+export const NAVIGATION_LOOKUP_MS = 10_000; // Bound broad-name exploration.
+export const NAVIGATION_CONCURRENCY = 8; // Bound simultaneous Git work and queued parser input.
+export const NAVIGATION_CANDIDATES = 100; // Keep the popup and API response usable.
+export const NAVIGATION_CAPTURES = 20_000; // Bound metadata transfer from a small but dense source.
+export const NAVIGATION_BATCH_FILES = 32; // Amortize Git startup without retaining a whole repository.
+export const NAVIGATION_BATCH_BYTES = 4 * 1024 * 1024; // Bound buffered cat-file output.

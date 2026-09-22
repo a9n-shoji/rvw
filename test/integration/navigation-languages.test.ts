@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 import { navigationLanguage } from "../../src/domain/code-navigation.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
-import { GitSymbolIndex } from "../../src/infrastructure/navigation/git-symbol-index.js";
+import { GitCodeNavigation } from "../../src/infrastructure/navigation/git-code-navigation.js";
 import { ParserWorkerClient } from "../../src/infrastructure/navigation/parser-worker-client.js";
 import { extractSymbols } from "../../src/infrastructure/navigation/tree-sitter-tags.js";
 import { createGitRepository, commitFile, git } from "../fixtures/git-repository.js";
@@ -16,7 +16,7 @@ function fixture() {
   const repository = createGitRepository();
   repositories.push(repository);
   const extract = vi.fn(extractSymbols);
-  return { repository, extract, index: new GitSymbolIndex(new GitClient(), extract) };
+  return { repository, extract, index: new GitCodeNavigation(new GitClient(), extract) };
 }
 const document = (sourceOid: string, path: string) => ({
   kind: "repository-file" as const,
@@ -109,8 +109,8 @@ export const identity = <T>(value: T): T => value;
     );
     const result = await index.definitions(repository, document(oid, "App.tsx"), 1, 2);
     expect(result.targets.map((target) => target.document.path)).toEqual([
-      "Button.jsx",
       "Button.tsx",
+      "Button.jsx",
     ]);
     expect(result.partial).toBe(false);
     for (const [line, column] of [
@@ -217,6 +217,38 @@ export const identity = <T>(value: T): T => value;
     expect(
       (await index.definitions(repository, document(ruby, "call.rb"), 3, 7)).targets[0],
     ).toMatchObject({ line: 1, kind: "method" });
+  });
+
+  it("prefers the caller's grammar over family type declarations", async () => {
+    const { repository, index } = fixture();
+    commitFile(repository, "a.ts", "export interface Button {}\n", "type");
+    commitFile(repository, "z.js", "export function Button() {}\n", "value");
+    const oid = commitFile(repository, "caller.js", "Button();\n", "usage");
+    expect(
+      (await index.definitions(repository, document(oid, "caller.js"), 1, 1)).targets.map(
+        (t) => t.document.path,
+      ),
+    ).toEqual(["z.js", "a.ts"]);
+  });
+
+  it("does not let unrelated alias-name declarations crowd out an imported target", async () => {
+    const { repository, index } = fixture();
+    commitFile(
+      repository,
+      "a.tsx",
+      "export function Button() {}\n".repeat(150),
+      "other declarations",
+    );
+    commitFile(repository, "z.tsx", "export function Button() {}\n", "import target");
+    const oid = commitFile(
+      repository,
+      "caller.tsx",
+      'import { Button as Action } from "./z";\n<Action/>;\n',
+      "usage",
+    );
+    const result = await index.definitions(repository, document(oid, "caller.tsx"), 2, 2);
+    expect(result.targets.map((t) => t.document.path)).toEqual(["z.tsx"]);
+    expect(result.truncated).toBe(false);
   });
 
   it("keys blob metadata by grammar and preserves same-language reuse across renames", async () => {

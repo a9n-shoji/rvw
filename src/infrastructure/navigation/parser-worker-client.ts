@@ -1,3 +1,4 @@
+import { MAX_TEXT_DOCUMENT_BYTES, NAVIGATION_CONCURRENCY } from "../../shared/constants.js";
 import { Worker } from "node:worker_threads";
 import { RvwError } from "../../shared/errors.js";
 import type { BlobSymbols } from "./tree-sitter-tags.js";
@@ -44,11 +45,11 @@ export class ParserWorkerClient {
 
   extract(text: string, language: NavigationLanguage): Promise<BlobSymbols> {
     if (this.closed) return Promise.reject(this.unavailable());
-    if (Buffer.byteLength(text) > 1024 * 1024)
+    if (Buffer.byteLength(text) > MAX_TEXT_DOCUMENT_BYTES)
       return Promise.reject(
         new RvwError("FILE_TOO_LARGE", "定義探索のfileサイズ上限を超えました。"),
       );
-    if (this.queue.length >= 16)
+    if (this.queue.length >= NAVIGATION_CONCURRENCY)
       return Promise.reject(
         new RvwError("NAVIGATION_BUSY", "定義を解析中です。少し待って再試行してください。", {
           status: 429,
@@ -85,7 +86,12 @@ export class ParserWorkerClient {
     this.stopWorker();
     this.active?.reject(this.unavailable());
     this.active = undefined;
-    for (const job of this.queue.splice(0)) job.reject(this.unavailable());
+    if (this.closed) {
+      for (const job of this.queue.splice(0)) job.reject(this.unavailable());
+    } else {
+      // Only the active file ran in the failed worker. Queued inputs are independent.
+      queueMicrotask(() => this.pump());
+    }
   }
 
   private pump(): void {
@@ -105,7 +111,16 @@ export class ParserWorkerClient {
         this.worker = worker;
         worker.on("message", (reply: { id: number; symbols?: BlobSymbols; error?: boolean }) => {
           if (this.worker !== worker) return;
-          if (!this.active || this.active.id !== reply.id || !reply.symbols || reply.error) {
+          if (
+            !reply ||
+            !this.active ||
+            this.active.id !== reply.id ||
+            !reply.symbols ||
+            !Array.isArray(reply.symbols.tags) ||
+            !Array.isArray(reply.symbols.issues) ||
+            typeof reply.symbols.partial !== "boolean" ||
+            reply.error
+          ) {
             this.fail();
             return;
           }

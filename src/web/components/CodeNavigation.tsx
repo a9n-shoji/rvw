@@ -64,11 +64,8 @@ function identifierColumn(token: TokenEventBase, event: MouseEvent): number | nu
 const issueLabels: Record<NavigationIssue, string> = {
   "syntax-error": "構文エラーを含むfileがあります。",
   "parse-limit": "解析の時間・件数上限に達した箇所があります。",
-  "file-limit": "索引の対象file数の上限に達しました。",
-  "byte-limit": "索引の対象サイズの上限に達しました。",
-  "definition-limit": "索引の定義数の上限に達しました。",
+  "search-limit": "探索の時間・容量上限に達しました。候補は一部です。",
   "unavailable-file": "binary・大きいfile等、解析できないfileがあります。",
-  "index-timeout": "索引の作成時間の上限に達しました。再試行すると解析済みの結果を再利用します。",
 };
 
 export function useCodeNavigation(onOpen: (target: NavigationTarget, right: boolean) => void) {
@@ -192,9 +189,7 @@ export function useCodeNavigation(onOpen: (target: NavigationTarget, right: bool
     setLookup(null);
   };
   const data = query.data;
-  const retryablePartial = data?.issues.some(
-    (issue) => issue === "parse-limit" || issue === "index-timeout",
-  );
+  const retryablePartial = data?.issues.some((issue) => issue === "parse-limit");
   return {
     onTokenClick,
     onTokenEnter,

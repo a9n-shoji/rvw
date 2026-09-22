@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
-import { GitSymbolIndex } from "../../src/infrastructure/navigation/git-symbol-index.js";
+import { GitCodeNavigation } from "../../src/infrastructure/navigation/git-code-navigation.js";
 import { extractSymbols } from "../../src/infrastructure/navigation/tree-sitter-tags.js";
 const extractRubySymbols = (text: string) => extractSymbols(text, "ruby");
 import { createGitRepository, commitFile, git } from "../fixtures/git-repository.js";
@@ -16,7 +16,7 @@ function fixture() {
   const repository = createGitRepository();
   repositories.push(repository);
   const extract = vi.fn(extractRubySymbols);
-  return { repository, extract, index: new GitSymbolIndex(new GitClient(), extract) };
+  return { repository, extract, index: new GitCodeNavigation(new GitClient(), extract) };
 }
 const document = (sourceOid: string, path = "caller.rb") => ({
   kind: "repository-file" as const,
@@ -42,7 +42,7 @@ describe("Git-backed Ruby definition candidates", () => {
       ["copy.rb", 2],
     ]);
   });
-  it("shares in-flight blob parses and snapshot builds", async () => {
+  it("shares in-flight blob parses across simultaneous lookups", async () => {
     const { repository, index, extract } = fixture();
     const oid = commitFile(repository, "caller.rb", "class User; end\nUser.new\n", "concurrent");
     const results = await Promise.all(
@@ -52,7 +52,7 @@ describe("Git-backed Ruby definition candidates", () => {
     expect(extract).toHaveBeenCalledTimes(1);
   });
 
-  it("batches uncached blobs and does not read them again for another commit", async () => {
+  it("parses only matching files and reuses their blobs across commits", async () => {
     const { repository, extract } = fixture();
     for (let index = 0; index < 40; index++)
       writeFileSync(path.join(repository, `model_${index}.rb`), `class Model${index}; end\n`);
@@ -62,11 +62,12 @@ describe("Git-backed Ruby definition candidates", () => {
     const client = new GitClient();
     const readDocument = vi.spyOn(client, "readDocument");
     const batch = vi.spyOn(client, "readBlobDocuments");
-    const index = new GitSymbolIndex(client, extract);
+    const index = new GitCodeNavigation(client, extract);
     await index.definitions(repository, document(oid), 1, 1);
     expect(readDocument).toHaveBeenCalledTimes(1);
-    expect(batch.mock.calls.filter((call) => call[1].length > 0)).toHaveLength(2);
+    expect(batch.mock.calls.filter((call) => call[1].length > 0)).toHaveLength(1);
     const count = extract.mock.calls.length;
+    expect(count).toBe(2);
     const next = commitFile(repository, "unrelated.md", "Unchanged Ruby\n", "next");
     batch.mockClear();
     await index.definitions(repository, document(next), 1, 1);
@@ -80,7 +81,7 @@ describe("Git-backed Ruby definition candidates", () => {
     const extract = vi
       .fn(extractRubySymbols)
       .mockResolvedValueOnce({ tags: [], partial: true, issues: ["parse-limit"] });
-    const index = new GitSymbolIndex(new GitClient(), extract);
+    const index = new GitCodeNavigation(new GitClient(), extract);
     expect((await index.definitions(repository, document(oid), 2, 1)).issues).toContain(
       "parse-limit",
     );
@@ -189,7 +190,7 @@ describe("Git-backed Ruby definition candidates", () => {
   it("normalizes CRLF like the viewer and reports syntax errors and excluded large files", async () => {
     const { repository, index } = fixture();
     commitFile(repository, "broken.rb", "class Broken\n def bad(\n", "broken");
-    commitFile(repository, "huge.rb", "#".repeat(1024 * 1024 + 1), "large");
+    commitFile(repository, "huge.rb", "User" + "#".repeat(1024 * 1024 + 1), "large");
     commitFile(repository, "user.rb", "class User\r\nend\r\n", "CRLF");
     const oid = commitFile(repository, "caller.rb", "# 日本語\r\nUser.new\r\n", "call");
     const result = await index.definitions(repository, document(oid), 2, 1);
@@ -198,7 +199,33 @@ describe("Git-backed Ruby definition candidates", () => {
     expect(result.skippedFiles).toBe(1);
   });
 
-  it("bounds candidates and evicts failed snapshot builds so they can be retried", async () => {
+  it("finds definitions after many usage lines and ignores dirty attributes", async () => {
+    const { repository, index } = fixture();
+    commitFile(repository, "a.rb", "# User\n".repeat(1000), "many usages");
+    commitFile(repository, "z:name\nwith-newline.rb", "class User; end\n", "definition");
+    const oid = commitFile(repository, "caller.rb", "User.new\n", "usage");
+    writeFileSync(path.join(repository, ".gitattributes"), "*.rb -diff\n");
+    git(repository, "config", "color.grep", "always");
+    const result = await index.definitions(repository, document(oid), 1, 1);
+    expect(result.targets.map((t) => t.document.path)).toEqual(["z:name\nwith-newline.rb"]);
+    expect(result.partial).toBe(false);
+  });
+
+  it("marks truncated file searches as partial instead of an exhaustive negative", async () => {
+    const { repository, extract } = fixture();
+    const oid = commitFile(repository, "caller.rb", "User.new\n", "usage");
+    const client = new GitClient();
+    vi.spyOn(client, "navigationPaths").mockResolvedValue({ paths: new Set(), truncated: true });
+    const result = await new GitCodeNavigation(client, extract).definitions(
+      repository,
+      document(oid),
+      1,
+      1,
+    );
+    expect(result).toMatchObject({ status: "none", partial: true, issues: ["search-limit"] });
+  });
+
+  it("bounds candidates and allows retry after Git failure", async () => {
     const { repository, extract } = fixture();
     const oid = commitFile(
       repository,
@@ -208,7 +235,7 @@ describe("Git-backed Ruby definition candidates", () => {
     );
     const client = new GitClient();
     const tree = vi.spyOn(client, "tree").mockRejectedValueOnce(new Error("git unavailable"));
-    const index = new GitSymbolIndex(client, extract);
+    const index = new GitCodeNavigation(client, extract);
     await expect(index.definitions(repository, document(oid), 1, 1)).rejects.toThrow(
       "git unavailable",
     );

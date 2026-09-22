@@ -1,5 +1,4 @@
 {
-  "apiVersion": 1,
   "id": "javascript",
   "family": "javascript",
   "extensions": [".js", ".jsx", ".mjs", ".cjs"],

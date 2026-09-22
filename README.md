@@ -148,8 +148,9 @@ Ruby・JS/TS・React（JSX/TSX）の全文・diff上の名前を **Cmd/Ctrl + cl
 候補をclickすると対象行を開き、Cmd/Ctrl + clickなら右ペインに開きます。ブラウザのBackで元へ戻れます。
 候補は宣言行をプレビューでき、↑↓/Enterで選択、Escapeで閉じられます。
 開発checkoutでは `pnpm demo:navigation` で実Git履歴を使うRuby/Reactデモを起動できます。
-標準言語パックを同梱するので、RubyやLSPの追加セットアップは不要です。同名定義の探索なので呼び先は確定せず、Railsの動的生成methodや
-外部gem、JS/TSのimport aliasや型に基づく解決、Find usagesは未対応です。[対象と制限](https://github.com/a9n-shoji/rvw/blob/main/docs/code-navigation.md)を参照してください。
+対応言語の解析機能を同梱するので、RubyやLSPの追加セットアップは不要です。構文に基づく候補であり、呼び先は確定しません。
+ローカル変数の代入・引数を候補にし、JS/TSの相対named import（`import { Button as Action } from "./Button"`のような別名も含む）先を優先します。
+default / namespace / package import、re-export、tsconfig paths、完全なmodule resolution、型に基づくreceiver解決、Railsの動的生成method、外部gem、Find usagesは未対応です。[対象と制限](https://github.com/a9n-shoji/rvw/blob/main/docs/code-navigation.md)を参照してください。
 
 ---
 

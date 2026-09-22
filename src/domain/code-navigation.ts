@@ -19,14 +19,7 @@ export function navigationFamily(language: NavigationLanguage): string {
   return navigationPack(language).family;
 }
 
-export type NavigationIssue =
-  | "syntax-error"
-  | "parse-limit"
-  | "file-limit"
-  | "byte-limit"
-  | "definition-limit"
-  | "unavailable-file"
-  | "index-timeout";
+export type NavigationIssue = "syntax-error" | "parse-limit" | "search-limit" | "unavailable-file";
 
 export interface NavigationTarget {
   document: NavigationDocument;
@@ -39,24 +32,14 @@ export interface NavigationTarget {
 }
 
 export interface DefinitionResult {
-  provider: "tree-sitter-tags";
   status: "possible" | "none" | "unsupported" | "unavailable";
   symbol: string | null;
   targets: NavigationTarget[];
-  /** Incomplete indexing is never presented as an exhaustive negative result. */
+  /** Incomplete exploration is never presented as an exhaustive negative result. */
   partial: boolean;
   issues: NavigationIssue[];
   skippedFiles: number;
   truncated: boolean;
-}
-
-export interface CodeNavigationProvider {
-  definitions(
-    repository: string,
-    document: NavigationDocument,
-    line: number,
-    column: number,
-  ): Promise<DefinitionResult>;
 }
 
 export function supportsCodeNavigation(path: string): boolean {

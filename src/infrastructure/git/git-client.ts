@@ -12,6 +12,9 @@ import type {
 } from "../../domain/models.js";
 import {
   GIT_OBJECT_ID_PATTERN,
+  NAVIGATION_LOOKUP_MS,
+  NAVIGATION_BATCH_FILES,
+  NAVIGATION_BATCH_BYTES,
   MAX_MARKDOWN_ASSET_BYTES,
   MAX_SEARCH_RESULTS,
   MAX_SEARCH_STDOUT_BYTES,
@@ -587,7 +590,7 @@ export class GitClient {
     const unique = [...new Map(entries.map((entry) => [entry.oid, entry])).values()];
     if (unique.length === 0) return new Map();
     if (
-      unique.length > 32 ||
+      unique.length > NAVIGATION_BATCH_FILES ||
       unique.some(
         (entry) =>
           !GIT_OBJECT_ID_PATTERN.test(entry.oid) ||
@@ -597,7 +600,7 @@ export class GitClient {
           entry.size < 0 ||
           entry.size > MAX_TEXT_DOCUMENT_BYTES,
       ) ||
-      unique.reduce((bytes, entry) => bytes + entry.size!, 0) > 4 * 1024 * 1024
+      unique.reduce((bytes, entry) => bytes + entry.size!, 0) > NAVIGATION_BATCH_BYTES
     ) {
       throw new RvwError("INVALID_INPUT", "blob batchの対象またはサイズが不正です。");
     }
@@ -605,8 +608,8 @@ export class GitClient {
       cwd,
       ...(signal ? { signal } : {}),
       input: unique.map((entry) => entry.oid).join("\n") + "\n",
-      maxStdoutBytes: 4 * 1024 * 1024 + 8192,
-      timeoutMs: 10_000,
+      maxStdoutBytes: NAVIGATION_BATCH_BYTES + 8192,
+      timeoutMs: NAVIGATION_LOOKUP_MS,
     });
     const documents = new Map<string, BlobContent>();
     let offset = 0;
@@ -658,6 +661,55 @@ export class GitClient {
       maxStdoutBytes: MAX_MARKDOWN_ASSET_BYTES + 1,
     });
     return { content: content.stdout, oid: entry.oid, byteLength: content.stdout.length };
+  }
+
+  /** File names only: line-result limits must not hide definitions behind many usages.
+   * -a avoids working-tree attributes affecting a search of an immutable commit.
+   * Tree entries and the blob decoder still reject binary/oversized parser input.
+   */
+  async navigationPaths(
+    cwd: string,
+    oid: string,
+    names: string[],
+    signal?: AbortSignal,
+  ): Promise<{ paths: Set<string>; truncated: boolean }> {
+    if (!GIT_OBJECT_ID_PATTERN.test(oid) || names.length === 0)
+      throw new RvwError("INVALID_INPUT", "定義探索のcommitまたは名前が不正です。");
+    const result = await runProcess(
+      "git",
+      [
+        "grep",
+        "--full-name",
+        "--no-color",
+        "-l",
+        "-z",
+        "-a",
+        "-F",
+        "--no-textconv",
+        ...names.flatMap((name) => ["-e", name]),
+        oid,
+        "--",
+      ],
+      {
+        cwd,
+        ...(signal ? { signal } : {}),
+        allowExitCodes: [1],
+        timeoutMs: NAVIGATION_LOOKUP_MS,
+        maxStdoutBytes: MAX_SEARCH_STDOUT_BYTES,
+        truncateStdout: true,
+      },
+    );
+    // Ignore a trailing partial filename when stdout is truncated.
+    const records = result.stdout.toString("utf8").split("\0");
+    records.pop();
+    return {
+      paths: new Set(
+        records
+          .filter((name) => name.startsWith(oid + ":"))
+          .map((name) => name.slice(oid.length + 1)),
+      ),
+      truncated: result.stdoutTruncated,
+    };
   }
 
   async search(

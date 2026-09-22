@@ -1,4 +1,4 @@
-import { GitSymbolIndex } from "../infrastructure/navigation/git-symbol-index.js";
+import { GitCodeNavigation } from "../infrastructure/navigation/git-code-navigation.js";
 import type { DefinitionResult } from "../domain/code-navigation.js";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -753,10 +753,10 @@ async function mapWithConcurrency<T, R>(
 }
 
 export class RvwService {
-  private navigationIndex: GitSymbolIndex | undefined;
+  private codeNavigation: GitCodeNavigation | undefined;
 
   close(): void {
-    this.navigationIndex?.close();
+    this.codeNavigation?.close();
   }
 
   async findDefinitions(
@@ -768,8 +768,8 @@ export class RvwService {
   ): Promise<DefinitionResult> {
     const pullRequest = this.getPullRequest(pullRequestId);
     await this.assertCommitAvailable(pullRequest, sourceOid);
-    this.navigationIndex ??= new GitSymbolIndex(this.git);
-    return this.navigationIndex.definitions(
+    this.codeNavigation ??= new GitCodeNavigation(this.git);
+    return this.codeNavigation.definitions(
       pullRequest.localRepositoryPath,
       { kind: "repository-file", pullRequestId, sourceOid, path: filePath },
       line,

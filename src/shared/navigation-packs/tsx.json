@@ -1,5 +1,4 @@
 {
-  "apiVersion": 1,
   "id": "tsx",
   "family": "javascript",
   "extensions": [".tsx"],

@@ -3,12 +3,10 @@ import javascript from "./navigation-packs/javascript.json" with { type: "json" 
 import typescript from "./navigation-packs/typescript.json" with { type: "json" };
 import tsx from "./navigation-packs/tsx.json" with { type: "json" };
 
-/** Data-only pack contract, shared by selection, indexing, parser and packaging.
- * Package specifiers and ./query paths describe build-time assets, not executable plugins.
- * User-installed pack discovery/update is deliberately separate from this contract.
+/** Internal data shared by our bundled languages, parser and build.
+ * This is not a public extension API; changes ship with the corresponding queries.
  */
 export interface NavigationLanguagePack {
-  apiVersion: number;
   id: string;
   family: string;
   extensions: readonly string[];
@@ -28,7 +26,6 @@ export const navigationPacks: readonly NavigationLanguagePack[] = [
 
 export function navigationPack(id: string): NavigationLanguagePack {
   const pack = navigationPacks.find((pack) => pack.id === id);
-  if (!pack || pack.apiVersion !== 1)
-    throw new Error(`Unsupported navigation language pack: ${id}`);
+  if (!pack) throw new Error(`Unsupported navigation language pack: ${id}`);
   return pack;
 }

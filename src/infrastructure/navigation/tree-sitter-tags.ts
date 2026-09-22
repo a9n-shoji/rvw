@@ -1,3 +1,4 @@
+import { NAVIGATION_CAPTURES } from "../../shared/constants.js";
 import { navigationPack } from "../../shared/navigation-packs.js";
 import type { NavigationIssue, NavigationLanguage } from "../../domain/code-navigation.js";
 import { readFileSync } from "node:fs";
@@ -98,12 +99,18 @@ export async function extractSymbols(text: string, id: NavigationLanguage): Prom
       const existing = tags.get(key);
       if (!existing || (kind && (!existing.kind || existing.kind === "variable")))
         tags.set(key, tag);
-      if (tags.size >= 10_000) break;
+      if (tags.size >= NAVIGATION_CAPTURES) break;
     }
     const issues: NavigationIssue[] = [];
     const { context, limited } = extractContext(matches, lines);
     if (tree.rootNode.hasError) issues.push("syntax-error");
-    if (cancelled || query.didExceedMatchLimit() || tags.size >= 10_000 || omitted || limited)
+    if (
+      cancelled ||
+      query.didExceedMatchLimit() ||
+      tags.size >= NAVIGATION_CAPTURES ||
+      omitted ||
+      limited
+    )
       issues.push("parse-limit");
     return { tags: [...tags.values()], partial: issues.length > 0, issues, context };
   } finally {
