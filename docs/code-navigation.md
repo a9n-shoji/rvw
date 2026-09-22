@@ -16,7 +16,7 @@ Back/Forwardも既存reading historyを使い、専用Viewerや別履歴を追�
 
 `DocumentViewer`の全文/Fileとdiff/FileDiffは`@pierre/diffs`。
 既存の`onTokenClick`が行番号・UTF-16文字位置・diff側を渡すため、DOMを書き換える
-identifier rendererは不要。Shiki tokenはクリック位置の取得だけに使い、symbolかどうかは
+identifier rendererは不要。Shiki tokenはクリック位置の取得だけに使う。括弧と名前が同じtokenの場合も文字rangeでクリック位置を照合し、DOMを書き換えず名前を取り出す。symbolかどうかは
 serverでTree-sitterのcaptureと照合する。削除側はold ref、追加側はnew refを渡す。
 未対応言語にはtoken interactionを追加しない。
 
@@ -48,9 +48,8 @@ DB migrationは追加しない。将来のdisk cacheはreview DBと寿命の異�
 ## 実装範囲
 
 Rubyのclass、module、method、singleton method、aliasを公式tags queryで抽出する。
-constant assignmentだけ小さなTree-sitter queryを追加する。Ruby parser、scope、receiver、
-継承、autoload、Railsの名前解決器は実装しない。Ruby grammarのreference captureを
-クリック位置の検証に使うが、local-variable resolutionは行わない。
+constant assignmentとscope境界を小さなTree-sitter queryで補う。公式locals queryで代入・引数・参照を抽出し、
+最も近い可視scopeにある同名宣言を候補にする。Ruby parser、receiver型、継承、autoload、Railsの名前解決器は実装しない。
 `#is-not? local`をsemanticな証拠として扱わず、usages APIにも公開しない。
 
 対象はRuby（`.rb` / `.rake` / `.gemspec` / `Gemfile` / `Rakefile`）、JavaScript/JSX（`.js` / `.jsx` / `.mjs` / `.cjs`）、
@@ -89,6 +88,15 @@ Ruby・JavaScript・TypeScript・TSXはすべて同じdata-only pack契約で標
 parser/index/UIにRubyやReact専用の分岐を持たない。query追加も`.scm` fileへ分離する。
 同じfamilyのJS/JSX/TS/TSXは横断して候補を探す。Rubyとの同名衝突は混ぜない。
 
+localsは共通capture `@local.scope` / `@local.definition` / `@local.reference`で表現する。
+`#set! local.scope-inherits false`は外側scopeとの境界、`@context.nonlocal`はmethod名などlocal参照から除外する位置を表す。
+named importは`@import.name` / 任意の`@import.local` / `@import.source`で構文上の名前・別名・sourceを渡す。
+packの任意field `relativeImportSuffixes`が相対pathの候補suffixを宣言する。
+scope探索、Git内の相対path照合、順位付けは共通coreの責務とし、言語固有node型の分岐は追加しない。
+import先でexportされているかの検証や推移的解決は行わず、UIには「import先」、local候補には「同じスコープ」と根拠を添える。
+context metadataはblobに保存し、相対pathはquery時のdocument pathから求めるためrename/copyでも再利用できる。
+高度なsemantic解決は将来の別providerの責務とする。
+
 現時点ではbuild時登録の標準packに限る。利用者が実行時に追加・削除するCLI、download/update、
 外部manifest検証、配布元のintegrity確認は未実装であり、ユーザー向けアドオン機能が完成したとは扱わない。
 後続で同じ契約を利用したpack discoveryとUIへのcapability配信を追加できる。
@@ -100,15 +108,18 @@ receiverの型、namespace、instance/class method、visibility、継承、inclu
 同名methodはすべて候補になる。operator methodやsymbol形式のaliasはクリック／名前一致ができない場合がある。class reopenは複数箇所として表示される。
 定義がrepository外のgemにある場合や、`define_method`、`method_missing`、`delegate`、`scope`、
 association、route/view/partial等のDSLから生成される場合は解決できない。
-JS/TSでもimport alias、default exportの別名、re-export、module resolution、receiver型、lexical scopeを解決しない。
-名前が一致しないaliasは候補なしになり、同名のlocal variableや別moduleは候補に混ざりうる。
+JS/TSの相対named importは別名も含めて参照先fileの候補を優先する。その他の同名候補は残す。
+default/namespace import、package import、re-export、tsconfig paths、完全なmodule resolution、receiver型は解決しない。
+これらは同名探索へ戻るため、別名では候補なし、同名では別moduleが混ざる場合がある。
+ローカル候補は字句scopeの近さで絞るが、実行順・到達する代入・JS var hoisting・Ruby block内の再代入は解析しない。
+同じscopeの複数代入はすべて候補に残し、確定扱いしない。
 Gitに記録されていないnode_modulesやworking treeは読まない。React props/HOCのsemanticな追跡はしない。
 ERB、Vue SFC等の未対応言語とFind usagesは対象外。従来のviewer/searchは継続利用できる。
 構文エラーを含むfileは回復できたcaptureを返して索引不完全を明示する。
 
 ## 性能とcache
 
-初めてsymbolをqueryした時だけ、そのcommitの同じfamilyのfileを`git cat-file --batch`で最大32 blobs / 4 MiBずつ読む。
+ローカル候補がある場合はそのblobだけで返す。それ以外は初めてsymbolをqueryした時だけ、そのcommitの同じfamilyのfileを`git cat-file --batch`で最大32 blobs / 4 MiBずつ読む。
 full OID・型・サイズ・出力境界を検証し、既存文書と同じdecode/CRLF正規化を使う。viewer open時に全repositoryを
 parseしない。blob metadataは`language pack ID + blobOid`で共有し、path/commitを含めないためrename/copyや
 別commitで再利用できる。commit indexはrepository path + sourceOid + familyごとに定義とpathを結び直す。
@@ -117,7 +128,7 @@ parser/queryは固定versionで、process終了で全cacheを破棄するためv
 - blob cache: JSON換算16 MiB、最大4,000 entries、LRU。
 - commit index: 最大4 snapshots。各snapshotは最大2,000 files / source合計16 MiB / 50,000 definitions。
 - 1 fileは既存viewer同様1 MiBまで。symlink/submodule/binaryは解析しない。
-- 1 blobは最大10,000 name captures、parse/queryのprogress callbackで100ms budget。
+- 1 blobは最大10,000 name captures / 20,000 context captures、parse/queryのprogress callbackで100ms budget。
 - 1 responseは先頭100候補まで。上限到達はUIで明示する。
 - 同一snapshotの作成を共有し、snapshot作成を直列化、pending snapshotは4つまで。
   active queriesは8、workerの待ち行列は16まで。busyは429、worker失敗は503で明示して再試行できる。
@@ -164,18 +175,18 @@ worker hang/timeout/restart/idle解放、queue上限、shutdown、batch blob検�
 macOSではControl+clickがOSのcontext menu操作になるためCmd+clickで検証する。
 
 251 Ruby files（250 classes × 40 methods、10,250 definitions、caller 1 file）の合成fixtureを
-専用workerとbatch読み取りを使って一回測定した結果は、cold query 354ms、同commit warm query 12.1ms、rename後26.3ms。
-partial=false。改良前のcold 2,506msから約86%短縮した。同一条件の単発測定で、保証値ではない。
+専用workerとbatch読み取りを使って一回測定した結果は、cold query 439ms、同commit warm query 15.8ms、rename後29.6ms。
+partial=false。改良前のcold 2,506msから約82%短縮した。同一条件の単発測定で、保証値ではない。
 rename/copy/変更のないcommitで追加parseやblob readが起こらないことはintegration testで確認する。
-測定processのRSSは約237 MiBで、Node/tsx/worker/WASMを含む総量。
+測定processのRSSは約231 MiBで、Node/tsx/worker/WASMを含む総量。
 これは実Rails repositoryの保証値や増分メモリー量ではない。
 
 同じnpm pack（prepackなし）条件でmain `11a3673`と比較した値:
 
 | 内容          |         main |       実装後 |              増分 |
 | ------------- | -----------: | -----------: | ----------------: |
-| tarball       |  4,268,374 B |  5,007,715 B | 約739 KB（17.3%） |
-| 展開後package | 21,356,609 B | 27,420,692 B |         約6.06 MB |
+| tarball       |  4,268,374 B |  5,013,493 B | 約745 KB（17.5%） |
+| 展開後package | 21,356,609 B | 27,446,891 B |         約6.09 MB |
 
 追加WASM実体はRuby 2,106,352 B、JS 411,770 B、TS 1,413,849 B、TSX 1,445,638 B、runtime 209,613 B。
 JS/TS/TSXだけの追加分は展開後3,271,257 B、個別gzip合計338,195 B。
@@ -187,8 +198,8 @@ package smokeではruntime dependenciesなしのoffline installとWASM/query同�
 完了したcheck:
 
 - `pnpm check`: TypeScript / ESLint / Prettier成功。
-- `pnpm test`: 64 files / 720 tests成功。
-- browser regression: 全185ケースを実行。184件成功、残る既存copy testのlocatorを識別子token分割に対応させ、navigation 5件とcopy 1件の再実行が成功。Cmd hover、自己候補の除外、候補100件/640px/長いpath、React JSX/TSXも確認。
+- `pnpm test`: 64 files / 724 tests成功。
+- browser regression: 全186ケースを実行し185件成功。追加したlocal receiver caseで複合tokenの問題を見つけ修正。navigation 6件（receiverと括弧内引数を含む）と既存copy 1件の再実行が成功。Cmd hover、自己候補の除外、候補100件/640px/長いpath、Reactのimport優先表示も確認。
 - `pnpm build`: CLI / web / WASM assetsのbuild成功。
 - `pnpm test:package`: offline install、runtime依存なし、同梱asset、license notice、packageサイズ上限を検証。
 
@@ -206,6 +217,7 @@ GitHubのPR metadataだけをローカルで与え、GitHubへの接続やRuby/R
 3. `InventoryReservation` / `reserve!` から在庫serviceへ辿り、Backで戻る。
 4. controllerの変更前からは旧path、変更後のserviceからはrename後のpathへ移る。
 
-5. `frontend/CheckoutPage.tsx` の`Button`からTSX/JSXの候補を表示して右paneへ開く。
+5. controllerの`order.confirm!`などreceiverの`order`から同じmethodの代入行へ開く。
+6. `frontend/CheckoutPage.tsx` の`Button`からimport先が先頭のTSX/JSX候補を表示して右paneへ開く。
 
 デモは合成Rails/React例であり、実Rails PRでの人間によるdogfoodとは区別する。

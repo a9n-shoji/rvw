@@ -439,7 +439,9 @@ empty fileは従来どおり明示的に扱う。
 
 ### 5.3.0 コードの定義候補
 
-Ruby・JS/TS・JSX/TSX sourceのCmd/Ctrl+clickから、同じexact source commit内の同名定義候補を表示できる。
+Ruby・JS/TS・JSX/TSX sourceのCmd/Ctrl+clickから、同じexact source commit内の定義候補を表示できる。
+ローカル変数は最も近い可視scopeの代入・引数へ絞り、相対named importは別名を含め参照先の候補を優先する。
+抽出規則は言語packのquery、探索と順位付けは共通coreに置く。実行順や型に基づく確定解決は行わない。
 共通の言語pack契約で同梱するTree-sitter WASMと公式tags queryを使い、外部LSPやRuby環境のsetupは要求しない。
 候補が一つでもsemanticなexact definitionとは扱わず、選択後に既存repository-file tabの全文へ
 対象行を開く。通常clickは左、Cmd/Ctrl+clickは右。diff削除側はold ref、追加側はnew refを使う。

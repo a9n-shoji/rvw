@@ -5,5 +5,10 @@
   "extensions": [".rb", ".rake", ".gemspec"],
   "filenames": ["Gemfile", "Rakefile"],
   "grammar": "tree-sitter-ruby/tree-sitter-ruby.wasm",
-  "queries": ["tree-sitter-ruby/queries/tags.scm", "./queries/ruby.scm"]
+  "queries": [
+    "tree-sitter-ruby/queries/tags.scm",
+    "./queries/ruby.scm",
+    "tree-sitter-ruby/queries/locals.scm",
+    "./queries/ruby-context.scm"
+  ]
 }

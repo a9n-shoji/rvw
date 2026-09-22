@@ -19,8 +19,46 @@ interface Lookup {
   column: number;
 }
 
+const identifierPattern = /[\p{L}_$][\p{L}\p{N}\p{M}_$]*[!?=]?/gu;
+
 function isIdentifier(token: TokenEventBase): boolean {
-  return /^[\p{L}_$][\p{L}\p{N}\p{M}_$]*[!?=]?$/u.test(token.tokenText.trim());
+  return new RegExp(identifierPattern.source, "u").test(token.tokenText);
+}
+
+/** Highlight tokens can contain punctuation and several names. Hit-test text
+ * ranges without rewriting the highlighter DOM or disturbing native selection.
+ */
+function identifierColumn(token: TokenEventBase, event: MouseEvent): number | null {
+  const element = token.tokenElement;
+  const walker = element.ownerDocument.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+  const nodes: { node: Node; start: number; end: number }[] = [];
+  let offset = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const end = offset + (node.textContent?.length ?? 0);
+    nodes.push({ node, start: offset, end });
+    offset = end;
+  }
+  for (const match of token.tokenText.matchAll(identifierPattern)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    const first = nodes.find((node) => node.start <= start && start < node.end);
+    const last = nodes.find((node) => node.start < end && end <= node.end);
+    if (!first || !last) continue;
+    const range = element.ownerDocument.createRange();
+    range.setStart(first.node, start - first.start);
+    range.setEnd(last.node, end - last.start);
+    if (
+      [...range.getClientRects()].some(
+        (rect) =>
+          event.clientX >= rect.left &&
+          event.clientX <= rect.right &&
+          event.clientY >= rect.top &&
+          event.clientY <= rect.bottom,
+      )
+    )
+      return token.lineCharStart + start + 1;
+  }
+  return null;
 }
 
 const issueLabels: Record<NavigationIssue, string> = {
@@ -118,7 +156,8 @@ export function useCodeNavigation(onOpen: (target: NavigationTarget, right: bool
         !supportsCodeNavigation(document.path)
       )
         return;
-      if (!isIdentifier(token)) return;
+      const column = identifierColumn(token, event);
+      if (column === null) return;
       event.preventDefault();
       const root = token.tokenElement.getRootNode();
       const host = root instanceof ShadowRoot ? root.host : token.tokenElement;
@@ -143,8 +182,7 @@ export function useCodeNavigation(onOpen: (target: NavigationTarget, right: bool
       setLookup({
         document,
         line: token.lineNumber,
-        column:
-          token.lineCharStart + token.tokenText.length - token.tokenText.trimStart().length + 1,
+        column,
       });
     },
     [],
@@ -250,6 +288,11 @@ export function useCodeNavigation(onOpen: (target: NavigationTarget, right: bool
                   >
                     <span>
                       <strong>{target.name}</strong> <small>{target.kind}</small>
+                      {target.evidence && (
+                        <small className="code-navigation-evidence">
+                          {target.evidence === "local-scope" ? "同じスコープ" : "import先"}
+                        </small>
+                      )}
                     </span>
                     <span>
                       {target.document.path}:{target.line}

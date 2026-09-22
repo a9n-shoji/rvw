@@ -15,6 +15,8 @@ export interface NavigationLanguagePack {
   filenames: readonly string[];
   grammar: string;
   queries: readonly string[];
+  /** Simple relative-file hints only; not module resolution or extension substitution. */
+  relativeImportSuffixes?: readonly string[];
 }
 
 export const navigationPacks: readonly NavigationLanguagePack[] = [

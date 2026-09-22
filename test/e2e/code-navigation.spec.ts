@@ -34,7 +34,7 @@ test.beforeAll(async () => {
   commitFile(
     repository,
     "App.tsx",
-    "export function App() { return <Button/>; }\n",
+    'import { Button } from "./Button";\nexport function App() { return <Button/>; }\n',
     "old React usage",
   );
   commitFile(
@@ -44,13 +44,19 @@ test.beforeAll(async () => {
       `class BulkDefinition; end # ${"long_preview_".repeat(20)}\n`.repeat(110),
     "many candidates with long paths and previews",
   );
+  commitFile(
+    repository,
+    "orders.rb",
+    "def create\n order = Order.find(1)\n order.confirm!\n submit(order)\nend\n",
+    "local receiver",
+  );
   base = commitFile(repository, "caller.rb", "User.new.save!\n", "old call");
   git(repository, "mv", "user.rb", "renamed.rb");
   git(repository, "commit", "-m", "rename definition");
   commitFile(
     repository,
     "App.tsx",
-    'export function App() { return <Button title="Save"/>; }\n',
+    'import { Button } from "./Button";\nexport function App() { return <Button title="Save"/>; }\n',
     "new React usage",
   );
   head = commitFile(repository, "caller.rb", "User.new.save! # changed\nMissing.new\n", "new call");
@@ -360,6 +366,7 @@ test("React JSX usage opens cross-language component candidates and excludes the
   const candidates = page.getByRole("dialog", { name: "定義候補", exact: true });
   await expect(candidates.getByRole("button", { name: /Button.tsx:1/ })).toBeVisible();
   await expect(candidates.getByRole("button", { name: /Secondary.jsx:1/ })).toBeVisible();
+  await expect(candidates.locator("[data-navigation-candidate]").first()).toContainText("import先");
   await candidates
     .getByRole("button", { name: /Button.tsx:1/ })
     .click({ modifiers: ["ControlOrMeta"] });
@@ -381,4 +388,25 @@ test("React JSX usage opens cross-language component candidates and excludes the
       .locator('.document-pane[data-pane="left"]')
       .getByRole("tab", { name: "App.tsx", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
+});
+
+test("Ruby receiver opens its local assignment", async ({ page }) => {
+  await page.goto(url);
+  await openFile(page, "orders.rb");
+  await page
+    .locator('[data-line="3"] [data-char]')
+    .filter({ hasText: /order/ })
+    .click({ modifiers: ["ControlOrMeta"] });
+  const candidates = page.getByRole("dialog", { name: "定義候補", exact: true });
+  await expect(candidates.locator("[data-navigation-candidate]")).toHaveCount(1);
+  await expect(candidates.getByText("同じスコープ", { exact: true })).toBeVisible();
+  await candidates.getByRole("button", { name: /orders.rb:2/ }).click();
+  await expect(page.locator('.document-pane[data-pane="left"] [data-line="2"]')).toContainText(
+    "order = Order.find(1)",
+  );
+  await page
+    .locator('[data-line="4"] [data-char]')
+    .filter({ hasText: /order/ })
+    .click({ modifiers: ["ControlOrMeta"] });
+  await expect(candidates.getByRole("button", { name: /orders.rb:2/ })).toBeVisible();
 });

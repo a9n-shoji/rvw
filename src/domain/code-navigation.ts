@@ -35,6 +35,7 @@ export interface NavigationTarget {
   preview: string;
   line: number;
   column: number;
+  evidence?: "local-scope" | "relative-import";
 }
 
 export interface DefinitionResult {

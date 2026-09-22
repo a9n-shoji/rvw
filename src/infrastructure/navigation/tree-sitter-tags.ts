@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { Language, Parser, Query, type Tree } from "web-tree-sitter";
+import { extractContext, type SymbolContext } from "./symbol-context.js";
 
 declare const __RVW_CLI_BUNDLE__: boolean | undefined;
 
@@ -20,6 +21,7 @@ export interface BlobSymbols {
   tags: SymbolTag[];
   partial: boolean;
   issues: NavigationIssue[];
+  context?: SymbolContext;
 }
 
 function asset(source: string, bundledName: string): string {
@@ -99,10 +101,11 @@ export async function extractSymbols(text: string, id: NavigationLanguage): Prom
       if (tags.size >= 10_000) break;
     }
     const issues: NavigationIssue[] = [];
+    const { context, limited } = extractContext(matches, lines);
     if (tree.rootNode.hasError) issues.push("syntax-error");
-    if (cancelled || query.didExceedMatchLimit() || tags.size >= 10_000 || omitted)
+    if (cancelled || query.didExceedMatchLimit() || tags.size >= 10_000 || omitted || limited)
       issues.push("parse-limit");
-    return { tags: [...tags.values()], partial: issues.length > 0, issues };
+    return { tags: [...tags.values()], partial: issues.length > 0, issues, context };
   } finally {
     tree?.delete();
     parser.delete();

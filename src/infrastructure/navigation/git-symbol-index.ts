@@ -12,6 +12,9 @@ import { RvwError } from "../../shared/errors.js";
 import type { BlobContent, GitClient } from "../git/git-client.js";
 import { ParserWorkerClient } from "./parser-worker-client.js";
 import type { BlobSymbols, SymbolTag } from "./tree-sitter-tags.js";
+import { visibleScopes } from "./symbol-context.js";
+import { navigationPack } from "../../shared/navigation-packs.js";
+import path from "node:path";
 
 interface SymbolIndex {
   definitions: { path: string; tag: SymbolTag }[];
@@ -262,15 +265,66 @@ export class GitSymbolIndex implements CodeNavigationProvider {
       mode: "100644",
     };
     const symbols = await this.symbols(entry, content);
-    const symbol = symbols.tags.find(
-      (tag) => tag.line === line && tag.column <= column && column < tag.endColumn,
-    )?.name;
+    const atPosition = (tag: SymbolTag) =>
+      tag.line === line && tag.column <= column && column < tag.endColumn;
+    const reference = symbols.context?.references.find(atPosition);
+    const symbol = symbols.tags.find(atPosition)?.name ?? reference?.name;
     if (!symbol) return { ...empty, partial: symbols.partial, issues: symbols.issues };
+    const scopes =
+      reference && symbols.context ? visibleScopes(symbols.context, reference.scope) : [];
+    const localDefinitions = new Map<number, SymbolTag[]>();
+    for (const tag of symbols.context?.definitions ?? []) {
+      if (tag.name !== symbol) continue;
+      const definitions = localDefinitions.get(tag.scope) ?? [];
+      definitions.push(tag);
+      localDefinitions.set(tag.scope, definitions);
+    }
+    // The nearest scope containing declarations wins. Multiple assignments remain
+    // candidates: this is lexical context, not reaching-definition/data-flow analysis.
+    for (const scope of scopes) {
+      const locals = localDefinitions.get(scope) ?? [];
+      if (!locals.length) continue;
+      const matches = locals.filter((tag) => !atPosition(tag));
+      return {
+        ...empty,
+        symbol,
+        status: matches.length ? "possible" : "none",
+        targets: matches.slice(0, 100).map((tag) => ({
+          document,
+          name: tag.name,
+          kind: "variable",
+          preview: tag.preview,
+          line: tag.line,
+          column: tag.column,
+          evidence: "local-scope",
+        })),
+        partial: symbols.partial,
+        issues: symbols.issues,
+        truncated: matches.length > 100,
+      };
+    }
+    const suffixes = navigationPack(language).relativeImportSuffixes ?? [];
+    const visible = new Set(scopes);
+    const imports = (symbols.context?.imports ?? []).filter(
+      (binding) => binding.localName === symbol && visible.has(binding.scope),
+    );
+    const hints = new Set(
+      imports.flatMap((binding) => {
+        if (!binding.source.startsWith("./") && !binding.source.startsWith("../")) return [];
+        const source = path.posix.normalize(
+          path.posix.join(path.posix.dirname(document.path), binding.source),
+        );
+        if (source === ".." || source.startsWith("../")) return [];
+        return suffixes.map((suffix) => JSON.stringify([source + suffix, binding.importedName]));
+      }),
+    );
+    const imported = (candidate: { path: string; tag: SymbolTag }) =>
+      hints.has(JSON.stringify([candidate.path, candidate.tag.name]));
     const index = await this.index(repository, document.sourceOid, language);
     const matches = index.definitions
       .filter(
         ({ path, tag }) =>
-          tag.name === symbol &&
+          (tag.name === symbol || imported({ path, tag })) &&
           !(
             path === document.path &&
             tag.line === line &&
@@ -278,7 +332,11 @@ export class GitSymbolIndex implements CodeNavigationProvider {
             column < tag.endColumn
           ),
       )
-      .sort((a, b) => Number(b.path === document.path) - Number(a.path === document.path));
+      .sort(
+        (a, b) =>
+          Number(imported(b)) - Number(imported(a)) ||
+          Number(b.path === document.path) - Number(a.path === document.path),
+      );
     const targets: NavigationTarget[] = matches.slice(0, 100).map(({ path, tag }) => ({
       document: { ...document, path },
       name: tag.name,
@@ -286,6 +344,7 @@ export class GitSymbolIndex implements CodeNavigationProvider {
       preview: tag.preview,
       line: tag.line,
       column: tag.column,
+      ...(imported({ path, tag }) ? { evidence: "relative-import" as const } : {}),
     }));
     const issues = [...new Set([...symbols.issues, ...index.issues])];
     return {

@@ -3759,3 +3759,10 @@ Git, SQLite, and browser path without a manual reload.
 - アドオンのdownload/update/外部登録は別の変更とする。現在の標準pack登録はbuild時であり、実行時の任意pack install機能とは区別する。
 - JS/TS/TSX WASMは約3.27 MB（個別gzip合計約338 KB）。全体の圧縮後budget 6 MiBを維持し、展開後budgetは28 MiBへ改定する。
 - UXはmodifier hoverのpointer、自己宣言の除外、繰り返す注意文の削除、長いpath/多数候補のbounded popupを採用する。
+
+## 2026-09-22: Improve candidates through declarative scope and import context
+
+- 公式locals queryとpack内の小さな補助queryからscope・代入・引数・named importを抽出する。共通coreが可視scopeと相対Git pathを照合する。
+- ローカル参照は最も近いscopeの宣言候補に絞る。相対named import先は別名も含めて優先し、同名候補を残す。UIに根拠を添え、possibleの契約を維持する。
+- Ruby/React専用resolverや言語別core分岐は追加しない。packの追加契約はcaptureと任意のrelativeImportSuffixesのみ。
+- data-flow、var hoisting、Ruby block再代入、export検証、default/namespace/package import、re-export、tsconfigの解決は対象外。外部pack管理やsemantic providerは別段階とする。
