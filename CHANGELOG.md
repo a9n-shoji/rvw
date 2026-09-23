@@ -5,6 +5,12 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-23
+
+### Added
+
+- レビュー中のcode参照から、TypeScript、TSX、JavaScript、Rubyの定義・参照候補をcommit固定で探索できるcode navigationを追加。
+
 ### Removed
 
 - ブラウザ通知の設定・権限要求・テスト通知・Agent投稿の通知処理を撤去。コメントのpollingとwatch／Monitor連携は維持。
