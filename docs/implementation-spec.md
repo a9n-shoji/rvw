@@ -1260,6 +1260,8 @@ comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync
+pullRequest.list
+pullRequest.archive
 structure.list
 structure.read
 structure.presentation
@@ -1719,6 +1721,7 @@ CREATE TABLE pull_requests (
   github_updated_at TEXT NOT NULL,
   github_state TEXT CHECK(github_state IN ('OPEN', 'CLOSED', 'MERGED')),
   github_is_draft INTEGER CHECK(github_is_draft IN (0, 1)),
+  archived_at TEXT,
   fetched_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -1857,12 +1860,13 @@ version参照をcommit OIDへ移し、旧PR本文コメントはquoteが復元�
 
 ```text
 GET  /api/meta/change-sequence
-GET  /api/pull-requests?offset=<offset>&limit=<limit>&hideClosedOrMerged=<bool>
+GET  /api/pull-requests?offset=<offset>&limit=<limit>&hideClosedOrMerged=<bool>&hideArchived=<bool>
 POST /api/pull-requests/refresh-statuses
 GET  /api/pull-requests/:id
 POST /api/pull-requests/open
 POST /api/pull-requests/:id/refresh
 POST /api/pull-requests/:id/reset
+PATCH /api/pull-requests/:id/archive
 
 GET /api/pull-requests/:id/commits
 GET /api/pull-requests/:id/tree?oid=<oid>
@@ -1898,7 +1902,7 @@ GET  /api/comments/:id/placement?... # compatibility
 HTTP/CLIは同じapplication serviceを使用し、transportへbusiness logicを書かない。
 Pull Request一覧APIは既定50件・最大100件のoffset paginationとし、`total`、`hasMore`、`nextOffset`を返す。
 `hideClosedOrMerged`は既定`true`で、最後に成功したsyncで保存した`github_state`がClosedまたはMergedの行だけを
-pagination前に除外する。Open、Draft、および状態未取得のlegacy行は表示し、`false`では全件を返す。
+pagination前に除外する。Open、Draft、および状態未取得のlegacy行は表示し、`false`ではGitHub状態による除外を行わない。
 一覧表示を理由にGitHubへ通信しない。一括status更新は明示的なPOSTだけで実行し、`github_state = 'OPEN' OR
 github_state IS NULL`の保存済みPRだけを最大4件並列で取得する。対象がなければGitHub認証も行わない。
 成功したstatusは一つのSQLite transactionで反映し、部分失敗を結果へ含める。`attempted`、`updated`、
@@ -1909,6 +1913,26 @@ SQLite専用read modelとする。Git commitを読む`getPullRequestView()`は�
 `github_updated_at DESC`の後に永続IDを
 tie-breakerとして固定する。
 
+### PRアーカイブ
+
+アーカイブはuser-global SQLite内のPR単位のローカル整理状態で、GitHub状態やコメント状態と独立する。
+`archived_at`は未アーカイブならNULL、アーカイブ時はUTC日時とする。既存行はNULLで移行する。
+同じDBを使うViewerとAgentで共有し、GitHubアカウント別には保存しない。
+一覧APIの`hideArchived`は既定true。GitHub状態filterとANDで、pagination・件数集計前に適用する。
+表示順は引き続きGitHub更新日時で、アーカイブ操作では変更しない。
+各行はPRを開くlinkと独立したアーカイブ／解除buttonを持つ。アーカイブ表示時は状態を明示する。
+filterは一覧と詳細の往復中に保持し、再読み込み時は既定ONへ戻る。操作失敗時は行を残してerrorを表示する。
+filter後0件はチェック解除を案内する。外部変更を含めoffsetが範囲外になったら最後の有効page（0件ならoffset 0）へ移る。
+HTTP PATCHは`{ archived: boolean }`、CLIは`rvw pr archive <PR> --json`と`rvw pr unarchive <PR> --json`。
+同じ値の再設定は成功し、保存日時とchange sequenceを変えない。実際の変更だけpullRequests revisionを更新する。
+両transportは共通serviceを使い、Git/GitHubへのアクセスやviewer起動を伴わない。未登録PRはPR_NOT_FOUNDとする。
+`rvw pr list --json`は一覧APIと同じread model・paginationを返す。`--include-archived`、`--include-closed`は
+独立したfilter解除、`--offset`と`--limit`は既定0と50、limit上限100。Agent socketと直接DBの両経路を提供する。
+protocol v6の追加capabilityは`pullRequest.list`と`pullRequest.archive`。
+アーカイブ済みでも直接open・閲覧・コメント・同期は通常どおり。open、sync、refresh、reset、新commit・コメントでは
+自動解除しない。一括status更新対象も変更しない。同梱Skillには自動制御を追加せず、本人の承認などの判定は
+ユーザー独自SkillとGitHub情報へ委ねる。
+
 ## 10. Viewer UX
 
 URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull Request一覧をworkspace入口として表示する。
@@ -1917,7 +1941,7 @@ URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull 
 2段目に置く。Approve数は状態badgeの右隣にOpenと同じ色で
 `<count> Approved`と表示し、0件または未取得なら表示しない。PR titleは省略せず、必要な高さまで複数行に
 折り返して全文を表示する。GitHub更新日時の新しい順であることを明示し、
-Closed / Mergedを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。
+Closed / Mergedを非表示にするcheckboxと、アーカイブ済みを非表示にするcheckboxは既定ONとする。状態未取得のlegacy行はbadgeなしで表示する。
 Openまたは状態未取得の登録済みPRのcached statusを明示的に更新するbuttonをfilterの隣へ置き、実行中、成功件数、失敗件数と
 失敗対象を表示する。画面表示やfilter変更だけではGitHubへ問い合わせない。一括更新で現在のpagination
 offsetが範囲外になった場合だけ、最後の有効pageへ移動する。

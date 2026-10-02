@@ -82,7 +82,7 @@ describe("RvwDatabase", () => {
     const oldMigrations = path.join(directory, "migrations");
     mkdirSync(oldMigrations);
     for (const file of readdirSync("migrations").filter(
-      (name) => name.endsWith(".sql") && name < "023",
+      (name) => name.endsWith(".sql") && (name < "023" || name === "024_pull_request_archive.sql"),
     )) {
       writeFileSync(path.join(oldMigrations, file), readFileSync(path.join("migrations", file)));
     }
@@ -555,6 +555,7 @@ describe("RvwDatabase", () => {
           repository: "review-repo",
           number: 8,
           title: "Newest review",
+          archivedAt: null,
           githubCreatedAt: "2026-08-08T12:00:00.000Z",
           githubUpdatedAt: "2026-08-10T00:00:00.000Z",
           githubState: "OPEN",
@@ -1219,6 +1220,7 @@ describe("RvwDatabase", () => {
       "013_pull_request_github_status.sql",
       "021_walkthrough_updated_at.sql",
       "022_pull_request_approval_count.sql",
+      "024_pull_request_archive.sql",
     ]) {
       writeFileSync(
         path.join(legacyMigrationsDirectory, migration),
@@ -1693,6 +1695,80 @@ describe("RvwDatabase", () => {
       { body: "Updated.", relatedCommitOid: github.headOid },
     ]);
     expect(database.listCommentPostEvents(0, 100)).toHaveLength(2);
+    database.close();
+  });
+});
+
+describe("Pull Request archives", () => {
+  it("migrates existing rows and preserves archive state across sync, reset and reopen", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-archive-migration-"));
+    const filePath = path.join(directory, "rvw.db");
+    const old = new DatabaseSync(filePath);
+    for (const name of readdirSync("migrations")
+      .filter((name) => name.endsWith(".sql") && name < "024")
+      .sort()) {
+      old.exec(readFileSync(path.join("migrations", name), "utf8"));
+      old
+        .prepare("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)")
+        .run(Number(name.slice(0, 3)), new Date().toISOString());
+    }
+    old.exec(`INSERT INTO pull_requests (id, host, owner, repository, number, github_url, local_repository_path, git_common_dir, latest_title, latest_body, latest_base_ref_name, latest_head_ref_name, latest_base_oid, latest_head_oid, github_updated_at, fetched_at, created_at, updated_at, latest_comparison_base_oid)
+      VALUES ('legacy', 'github.com', 'legacy', 'repo', 1, 'https://github.com/legacy/repo/pull/1', '/repo', '/repo/.git', 'Legacy', '', 'main', 'feature', '${github.baseOid}', '${github.headOid}', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01', '${github.baseOid}')`);
+    old.close();
+    const database = new RvwDatabase({ filePath });
+    expect(database.getPullRequest("legacy")?.archivedAt).toBeNull();
+    const repository = { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" };
+    const saved = database.upsertPullRequest(github, repository, github.baseOid);
+    const before = database.getRevisionSnapshot();
+    const archived = database.setPullRequestArchived(saved.id, true);
+    expect(archived.archivedAt).toEqual(expect.any(String));
+    const after = database.getRevisionSnapshot();
+    expect(after.changeSequence).toBe(before.changeSequence + 1);
+    expect(database.setPullRequestArchived(saved.id, true)).toEqual(archived);
+    expect(database.getRevisionSnapshot()).toEqual(after);
+    expect(
+      database.upsertPullRequest({ ...github, title: "Synced" }, repository, github.baseOid)
+        .archivedAt,
+    ).toBe(archived.archivedAt);
+    expect(database.resetPullRequest(github, repository, github.baseOid).archivedAt).toBe(
+      archived.archivedAt,
+    );
+    expect(
+      database.listPullRequestsNeedingStatusRefresh().some((item) => item.id === saved.id),
+    ).toBe(true);
+    database.close();
+    const reopened = new RvwDatabase({ filePath });
+    expect(reopened.getPullRequest(saved.id)?.archivedAt).toBe(archived.archivedAt);
+    expect(reopened.setPullRequestArchived(saved.id, false).archivedAt).toBeNull();
+    expect(() => reopened.setPullRequestArchived("missing", true)).toThrowError(
+      expect.objectContaining({ code: "PR_NOT_FOUND" }),
+    );
+    reopened.close();
+  });
+
+  it("combines archive and GitHub state filters before pagination and counts", () => {
+    const database = new RvwDatabase({ filePath: ":memory:" });
+    for (let number = 1; number <= 4; number++) {
+      const saved = database.upsertPullRequest(
+        { ...github, number, state: number > 2 ? "CLOSED" : "OPEN" },
+        { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+        github.baseOid,
+      );
+      if (number % 2 === 0) database.setPullRequestArchived(saved.id, true);
+    }
+    for (const [hideClosed, hideArchived, total] of [
+      [true, true, 1],
+      [true, false, 2],
+      [false, true, 2],
+      [false, false, 4],
+    ] as const) {
+      const page = database.listPullRequestSummaries(0, 1, hideClosed, hideArchived);
+      expect(page.total).toBe(total);
+      expect(page.items).toHaveLength(1);
+      expect(database.listPullRequestSummaries(total, 1, hideClosed, hideArchived).items).toEqual(
+        [],
+      );
+    }
     database.close();
   });
 });

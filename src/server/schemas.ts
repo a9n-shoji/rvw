@@ -41,6 +41,8 @@ export const openPullRequestSchema = z.object({
   cwd: z.string().min(1),
 });
 
+export const pullRequestArchiveSchema = z.object({ archived: z.boolean() }).strict();
+
 export const resetSchema = z.object({ yes: z.boolean() });
 export const structureDeleteSchema = z.object({ expectedUpdatedAt: z.string().min(1).max(100) });
 
@@ -55,6 +57,10 @@ export const pullRequestListQuerySchema = z.object({
     .min(1)
     .max(MAX_PULL_REQUEST_LIST_LIMIT)
     .default(DEFAULT_PULL_REQUEST_LIST_LIMIT),
+  hideArchived: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((value) => value === "true"),
   hideClosedOrMerged: z
     .enum(["true", "false"])
     .default("true")

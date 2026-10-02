@@ -728,6 +728,7 @@ export function createDogfoodFixture(
       githubUpdatedAt: latestCommit.authoredAt,
       githubState: "OPEN" as const,
       githubIsDraft: false,
+      archivedAt: null,
       githubApprovalCount: 2,
       fetchedAt: latestCommit.authoredAt,
       createdAt: firstCommit.authoredAt,

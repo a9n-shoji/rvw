@@ -916,10 +916,15 @@ export class RvwService {
     return pullRequest;
   }
 
+  setPullRequestArchived(id: string, archived: boolean): PullRequest {
+    return this.database.setPullRequestArchived(id, archived);
+  }
+
   listPullRequests(input: {
     offset?: number | undefined;
     limit?: number | undefined;
     hideClosedOrMerged?: boolean | undefined;
+    hideArchived?: boolean | undefined;
   }): PullRequestList {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? DEFAULT_PULL_REQUEST_LIST_LIMIT;
@@ -933,7 +938,12 @@ export class RvwService {
         `limitは1以上${MAX_PULL_REQUEST_LIST_LIMIT}以下の整数にしてください。`,
       );
     }
-    const page = this.database.listPullRequestSummaries(offset, limit, hideClosedOrMerged);
+    const page = this.database.listPullRequestSummaries(
+      offset,
+      limit,
+      hideClosedOrMerged,
+      input.hideArchived ?? true,
+    );
     const returned = page.items.length;
     const hasMore = offset + returned < page.total;
     return {

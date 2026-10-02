@@ -880,6 +880,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.resolve",
           "comment.reopen",
           "pullRequest.sync",
+          "pullRequest.list",
+          "pullRequest.archive",
           "structure.list",
           "structure.read",
           "structure.preview",
@@ -972,6 +974,64 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   const pr = program.command("pr").description("Pull Request状態を管理");
+  pr.command("list")
+    .option("--json", "JSONで出力")
+    .option("--offset <offset>", "開始位置", "0")
+    .option("--limit <limit>", "取得件数（最大100）", "50")
+    .option("--include-archived", "アーカイブ済みも含める")
+    .option("--include-closed", "Closed / Mergedも含める")
+    .action(
+      async (
+        options: OutputOptions & {
+          offset: string;
+          limit: string;
+          includeArchived?: boolean;
+          includeClosed?: boolean;
+        },
+      ) => {
+        const input = {
+          offset: Number(options.offset),
+          limit: Number(options.limit),
+          hideArchived: !options.includeArchived,
+          hideClosedOrMerged: !options.includeClosed,
+        };
+        const result = await callService("pr.list", input, () =>
+          getRuntime().service.listPullRequests(input),
+        );
+        writeOutput(
+          options,
+          { ok: true, ...result },
+          result.items
+            .map(
+              (item) =>
+                `${item.owner}/${item.repository}#${item.number} ${item.title}${item.archivedAt ? " [archived]" : ""}`,
+            )
+            .join("\n") || "該当するPull Requestはありません。",
+        );
+      },
+    );
+  for (const [command, archived] of [
+    ["archive", true],
+    ["unarchive", false],
+  ] as const) {
+    pr.command(command)
+      .argument("<pull-request>", "登録済みPR URLまたは番号")
+      .option("--json", "JSONで出力")
+      .action(async (reference: string, options: OutputOptions) => {
+        const pullRequest = await callService("pr.archive", { reference, archived }, () => {
+          const service = getRuntime().service;
+          return service.setPullRequestArchived(
+            service.resolveStoredPullRequest(reference).id,
+            archived,
+          );
+        });
+        writeOutput(
+          options,
+          { ok: true, pullRequest },
+          archived ? "アーカイブしました。" : "アーカイブを解除しました。",
+        );
+      });
+  }
   pr.command("refresh")
     .argument("<pull-request>", "登録済みPR URLまたは番号")
     .option("--json", "JSONで出力")

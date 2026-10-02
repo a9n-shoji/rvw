@@ -918,6 +918,8 @@ comment.codeReferences
 comment.resolve
 comment.reopen
 pullRequest.sync
+pullRequest.list
+pullRequest.archive
 structure.list
 structure.read
 structure.presentation
@@ -935,3 +937,30 @@ walkthrough.htmlPreview
 
 Consumers must reject an unsupported protocol version or missing required capability rather than
 guessing a fallback command.
+
+## Pull Request list and archive
+
+```bash
+rvw pr list --json
+rvw pr list --include-archived --include-closed --offset 0 --limit 50 --json
+rvw pr archive <PR> --json
+rvw pr unarchive <PR> --json
+```
+
+These are additive v6 capabilities: `pullRequest.list` and `pullRequest.archive`.
+List returns `{ ok, items, pagination }`; each summary includes `pullRequestId`, repository identity,
+title, cached GitHub status and dates, review item counts, and nullable `archivedAt`.
+Pagination includes `offset`, `limit`, `returned`, `total`, `hasMore`, and nullable `nextOffset`.
+Defaults hide archived and Closed/Merged PRs independently; use both include flags for all saved PRs.
+Filtering precedes pagination. Limit defaults to 50 and accepts 1–100; offset defaults to 0.
+
+Archive commands accept a saved PR URL or an unambiguous number and return `{ ok, pullRequest }`
+with nullable `archivedAt`. They set an explicit state: retries preserve the original archive timestamp
+and do not emit another change when the requested state already holds. Unknown PRs return `PR_NOT_FOUND`.
+Both commands and list use the Agent socket when available, with the existing direct database fallback.
+They require neither a Git checkout nor GitHub access and never open a viewer.
+
+Archive state belongs to the local database, is shared by its users and Agents, and survives open,
+sync, refresh, and reset. It only filters the list; content, comments, and direct access remain usable.
+New commits or comments never unarchive automatically. Bundled Skills do not make archive decisions;
+custom user Skills may inspect GitHub reviews and invoke these commands with the user's own rules.

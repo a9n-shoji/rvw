@@ -154,6 +154,11 @@ default / namespace / package import、re-export、tsconfig paths、完全なmod
 
 ---
 
+## 見終わったPRを整理する
+
+PR一覧の各行からアーカイブ・解除できます。アーカイブ済みは既定で非表示になり、チェックを外すと再表示できます。
+PRの閲覧やコメントは引き続き利用できます。[操作と独自Skillでの自動化](https://github.com/a9n-shoji/rvw/blob/main/docs/usage.md#pr一覧のアーカイブ)を参照してください。
+
 ## ドキュメント
 
 ソースから `pnpm demo` を実行すると、デモ環境（認証・Agent不要）をローカルで試せます。

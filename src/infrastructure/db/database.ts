@@ -386,6 +386,7 @@ function mapPullRequest(row: DbRow): PullRequest {
     githubState: nullableGitHubPullRequestState(row, "github_state"),
     githubIsDraft: nullableBoolean(row, "github_is_draft"),
     githubApprovalCount: nullableNumber(row, "github_approval_count"),
+    archivedAt: nullableString(row, "archived_at"),
     fetchedAt: stringValue(row, "fetched_at"),
     createdAt: stringValue(row, "created_at"),
     updatedAt: stringValue(row, "updated_at"),
@@ -1190,6 +1191,7 @@ export class RvwDatabase {
     offset: number,
     limit: number,
     hideClosedOrMerged = true,
+    hideArchived = true,
   ): PullRequestSummaryPage {
     const hideClosedOrMergedValue = hideClosedOrMerged ? 1 : 0;
     const rows = this.database
@@ -1205,9 +1207,10 @@ export class RvwDatabase {
              github_updated_at,
              github_state,
              github_is_draft,
-             github_approval_count
+             github_approval_count,
+             archived_at
            FROM pull_requests
-           WHERE ? = 0 OR github_state IS NULL OR github_state = 'OPEN'
+           WHERE (? = 0 OR github_state IS NULL OR github_state = 'OPEN') AND (? = 0 OR archived_at IS NULL)
            ORDER BY github_updated_at DESC, id DESC
            LIMIT ? OFFSET ?
          ), comment_counts AS (
@@ -1240,6 +1243,7 @@ export class RvwDatabase {
            pr.github_state,
            pr.github_is_draft,
            pr.github_approval_count,
+           pr.archived_at,
            COALESCE(comment_counts.unresolved_count, 0) AS unresolved_comment_count,
            COALESCE(comment_counts.resolved_count, 0) AS resolved_comment_count,
            COALESCE(walkthrough_counts.walkthrough_count, 0) AS walkthrough_count,
@@ -1250,12 +1254,12 @@ export class RvwDatabase {
          LEFT JOIN structure_counts ON structure_counts.pull_request_id = pr.id
          ORDER BY pr.github_updated_at DESC, pr.id DESC`,
       )
-      .all(hideClosedOrMergedValue, limit, offset) as DbRow[];
+      .all(hideClosedOrMergedValue, hideArchived ? 1 : 0, limit, offset) as DbRow[];
     const totalRow = this.database
       .prepare(
-        "SELECT COUNT(*) AS total FROM pull_requests WHERE ? = 0 OR github_state IS NULL OR github_state = 'OPEN'",
+        "SELECT COUNT(*) AS total FROM pull_requests WHERE (? = 0 OR github_state IS NULL OR github_state = 'OPEN') AND (? = 0 OR archived_at IS NULL)",
       )
-      .get(hideClosedOrMergedValue) as DbRow | undefined;
+      .get(hideClosedOrMergedValue, hideArchived ? 1 : 0) as DbRow | undefined;
     if (!totalRow) throw new RvwError("DATABASE_ERROR", "Pull Request件数を取得できません。");
     return {
       items: rows.map((row) => ({
@@ -1269,6 +1273,7 @@ export class RvwDatabase {
         githubState: nullableGitHubPullRequestState(row, "github_state"),
         githubIsDraft: nullableBoolean(row, "github_is_draft"),
         githubApprovalCount: nullableNumber(row, "github_approval_count"),
+        archivedAt: nullableString(row, "archived_at"),
         unresolvedCommentCount: numberValue(row, "unresolved_comment_count"),
         resolvedCommentCount: numberValue(row, "resolved_comment_count"),
         walkthroughCount: numberValue(row, "walkthrough_count"),
@@ -1276,6 +1281,21 @@ export class RvwDatabase {
       })),
       total: numberValue(totalRow, "total"),
     };
+  }
+
+  setPullRequestArchived(id: string, archived: boolean): PullRequest {
+    return this.immediateTransaction(() => {
+      const current = this.getPullRequest(id);
+      if (!current)
+        throw new RvwError("PR_NOT_FOUND", "Pull Requestが見つかりません。", { status: 404 });
+      if ((current.archivedAt !== null) === archived) return current;
+      const archivedAt = archived ? new Date().toISOString() : null;
+      this.database
+        .prepare("UPDATE pull_requests SET archived_at = ? WHERE id = ?")
+        .run(archivedAt, id);
+      this.incrementDomainRevisions(["pullRequests"]);
+      return { ...current, archivedAt };
+    });
   }
 
   updatePullRequestGitHubStatuses(updates: PullRequestGitHubStatusUpdate[]): void {

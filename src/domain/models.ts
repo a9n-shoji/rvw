@@ -46,6 +46,7 @@ export interface PullRequest extends PullRequestIdentity {
   githubState: GitHubPullRequestState | null;
   githubIsDraft: boolean | null;
   githubApprovalCount: number | null;
+  archivedAt: string | null;
   fetchedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -62,6 +63,7 @@ export interface PullRequestSummary {
   githubState: GitHubPullRequestState | null;
   githubIsDraft: boolean | null;
   githubApprovalCount: number | null;
+  archivedAt: string | null;
   unresolvedCommentCount: number;
   resolvedCommentCount: number;
   walkthroughCount: number;

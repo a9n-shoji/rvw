@@ -45,6 +45,7 @@ function pushRoute(route: Extract<AppRoute, { kind: "list" | "review" }>): void 
 
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const [route, setRoute] = useState<AppRoute>(routeFromLocation);
+  const [hideArchived, setHideArchived] = useState(true);
   const [hideClosedOrMerged, setHideClosedOrMerged] = useState(true);
   const heartbeat = useQuery({
     queryKey: ["change-sequence"],
@@ -92,6 +93,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     return (
       <PullRequestListScreen
         hideClosedOrMerged={hideClosedOrMerged}
+        hideArchived={hideArchived}
+        onHideArchivedChange={setHideArchived}
         changeSequence={heartbeat.data?.changeSequence}
         heartbeatError={heartbeat.error}
         offset={route.offset}

@@ -306,6 +306,16 @@ export async function dispatchAgentSocketRequest(
       const input = parseOperationInput("doctor", request.input);
       return await service.doctor(input.cwd);
     }
+    case "pr.list": {
+      return service.listPullRequests(parseOperationInput("pr.list", request.input));
+    }
+    case "pr.archive": {
+      const input = parseOperationInput("pr.archive", request.input);
+      return service.setPullRequestArchived(
+        service.resolveStoredPullRequest(input.reference).id,
+        input.archived,
+      );
+    }
     case "pr.refresh": {
       const input = parseOperationInput("pr.refresh", request.input);
       return await service.refreshByReference(input.reference);
