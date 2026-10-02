@@ -148,7 +148,7 @@ test("refreshes eligible saved Pull Request statuses only after an explicit clic
 
   await expect(page.getByRole("status")).toHaveText("2件のPRステータスを更新しました。");
   await expect(
-    page.getByRole("heading", { name: "Closed / Merged以外のPull Requestはありません" }),
+    page.getByRole("heading", { name: "条件に一致するPull Requestはありません" }),
   ).toBeVisible();
   await expect
     .poll(async () => {
@@ -190,9 +190,10 @@ test("shows an actionable empty state when no Pull Requests are saved", async ({
       name: "Closed / Merged を非表示",
     });
     await expect(
-      page.getByRole("heading", { name: "Closed / Merged以外のPull Requestはありません" }),
+      page.getByRole("heading", { name: "条件に一致するPull Requestはありません" }),
     ).toBeVisible();
     await hideClosedOrMergedFilter.uncheck();
+    await page.getByRole("checkbox", { name: "アーカイブ済みを非表示" }).uncheck();
     await expect(
       page.getByRole("heading", { name: "まだレビュー対象が登録されていません" }),
     ).toBeVisible();
@@ -244,7 +245,7 @@ test("moves to the last valid page when a status refresh invalidates the current
   await expect(page.getByText("1–50 / 50")).toBeVisible();
   await expect(page.locator(".pull-request-row")).toHaveCount(50);
   await expect(
-    page.getByRole("heading", { name: "Closed / Merged以外のPull Requestはありません" }),
+    page.getByRole("heading", { name: "条件に一致するPull Requestはありません" }),
   ).toHaveCount(0);
 });
 
@@ -303,3 +304,116 @@ test("refreshes relative timestamps while the list remains open", async ({ page 
 
   await expect(updatedAt).not.toHaveText(initialLabel);
 });
+
+test("archives and restores from the list without opening the PR", async ({ page }) => {
+  await page.goto("/");
+  const filter = page.getByRole("checkbox", { name: "アーカイブ済みを非表示" });
+  await expect(filter).toBeChecked();
+  await page.getByRole("button", { name: "acme/review-repo#7 アーカイブ", exact: true }).click();
+  await expect(page.locator(".pull-request-row")).toHaveCount(1);
+  await expect(page).toHaveURL(/\/$/);
+  await filter.uncheck();
+  await expect(page.locator(".pull-request-row")).toHaveCount(2);
+  await expect(page.locator(".pull-request-row").first()).toContainText("アーカイブ済み");
+  await page.locator(".pull-request-row").first().click();
+  await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");
+  await page.goBack();
+  await expect(filter).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "acme/review-repo#7 アーカイブ解除", exact: true })
+    .click();
+  await expect(page.getByText("アーカイブ済み", { exact: true })).toHaveCount(0);
+  await filter.check();
+  await expect(page.locator(".pull-request-row")).toHaveCount(2);
+});
+
+test("reflects external archives and corrects an emptied final page", async ({ page, request }) => {
+  await request.post("/api/test/pull-request-list-paginated", { data: { enabled: true } });
+  await page.goto("/?offset=50");
+  await expect(page.getByText("51–51 / 51")).toBeVisible();
+  await request.patch(`/api/pull-requests/${pullRequestId}/archive`, { data: { archived: true } });
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("1–50 / 50")).toBeVisible();
+});
+
+test("keeps a row and reports a failed archive", async ({ page }) => {
+  await page.route("**/api/pull-requests/*/archive", (route) =>
+    route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { code: "DATABASE_ERROR", message: "Archive failed" },
+      }),
+    }),
+  );
+  await page.goto("/");
+  await page.getByRole("button", { name: "acme/review-repo#7 アーカイブ", exact: true }).click();
+  await expect(page.getByText("Archive failed")).toBeVisible();
+  await expect(page.locator(".pull-request-row")).toHaveCount(2);
+});
+
+test("keeps archive controls separate from content at desktop and narrow widths", async ({
+  page,
+}) => {
+  for (const width of [1440, 1280, 1100, 800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/");
+    await expect(page.locator(".pull-request-row")).toHaveCount(2);
+    const overlaps = await page.locator(".pull-request-row-container").evaluateAll((rows) =>
+      rows.map((row) => {
+        const button = row.querySelector("button")!.getBoundingClientRect();
+        return [...row.querySelectorAll("a > span, a > strong")].some((content) => {
+          const bounds = content.getBoundingClientRect();
+          return (
+            bounds.left < button.right &&
+            bounds.right > button.left &&
+            bounds.top < button.bottom &&
+            bounds.bottom > button.top
+          );
+        });
+      }),
+    );
+    expect(overlaps, `width=${width}`).toEqual([false, false]);
+  }
+});
+
+for (const source of ["list button", "external update"] as const) {
+  test(`preserves Back history after final-page archive via ${source}`, async ({
+    page,
+    request,
+  }) => {
+    await request.post("/api/test/pull-request-list-paginated", { data: { enabled: true } });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page.getByRole("link", { name: "Pull Request一覧へ" }).click();
+    await expect(page.getByText("1–50 / 51")).toBeVisible();
+    await page.getByRole("button", { name: "次へ", exact: true }).click();
+    await expect(page.getByText("51–51 / 51")).toBeVisible();
+    const historyLength = await page.evaluate(() => history.length);
+
+    if (source === "list button") {
+      await page
+        .getByRole("button", { name: "acme/review-repo#7 アーカイブ", exact: true })
+        .click();
+    } else {
+      await request.patch(`/api/pull-requests/${pullRequestId}/archive`, {
+        data: { archived: true },
+      });
+    }
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));
+    await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");
+    await page.goForward();
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+  });
+}

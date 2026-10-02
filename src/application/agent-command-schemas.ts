@@ -6,6 +6,8 @@ import {
   structureBackboneNodeIds,
 } from "../domain/structure-presentation.js";
 import {
+  DEFAULT_PULL_REQUEST_LIST_LIMIT,
+  MAX_PULL_REQUEST_LIST_LIMIT,
   DEFAULT_COMMENT_LIST_LIMIT,
   DEFAULT_WALKTHROUGH_LIST_LIMIT,
   GIT_OBJECT_ID_PATTERN,
@@ -534,6 +536,20 @@ export const structurePublishInputSchema = z
 
 export const agentCommandInputSchemas = {
   doctor: z.object({ cwd: nonEmptyString }).strict(),
+  "pr.list": z
+    .object({
+      offset: z.number().int().min(0).default(0),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_PULL_REQUEST_LIST_LIMIT)
+        .default(DEFAULT_PULL_REQUEST_LIST_LIMIT),
+      hideClosedOrMerged: z.boolean().default(true),
+      hideArchived: z.boolean().default(true),
+    })
+    .strict(),
+  "pr.archive": z.object({ reference: nonEmptyString, archived: z.boolean() }).strict(),
   "pr.refresh": z.object({ reference: nonEmptyString }).strict(),
   "pr.sync": pullRequestSyncInputSchema.extend({
     repositoryPath: nonEmptyString.optional(),

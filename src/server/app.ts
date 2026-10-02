@@ -24,6 +24,7 @@ import {
   editCommentPostSchema,
   openPullRequestSchema,
   pullRequestListQuerySchema,
+  pullRequestArchiveSchema,
   replySchema,
   resolveCodeReferencePlacementSchema,
   resolveCommentPlacementsSchema,
@@ -223,9 +224,18 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const query = pullRequestListQuerySchema.parse({
       offset: context.req.query("offset"),
       limit: context.req.query("limit"),
+      hideArchived: context.req.query("hideArchived"),
       hideClosedOrMerged: context.req.query("hideClosedOrMerged"),
     });
     return context.json({ ok: true, ...service.listPullRequests(query) });
+  });
+
+  app.patch("/api/pull-requests/:id/archive", async (context) => {
+    const input = pullRequestArchiveSchema.parse(await context.req.json());
+    return context.json({
+      ok: true,
+      pullRequest: service.setPullRequestArchived(context.req.param("id"), input.archived),
+    });
   });
 
   app.post("/api/pull-requests/refresh-statuses", async (context) =>

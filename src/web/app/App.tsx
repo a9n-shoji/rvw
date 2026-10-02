@@ -30,7 +30,10 @@ function routeFromLocation(restoreReadingHistory = false): AppRoute {
     : { kind: "invalid" };
 }
 
-function pushRoute(route: Extract<AppRoute, { kind: "list" | "review" }>): void {
+function navigateRoute(
+  route: Extract<AppRoute, { kind: "list" | "review" }>,
+  options: { replace?: boolean } = {},
+): void {
   const url = new URL(window.location.href);
   url.hash = "";
   if (route.kind === "review") {
@@ -40,11 +43,13 @@ function pushRoute(route: Extract<AppRoute, { kind: "list" | "review" }>): void 
     if (route.offset === 0) url.searchParams.delete("offset");
     else url.searchParams.set("offset", String(route.offset));
   }
-  window.history.pushState({}, "", url);
+  if (options.replace) window.history.replaceState({}, "", url);
+  else window.history.pushState({}, "", url);
 }
 
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const [route, setRoute] = useState<AppRoute>(routeFromLocation);
+  const [hideArchived, setHideArchived] = useState(true);
   const [hideClosedOrMerged, setHideClosedOrMerged] = useState(true);
   const heartbeat = useQuery({
     queryKey: ["change-sequence"],
@@ -66,17 +71,20 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       kind: "list",
       offset: listOffset(new URL(window.location.href).searchParams),
     } as const;
-    pushRoute(nextRoute);
+    navigateRoute(nextRoute);
     setRoute(nextRoute);
   }, []);
-  const navigateToListOffset = useCallback((offset: number): void => {
-    const nextRoute = { kind: "list", offset } as const;
-    pushRoute(nextRoute);
-    setRoute(nextRoute);
-  }, []);
+  const navigateToListOffset = useCallback(
+    (offset: number, options?: { replace?: boolean }): void => {
+      const nextRoute = { kind: "list", offset } as const;
+      navigateRoute(nextRoute, options);
+      setRoute(nextRoute);
+    },
+    [],
+  );
   const navigateToPullRequest = useCallback((pullRequestId: string): void => {
     const nextRoute = { kind: "review", pullRequestId, restoreReadingHistory: false } as const;
-    pushRoute(nextRoute);
+    navigateRoute(nextRoute);
     setRoute(nextRoute);
   }, []);
 
@@ -92,6 +100,8 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     return (
       <PullRequestListScreen
         hideClosedOrMerged={hideClosedOrMerged}
+        hideArchived={hideArchived}
+        onHideArchivedChange={setHideArchived}
         changeSequence={heartbeat.data?.changeSequence}
         heartbeatError={heartbeat.error}
         offset={route.offset}

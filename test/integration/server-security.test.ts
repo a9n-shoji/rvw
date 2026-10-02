@@ -621,3 +621,40 @@ describe("local HTTP security", () => {
     database.close();
   });
 });
+
+describe("Pull Request archive API", () => {
+  it("validates writes and exposes persistent archive filtering without GitHub or Git access", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:" });
+    const id = registerPullRequest(database);
+    const app = createApp(new RvwService(database, new GitClient(), github), {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const base = "http://127.0.0.1:4321";
+    const headers = { host: "127.0.0.1:4321", origin: base, "content-type": "application/json" };
+    const write = (body: unknown, target = id, origin = base) =>
+      app.request(`${base}/api/pull-requests/${target}/archive`, {
+        method: "PATCH",
+        headers: { ...headers, origin },
+        body: JSON.stringify(body),
+      });
+    expect((await write({ archived: true }, id, "https://evil.example")).status).toBe(403);
+    expect((await write({ archived: "true" })).status).toBe(400);
+    expect((await write({ archived: true }, "missing")).status).toBe(404);
+    expect((await write({ archived: true })).status).toBe(200);
+    const sequence = database.getChangeSequence();
+    expect((await write({ archived: true })).status).toBe(200);
+    expect(database.getChangeSequence()).toBe(sequence);
+    expect(
+      await (await app.request(`${base}/api/pull-requests`, { headers })).json(),
+    ).toMatchObject({ items: [], pagination: { total: 0 } });
+    expect(
+      await (await app.request(`${base}/api/pull-requests?hideArchived=false`, { headers })).json(),
+    ).toMatchObject({ items: [{ pullRequestId: id, archivedAt: expect.any(String) as unknown }] });
+    expect(
+      (await app.request(`${base}/api/pull-requests?hideArchived=invalid`, { headers })).status,
+    ).toBe(400);
+    expect((await write({ archived: false })).status).toBe(200);
+    expect(database.getPullRequest(id)?.archivedAt).toBeNull();
+    database.close();
+  });
+});

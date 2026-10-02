@@ -58,10 +58,14 @@ function PullRequestRow({
   item,
   now,
   onOpen,
+  onArchive,
+  archivePending,
 }: {
   item: PullRequestSummary;
   now: number;
   onOpen: (pullRequestId: string) => void;
+  onArchive: (item: PullRequestSummary) => void;
+  archivePending: boolean;
 }) {
   const created = datePresentation(item.githubCreatedAt, now);
   const updated = datePresentation(item.githubUpdatedAt, now);
@@ -78,68 +82,84 @@ function PullRequestRow({
     onOpen(item.pullRequestId);
   };
   return (
-    <a className="pull-request-row" href={href} onClick={handleClick}>
-      <span className="pull-request-row__identity">
-        <span className="pull-request-row__reference">
-          <span className="pull-request-row__repository">
-            {item.owner}/{item.repository}
+    <div className="pull-request-row-container">
+      <a className="pull-request-row" href={href} onClick={handleClick}>
+        <span className="pull-request-row__identity">
+          <span className="pull-request-row__reference">
+            <span className="pull-request-row__repository">
+              {item.owner}/{item.repository}
+            </span>
+            <span className="pull-request-row__number">#{item.number}</span>
           </span>
-          <span className="pull-request-row__number">#{item.number}</span>
+          {(status || approvalCount > 0) && (
+            <span className="pull-request-row__badges">
+              {status && (
+                <span
+                  className={`pull-request-status pull-request-status--${status.modifier}`}
+                  aria-label={`Pull Request status: ${status.label}`}
+                >
+                  {status.label}
+                </span>
+              )}
+              {approvalCount > 0 && (
+                <span
+                  className="pull-request-approval"
+                  aria-label={`${approvalCount} approved review${approvalCount === 1 ? "" : "s"}`}
+                >
+                  {approvalCount} Approved
+                </span>
+              )}
+            </span>
+          )}
         </span>
-        {(status || approvalCount > 0) && (
-          <span className="pull-request-row__badges">
-            {status && (
-              <span
-                className={`pull-request-status pull-request-status--${status.modifier}`}
-                aria-label={`Pull Request status: ${status.label}`}
-              >
-                {status.label}
-              </span>
-            )}
-            {approvalCount > 0 && (
-              <span
-                className="pull-request-approval"
-                aria-label={`${approvalCount} approved review${approvalCount === 1 ? "" : "s"}`}
-              >
-                {approvalCount} Approved
-              </span>
-            )}
+        <strong className="pull-request-row__title">
+          {item.title}
+          {item.archivedAt && <span className="pull-request-archived-label">アーカイブ済み</span>}
+        </strong>
+        <span className="pull-request-row__counts" aria-label="レビュー項目数">
+          <span className="pull-request-count pull-request-count--unresolved">
+            {item.unresolvedCommentCount} unresolved
           </span>
-        )}
-      </span>
-      <strong className="pull-request-row__title">{item.title}</strong>
-      <span className="pull-request-row__counts" aria-label="レビュー項目数">
-        <span className="pull-request-count pull-request-count--unresolved">
-          {item.unresolvedCommentCount} unresolved
+          <span className="pull-request-count pull-request-count--resolved">
+            {item.resolvedCommentCount} resolved
+          </span>
+          <span className="pull-request-count pull-request-count--walkthrough">
+            {item.walkthroughCount} walkthroughs
+          </span>
+          <span className="pull-request-count pull-request-count--structure">
+            {item.structureCount} {item.structureCount === 1 ? "structure" : "structures"}
+          </span>
         </span>
-        <span className="pull-request-count pull-request-count--resolved">
-          {item.resolvedCommentCount} resolved
+        <span className="pull-request-row__date">
+          <span>作成</span>
+          <time dateTime={item.githubCreatedAt ?? undefined} title={created.exact}>
+            {created.label}
+          </time>
         </span>
-        <span className="pull-request-count pull-request-count--walkthrough">
-          {item.walkthroughCount} walkthroughs
+        <span className="pull-request-row__date pull-request-row__date--updated">
+          <span>更新</span>
+          <time dateTime={item.githubUpdatedAt} title={updated.exact}>
+            {updated.label}
+          </time>
         </span>
-        <span className="pull-request-count pull-request-count--structure">
-          {item.structureCount} {item.structureCount === 1 ? "structure" : "structures"}
-        </span>
-      </span>
-      <span className="pull-request-row__date">
-        <span>作成</span>
-        <time dateTime={item.githubCreatedAt ?? undefined} title={created.exact}>
-          {created.label}
-        </time>
-      </span>
-      <span className="pull-request-row__date pull-request-row__date--updated">
-        <span>更新</span>
-        <time dateTime={item.githubUpdatedAt} title={updated.exact}>
-          {updated.label}
-        </time>
-      </span>
-    </a>
+      </a>
+      <button
+        type="button"
+        className="button--quiet pull-request-archive-button"
+        disabled={archivePending}
+        onClick={() => onArchive(item)}
+        aria-label={`${item.owner}/${item.repository}#${item.number} ${item.archivedAt ? "アーカイブ解除" : "アーカイブ"}`}
+      >
+        {item.archivedAt ? "アーカイブ解除" : "アーカイブ"}
+      </button>
+    </div>
   );
 }
 
 export function PullRequestListScreen({
   hideClosedOrMerged,
+  hideArchived,
+  onHideArchivedChange,
   changeSequence,
   heartbeatError,
   offset,
@@ -148,21 +168,33 @@ export function PullRequestListScreen({
   onOpenPullRequest,
 }: {
   hideClosedOrMerged: boolean;
+  hideArchived: boolean;
+  onHideArchivedChange: (hideArchived: boolean) => void;
   changeSequence: number | undefined;
   heartbeatError: unknown;
   offset: number;
   onHideClosedOrMergedChange: (hideClosedOrMerged: boolean) => void;
-  onNavigateToOffset: (offset: number) => void;
+  onNavigateToOffset: (offset: number, options?: { replace?: boolean }) => void;
   onOpenPullRequest: (pullRequestId: string) => void;
 }) {
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const listQuery = useQuery({
-    queryKey: ["pull-request-list", offset, hideClosedOrMerged, changeSequence],
+    queryKey: ["pull-request-list", offset, hideClosedOrMerged, hideArchived, changeSequence],
     queryFn: async () =>
       await api<PullRequestListResponse>(
-        `/api/pull-requests?offset=${offset}&limit=${PAGE_LIMIT}&hideClosedOrMerged=${hideClosedOrMerged}`,
+        `/api/pull-requests?offset=${offset}&limit=${PAGE_LIMIT}&hideClosedOrMerged=${hideClosedOrMerged}&hideArchived=${hideArchived}`,
       ),
     placeholderData: (previousData) => previousData,
+  });
+  const archiveMutation = useMutation({
+    mutationFn: async (item: PullRequestSummary) =>
+      await api(`/api/pull-requests/${item.pullRequestId}/archive`, {
+        ...jsonRequest({ archived: !item.archivedAt }),
+        method: "PATCH",
+      }),
+    onSuccess: async () => {
+      await listQuery.refetch();
+    },
   });
   const statusRefresh = useMutation({
     mutationFn: async () =>
@@ -171,21 +203,18 @@ export function PullRequestListScreen({
         jsonRequest({}),
       ),
     onSuccess: async () => {
-      const result = await listQuery.refetch();
-      const refreshedPagination = result.data?.pagination;
-      if (
-        refreshedPagination &&
-        refreshedPagination.total > 0 &&
-        refreshedPagination.offset >= refreshedPagination.total
-      ) {
-        onNavigateToOffset(
-          Math.floor((refreshedPagination.total - 1) / refreshedPagination.limit) *
-            refreshedPagination.limit,
-        );
-      }
+      await listQuery.refetch();
     },
   });
   const pagination = listQuery.data?.pagination;
+  useEffect(() => {
+    if (!pagination || listQuery.isPlaceholderData) return;
+    const lastOffset = Math.max(
+      0,
+      Math.floor((pagination.total - 1) / pagination.limit) * pagination.limit,
+    );
+    if (offset > lastOffset) onNavigateToOffset(lastOffset, { replace: true });
+  }, [pagination, listQuery.isPlaceholderData, offset, onNavigateToOffset]);
   const rangeLabel = useMemo(() => {
     if (!pagination || pagination.total === 0) return null;
     const start = pagination.offset + 1;
@@ -226,6 +255,17 @@ export function PullRequestListScreen({
           <label className="pull-request-list-filter">
             <input
               type="checkbox"
+              checked={hideArchived}
+              onChange={(event) => {
+                onHideArchivedChange(event.target.checked);
+                if (offset !== 0) onNavigateToOffset(0);
+              }}
+            />
+            アーカイブ済みを非表示
+          </label>
+          <label className="pull-request-list-filter">
+            <input
+              type="checkbox"
               checked={hideClosedOrMerged}
               onChange={(event) => {
                 onHideClosedOrMergedChange(event.target.checked);
@@ -235,7 +275,9 @@ export function PullRequestListScreen({
             Closed / Merged を非表示
           </label>
         </div>
-        <ErrorNotice error={heartbeatError ?? listQuery.error ?? statusRefresh.error} />
+        <ErrorNotice
+          error={heartbeatError ?? listQuery.error ?? archiveMutation.error ?? statusRefresh.error}
+        />
         {!statusRefresh.isPending && statusRefresh.data && (
           <div
             className={`pull-request-status-refresh-result${
@@ -272,12 +314,14 @@ export function PullRequestListScreen({
               r
             </div>
             <h2>
-              {hideClosedOrMerged
-                ? "Closed / Merged以外のPull Requestはありません"
+              {hideClosedOrMerged || hideArchived
+                ? "条件に一致するPull Requestはありません"
                 : "まだレビュー対象が登録されていません"}
             </h2>
-            {hideClosedOrMerged ? (
-              <p>Closed / Mergedを表示するにはfilterを解除してください。</p>
+            {hideClosedOrMerged || hideArchived ? (
+              <p>
+                アーカイブ済みやClosed / Mergedを表示するには非表示のチェックを解除してください。
+              </p>
             ) : (
               <p>
                 <code>rvw open &lt;PR URL&gt;</code> でPull Requestを開くと、ここに表示されます。
@@ -299,6 +343,8 @@ export function PullRequestListScreen({
                 item={item}
                 now={relativeTimeNow}
                 onOpen={onOpenPullRequest}
+                onArchive={(item) => archiveMutation.mutate(item)}
+                archivePending={archiveMutation.isPending}
               />
             ))}
           </section>

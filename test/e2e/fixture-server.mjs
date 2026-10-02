@@ -62,6 +62,7 @@ const activeStructures = repositoryFixture
 const longStressDocument = createLongStressDocument();
 const activeViewers = new Set();
 const releasedViewers = new Set();
+const archivedPullRequests = new Map();
 let changeSequence = 0;
 const revisions = {
   pullRequests: 0,
@@ -580,6 +581,7 @@ app.post("/api/test/pull-request-list-paginated", async (context) => {
 });
 
 app.post("/api/test/reset-pull-request-list", (context) => {
+  archivedPullRequests.clear();
   pullRequestListEmpty = false;
   pullRequestListPaginated = false;
   pullRequestStatusRefreshCount = 0;
@@ -762,9 +764,13 @@ app.get("/api/pull-requests", (context) => {
     : pullRequestListPaginated
       ? [...paginatedItems, currentSummary]
       : [currentSummary, ...statusFixtureItems];
-  const items = hideClosedOrMerged
-    ? allItems.filter((item) => item.githubState === null || item.githubState === "OPEN")
-    : allItems;
+  const items = allItems
+    .map((item) => ({ ...item, archivedAt: archivedPullRequests.get(item.pullRequestId) ?? null }))
+    .filter(
+      (item) =>
+        (!hideClosedOrMerged || item.githubState === null || item.githubState === "OPEN") &&
+        (context.req.query("hideArchived") === "false" || item.archivedAt === null),
+    );
   const pageItems = items.slice(offset, offset + limit);
   const hasMore = offset + pageItems.length < items.length;
   return context.json({
@@ -779,6 +785,14 @@ app.get("/api/pull-requests", (context) => {
       nextOffset: hasMore ? offset + pageItems.length : null,
     },
   });
+});
+
+app.patch("/api/pull-requests/:id/archive", async (context) => {
+  const { archived } = await context.req.json();
+  if (archived) archivedPullRequests.set(context.req.param("id"), new Date().toISOString());
+  else archivedPullRequests.delete(context.req.param("id"));
+  bump("pullRequests");
+  return context.json({ ok: true });
 });
 
 app.get("/api/pull-requests/:id", (context) => context.json({ ok: true, ...currentView() }));

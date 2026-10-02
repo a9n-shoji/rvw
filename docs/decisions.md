@@ -1,5 +1,16 @@
 # Architecture decisions
 
+## 2026-10-02: Store PR archives as local list organization
+
+Archive state belongs to a saved Pull Request in the local database, independently of GitHub state and
+comment resolution. A nullable timestamp records the current archive state; no review entity, user
+identity, archive history, or automatic policy is introduced. Sync and reset preserve the state.
+
+The viewer offers manual list actions, and additive CLI/socket capabilities let custom user Skills set
+an explicit state and enumerate saved PRs. Bundled Skills do not decide when to archive or restore.
+Existing detail access and status-refresh eligibility remain unchanged. This intentionally extends the
+previous list-only read interface with local organization writes, without adding Agent browser control.
+
 ## 2026-09-21: Remove browser notifications
 
 Browser Notifications did not provide reliable delivery in actual use. Remove the menu, permission
