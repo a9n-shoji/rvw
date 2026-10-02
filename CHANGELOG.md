@@ -5,6 +5,18 @@
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-02
+
+### Added
+
+- PR一覧にアーカイブ・解除と、既定ONの「アーカイブ済みを非表示」を追加。Closed / Mergedの絞り込みと独立して利用できます。
+- 独自Skillから操作できる`rvw pr archive`、`rvw pr unarchive`、`rvw pr list`と対応APIを追加。Machine protocolは6を維持し、`pullRequest.archive`と`pullRequest.list`を追加。
+
+### Changed
+
+- アーカイブ状態はローカルDBへ保存し、同期・reset後も維持。アーカイブ済みでも直接閲覧・コメントを継続できます。同梱Skillによる自動アーカイブは行いません。
+- 最終ページが空になった場合の自動補正はブラウザ履歴を置き換え、「戻る」がループしないようにしました。
+
 ## [0.10.0] - 2026-09-23
 
 ### Added
