@@ -377,3 +377,43 @@ test("keeps archive controls separate from content at desktop and narrow widths"
     expect(overlaps, `width=${width}`).toEqual([false, false]);
   }
 });
+
+for (const source of ["list button", "external update"] as const) {
+  test(`preserves Back history after final-page archive via ${source}`, async ({
+    page,
+    request,
+  }) => {
+    await request.post("/api/test/pull-request-list-paginated", { data: { enabled: true } });
+    await page.goto(`/?pullRequestId=${pullRequestId}`);
+    await page.getByRole("link", { name: "Pull Request一覧へ" }).click();
+    await expect(page.getByText("1–50 / 51")).toBeVisible();
+    await page.getByRole("button", { name: "次へ", exact: true }).click();
+    await expect(page.getByText("51–51 / 51")).toBeVisible();
+    const historyLength = await page.evaluate(() => history.length);
+
+    if (source === "list button") {
+      await page
+        .getByRole("button", { name: "acme/review-repo#7 アーカイブ", exact: true })
+        .click();
+    } else {
+      await request.patch(`/api/pull-requests/${pullRequestId}/archive`, {
+        data: { archived: true },
+      });
+    }
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+    expect(await page.evaluate(() => history.length)).toBe(historyLength);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));
+    await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");
+    await page.goForward();
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+    await page.goForward();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByText("1–50 / 50")).toBeVisible();
+  });
+}

@@ -1923,6 +1923,8 @@ tie-breakerとして固定する。
 各行はPRを開くlinkと独立したアーカイブ／解除buttonを持つ。アーカイブ表示時は状態を明示する。
 filterは一覧と詳細の往復中に保持し、再読み込み時は既定ONへ戻る。操作失敗時は行を残してerrorを表示する。
 filter後0件はチェック解除を案内する。外部変更を含めoffsetが範囲外になったら最後の有効page（0件ならoffset 0）へ移る。
+この自動補正はhistory.replaceStateで現在entryを置き換え、Backで無効pageと補正先を往復するloopを作らない。
+利用者による通常のページ移動はhistory.pushStateで履歴を残す。
 HTTP PATCHは`{ archived: boolean }`、CLIは`rvw pr archive <PR> --json`と`rvw pr unarchive <PR> --json`。
 同じ値の再設定は成功し、保存日時とchange sequenceを変えない。実際の変更だけpullRequests revisionを更新する。
 両transportは共通serviceを使い、Git/GitHubへのアクセスやviewer起動を伴わない。未登録PRはPR_NOT_FOUNDとする。

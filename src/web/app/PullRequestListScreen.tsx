@@ -174,7 +174,7 @@ export function PullRequestListScreen({
   heartbeatError: unknown;
   offset: number;
   onHideClosedOrMergedChange: (hideClosedOrMerged: boolean) => void;
-  onNavigateToOffset: (offset: number) => void;
+  onNavigateToOffset: (offset: number, options?: { replace?: boolean }) => void;
   onOpenPullRequest: (pullRequestId: string) => void;
 }) {
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
@@ -213,7 +213,7 @@ export function PullRequestListScreen({
       0,
       Math.floor((pagination.total - 1) / pagination.limit) * pagination.limit,
     );
-    if (offset > lastOffset) onNavigateToOffset(lastOffset);
+    if (offset > lastOffset) onNavigateToOffset(lastOffset, { replace: true });
   }, [pagination, listQuery.isPlaceholderData, offset, onNavigateToOffset]);
   const rangeLabel = useMemo(() => {
     if (!pagination || pagination.total === 0) return null;
