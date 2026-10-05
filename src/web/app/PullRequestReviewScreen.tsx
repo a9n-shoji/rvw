@@ -674,7 +674,10 @@ export function PullRequestReviewScreen({
   const [commentLinkError, setCommentLinkError] = useState<unknown>(null);
   const [commentLinkRetry, setCommentLinkRetry] = useState(0);
   const [linkedCommentId, setLinkedCommentId] = useState<string | null>(null);
-  const replaceNextReadingEntry = useRef(false);
+  const commentLinkAttempt = useRef<{
+    retry: number;
+    status: "processing" | "done" | "failed";
+  } | null>(null);
 
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
     setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
@@ -904,6 +907,7 @@ export function PullRequestReviewScreen({
       pane: DocumentPaneId,
       locator: ReadingLocator,
       hash?: string,
+      replace = false,
     ): void => {
       if (!pullRequestId || !readingHistoryReady.current) return;
       cancelReadingHistoryScrollSnapshot();
@@ -928,8 +932,7 @@ export function PullRequestReviewScreen({
       }
       const url = new URL(window.location.href);
       url.hash = hash ?? "";
-      if (replaceNextReadingEntry.current) {
-        replaceNextReadingEntry.current = false;
+      if (replace) {
         window.history.replaceState(
           readingHistoryState(window.history.state, destination),
           "",
@@ -1036,6 +1039,7 @@ export function PullRequestReviewScreen({
       targetPane?: DocumentPaneId,
       locator?: ReadingLocator,
       resetHorizontal = true,
+      replace = false,
     ): void => {
       const documentKey = documentTabKey(document);
       const pane = targetPane ?? "left";
@@ -1045,7 +1049,7 @@ export function PullRequestReviewScreen({
           kind: "scroll",
           top: documentScrollPositions.current.get(documentPaneTabKey(pane, document)) ?? 0,
         } satisfies ReadingLocator);
-      pushReadingHistory(document, pane, destinationLocator);
+      pushReadingHistory(document, pane, destinationLocator, undefined, replace);
       openWorkspaceDocument(document, pane);
       if (destinationLocator.kind === "line") {
         requestLineNavigation(documentKey, pane, destinationLocator, resetHorizontal);
@@ -2153,6 +2157,7 @@ export function PullRequestReviewScreen({
     comment: ReviewComment,
     placement: CommentPlacement | null,
     openInRightPane: boolean,
+    replace = false,
   ): Promise<void> => {
     const target = comment.target;
     const targetPane: DocumentPaneId = openInRightPane ? "right" : "left";
@@ -2161,11 +2166,17 @@ export function PullRequestReviewScreen({
       startLine: number | null,
       endLine: number | null,
     ): void => {
-      navigateToDocument(document, targetPane, {
-        kind: "line",
-        line: startLine,
-        ...(endLine === null ? {} : { endLine }),
-      });
+      navigateToDocument(
+        document,
+        targetPane,
+        {
+          kind: "line",
+          line: startLine,
+          ...(endLine === null ? {} : { endLine }),
+        },
+        true,
+        replace,
+      );
     };
     setCommentsExpanded(true);
     setActiveCommentId(comment.id);
@@ -2572,7 +2583,6 @@ export function PullRequestReviewScreen({
   commentLinkAction.current = async (comment, placement) => {
     const path = initialCommentLink.get("path");
     const sourceOid = initialCommentLink.get("sourceOid");
-    replaceNextReadingEntry.current = true;
     if (path !== null || sourceOid !== null) {
       if (!path || !sourceOid || !/^[0-9a-f]{40}$/.test(sourceOid))
         throw new Error("コード参照URLが不正です。");
@@ -2592,10 +2602,34 @@ export function PullRequestReviewScreen({
         { kind: "repository-file", path, sourceOid, comparisonPolicy: "exact-source" },
         "left",
         { kind: "line", line, ...(endLine === null ? {} : { endLine }) },
+        true,
+        true,
+      );
+      setCommentsExpanded(true);
+    } else if (
+      comment.target.kind === "document" &&
+      comment.target.documentKind === "repository-file"
+    ) {
+      const target = comment.target;
+      navigateToDocument(
+        {
+          kind: "repository-file",
+          path: target.path,
+          sourceOid: target.sourceOid,
+          comparisonPolicy: "exact-source",
+        },
+        "left",
+        {
+          kind: "line",
+          line: target.startLine,
+          ...(target.endLine === null ? {} : { endLine: target.endLine }),
+        },
+        true,
+        true,
       );
       setCommentsExpanded(true);
     } else {
-      await openCommentTarget(comment, placement, false);
+      await openCommentTarget(comment, placement, false, true);
     }
     setLinkedCommentId(comment.id);
     activateSidebarComment(comment.id);
@@ -2608,7 +2642,12 @@ export function PullRequestReviewScreen({
   );
   useEffect(() => {
     const id = initialCommentLink.get("commentId");
-    if (!id || !commentLinkReady) return;
+    if (!id || !commentLinkReady || commentLinkAttempt.current?.retry === commentLinkRetry) return;
+    const attempt = {
+      retry: commentLinkRetry,
+      status: "processing" as "processing" | "done" | "failed",
+    };
+    commentLinkAttempt.current = attempt;
     let cancelled = false;
     const open = async (): Promise<void> => {
       try {
@@ -2640,11 +2679,13 @@ export function PullRequestReviewScreen({
         ) {
           setLinkedCommentId(comment.id);
           activateSidebarComment(comment.id);
+          attempt.status = "done";
           return;
         }
         await commentLinkAction.current(comment, placement);
+        attempt.status = "done";
       } catch (error) {
-        replaceNextReadingEntry.current = false;
+        attempt.status = "failed";
         if (!cancelled) {
           setCommentLinkError(error);
           setCommentsExpanded(true);
@@ -2654,6 +2695,8 @@ export function PullRequestReviewScreen({
     void open();
     return () => {
       cancelled = true;
+      if (attempt.status === "processing" && commentLinkAttempt.current === attempt)
+        commentLinkAttempt.current = null;
     };
   }, [
     initialCommentLink,

@@ -6511,3 +6511,31 @@ path.structure-edge-label-leader.selected,
     align-items: flex-start;
   }
 }
+
+.deleted-comment-drafts {
+  position: fixed;
+  z-index: 120;
+  right: 16px;
+  bottom: 16px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: 50vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 6px 24px #0003;
+}
+.deleted-comment-drafts h2 {
+  font-size: 15px;
+}
+.deleted-comment-drafts p {
+  font-size: 12px;
+}
+.deleted-comment-drafts textarea {
+  width: 100%;
+}
+.deleted-comment-drafts button {
+  margin: 8px 8px 0 0;
+}

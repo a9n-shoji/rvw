@@ -1978,10 +1978,12 @@ review commentは取り込まない。PR全体、PR本文、repository file / li
   維持し、「一覧を更新」または「新しい更新を反映」で再取得した最新の並び・条件を適用する。解決直後にthreadを消さない。削除済みthreadは除去する。
 - reply欄を常設し、返信によって解決状態を変更しない。投稿失敗時はerrorを明示し、本文を保持したまま再送できる。
   reply draftは既存のPR / comment identityで共有し、折りたたみ・絞り込み・PR往復で保持する。
+  外部削除されたthreadの未送信replyは一覧のfilterやPR遷移に依存しない回収欄へ表示し、本文コピーと明示的な破棄を提供する。自動削除しない。
   非表示PR分も含む未送信replyがある場合、reload / tab終了時にbrowser標準の警告を要求する。
 - 「PRで開く」は`pullRequestId`と`commentId`を含むURLへ遷移し、対象文書・行とsidebar threadを表示する。
   resolved threadなら解決済みfilterを選ぶ。codeはtargetのexact commitを開き、global review scopeを変更しない。
   PR本文／Walkthroughはcurrent本文への保守的mappingを使い、Outdatedなら元quoteをsidebarへ残す。
+  初期リンクは成功後のquery再取得では再実行せず、失敗後は明示的な再試行だけを許可する。履歴の置換はその遷移だけに適用する。
   URLはreload・別tabでも機能する。post内code referenceとrepository linkもexact sourceへ遷移する。
   不正／削除済みcommentや位置取得失敗は明示errorとretryにし、推測位置を開かない。
 - PR画面から一覧へのbrand linkとbrowser BackはCommentsへ戻り、同一tab sessionのfilter、展開状態、

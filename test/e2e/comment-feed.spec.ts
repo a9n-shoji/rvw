@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import type { ReadingHistoryEntry } from "../../src/web/reading-history.js";
 import type { ReviewComment } from "../../src/domain/models.js";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
@@ -321,4 +322,152 @@ test("shows one connection error and retries all displayed conversations togethe
   await feed.getByRole("button", { name: "接続を再試行", exact: true }).click();
   await expect(feed.getByRole("alert")).toHaveCount(0);
   await expect(feed.getByText("Reply received while disconnected")).toBeVisible();
+});
+
+test("opens the original commit even when a historical comment maps to the head", async ({
+  page,
+  request,
+}) => {
+  const response = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      body: "Historical source context",
+      target: {
+        kind: "document",
+        documentKind: "repository-file",
+        sourceOid: "a".repeat(40),
+        path: "src/fixture.ts",
+        startLine: 1,
+        endLine: 1,
+      },
+    },
+  });
+  const { comment } = (await response.json()) as { comment: ReviewComment };
+  created.push(comment.id);
+  const mapping = await request.post(
+    `/api/pull-requests/${pullRequestId}/comment-placements/resolve`,
+    {
+      data: {
+        commentIds: [comment.id],
+        destinations: [{ kind: "commit", oid: "b".repeat(40) }],
+      },
+    },
+  );
+  const mapped = (await mapping.json()) as {
+    comments: Array<{ placements: Array<{ placement: { outdated: boolean } }> }>;
+  };
+  expect(mapped.comments[0]!.placements[0]!.placement.outdated).toBe(false);
+  await page.goto("/?view=comments");
+  await page
+    .locator(`[data-feed-comment-id="${comment.id}"]`)
+    .getByRole("link", { name: "PRで開く" })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (history.state as { rvwReading?: ReadingHistoryEntry } | null)?.rvwReading?.document,
+      ),
+    )
+    .toMatchObject({
+      kind: "repository-file",
+      path: "src/fixture.ts",
+      sourceOid: "a".repeat(40),
+      comparisonPolicy: "exact-source",
+    });
+  await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
+});
+
+test("does not replay the initial link or replace reading history after comment fetch recovery", async ({
+  page,
+  request,
+}) => {
+  const comment = await create(request, "Initial link consumed once", true);
+  await page.goto(`/?view=comments&pullRequestId=${pullRequestId}&commentId=${comment.id}`);
+  await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
+  await page.getByRole("textbox", { name: "ファイル名を検索" }).fill("viewport-anchor.ts");
+  await page.getByRole("button", { name: "src/viewport-anchor.ts", exact: true }).click();
+  await expect(page.locator(".document-tab.active")).toContainText("viewport-anchor.ts");
+  const pane = page.locator('.document-pane[data-pane="left"]');
+  await expect(pane.locator("diffs-container")).toBeVisible();
+  await expect.poll(() => pane.evaluate((element) => element.scrollHeight)).toBeGreaterThan(1000);
+  const position = await pane.evaluate((element) => {
+    element.scrollTop = 500;
+    return element.scrollTop;
+  });
+  expect(position).toBeGreaterThan(0);
+  const before = await page.evaluate(() => ({
+    length: history.length,
+    document: (history.state as { rvwReading: ReadingHistoryEntry }).rvwReading.document,
+  }));
+  const pattern = `**/api/pull-requests/${pullRequestId}/comments?*`;
+  await page.route(pattern, (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ok: false,
+        error: { code: "TEST_FAILURE", message: "Temporary comments failure", suggestions: [] },
+      }),
+    }),
+  );
+  await request.post(`/api/comments/${comment.id}/posts`, {
+    data: { body: "Trigger failed refresh" },
+  });
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Temporary comments failure" }).first(),
+  ).toBeVisible();
+  await page.unroute(pattern);
+  const recovered = page.waitForResponse(
+    (response) =>
+      response.url().includes(`/api/pull-requests/${pullRequestId}/comments?`) && response.ok(),
+  );
+  await request.post(`/api/comments/${comment.id}/posts`, {
+    data: { body: "Trigger recovered refresh" },
+  });
+  await recovered;
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Temporary comments failure" }),
+  ).toHaveCount(0);
+  await expect(page.locator(".document-tab.active")).toContainText("viewport-anchor.ts");
+  expect(await pane.evaluate((element) => element.scrollTop)).toBe(position);
+  expect(
+    await page.evaluate(() => ({
+      length: history.length,
+      document: (history.state as { rvwReading: ReadingHistoryEntry }).rvwReading.document,
+    })),
+  ).toEqual(before);
+  await page.goBack();
+  await expect(page.locator(".document-tab.active")).toContainText("fixture.ts");
+  await page.goForward();
+  await expect(page.locator(".document-tab.active")).toContainText("viewport-anchor.ts");
+});
+
+test("recovers externally deleted reply drafts across filters and clears the unload guard on discard", async ({
+  page,
+  request,
+}) => {
+  const comment = await create(request, "Thread deleted elsewhere");
+  await page.goto("/?view=comments");
+  const thread = page.locator(`[data-feed-comment-id="${comment.id}"]`);
+  await thread.getByRole("textbox").fill("Recover this unsent reply");
+  await request.delete(`/api/comments/${comment.id}`, { data: {} });
+  const recovery = page.getByRole("complementary", { name: "削除されたスレッドの下書き" });
+  await expect(recovery.getByRole("textbox")).toHaveValue("Recover this unsent reply");
+  await page.getByRole("searchbox").fill("no-matching-thread");
+  await expect(
+    page.getByRole("heading", { name: "条件に一致するコメントはありません" }),
+  ).toBeVisible();
+  await expect(recovery.getByRole("textbox")).toHaveValue("Recover this unsent reply");
+  expect(
+    await page.evaluate(
+      () => !window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
+    ),
+  ).toBe(true);
+  await recovery.getByRole("button", { name: "下書きを破棄" }).click();
+  await expect(recovery).toHaveCount(0);
+  expect(
+    await page.evaluate(
+      () => !window.dispatchEvent(new Event("beforeunload", { cancelable: true })),
+    ),
+  ).toBe(false);
 });

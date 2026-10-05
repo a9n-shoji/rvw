@@ -4,6 +4,7 @@ import { api } from "../api.js";
 import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { CommentFeedScreen } from "./CommentFeedScreen.js";
+import { DeletedCommentDrafts } from "../components/DeletedCommentDrafts.js";
 import { hasCommentReplyDrafts } from "../comment-draft-store.js";
 import { PullRequestListScreen } from "./PullRequestListScreen.js";
 import { PullRequestReviewScreen } from "./PullRequestReviewScreen.js";
@@ -130,6 +131,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const showFeed = route.kind === "list" && route.view === "comments";
   return (
     <>
+      <DeletedCommentDrafts />
       {(feedVisited || showFeed) && (
         <div hidden={!showFeed}>
           <CommentFeedScreen

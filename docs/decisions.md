@@ -3787,3 +3787,9 @@ The index does not compute Git-backed Outdated status; placement is resolved whe
 Explicit reapplication delays new group/thread visibility and filter removals, with a visible update action,
 to preserve the reviewer's reading context. This extends the PR-only workspace entrance in section 10;
 no new comment state, GitHub synchronization, agent runtime, or persistent workspace entity is introduced.
+
+## 2026-10-05: Keep initial comment navigation and deleted reply drafts independent of refreshes
+
+Initial comment links are consumed once per mounted route, with a separate attempt for an explicit retry after failure. Background query recovery must not reopen the link or replace the user's reading history. History replacement is an argument to that navigation, not shared mutable state. Feed code targets open their exact source commit; ordinary sidebar target mapping retains its existing behavior.
+
+Reply drafts remain in the existing store after external thread deletion. An app-level recovery panel observes complete comment lists for PRs with nonempty reply drafts, independent of feed filters and mounted groups. It offers readable text, clipboard copy, and explicit per-draft discard. This adds polling only for PRs with unsent replies and avoids silently discarding text or leaving inaccessible drafts behind the unload guard.

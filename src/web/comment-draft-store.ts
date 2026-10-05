@@ -311,3 +311,17 @@ export function hasCommentReplyDrafts(): boolean {
     [...drafts.values()].some((draft) => draft.body.trim().length > 0),
   );
 }
+
+export function commentReplyDraftEntriesSnapshot(): string {
+  return JSON.stringify(
+    [...replyDraftsByPullRequest].flatMap(([pullRequestId, drafts]) =>
+      [...drafts]
+        .filter(([, draft]) => draft.body.trim())
+        .map(([contextKey, draft]) => ({
+          pullRequestId,
+          contextKey,
+          body: draft.body,
+        })),
+    ),
+  );
+}
