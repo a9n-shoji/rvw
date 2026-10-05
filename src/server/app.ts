@@ -238,6 +238,23 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     });
   });
 
+  app.get("/api/comment-feed", (context) => {
+    const input = z
+      .object({
+        status: z.enum(["unresolved", "resolved", "all"]).default("unresolved"),
+        hideClosedOrMerged: z
+          .enum(["true", "false"])
+          .default("true")
+          .transform((value) => value === "true"),
+        repository: z.string().max(300).default(""),
+        pullRequestId: z.union([z.uuid(), z.literal("")]).default(""),
+        search: z.string().max(500).default(""),
+        limit: z.coerce.number().int().min(1).max(1000).default(20),
+      })
+      .parse(context.req.query());
+    return context.json({ ok: true, ...service.database.listCommentFeed(input) });
+  });
+
   app.post("/api/pull-requests/refresh-statuses", async (context) =>
     context.json({ ok: true, ...(await service.refreshPullRequestStatuses()) }),
   );

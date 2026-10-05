@@ -305,3 +305,9 @@ export function clearCommentDraftsForPullRequest(pullRequestId: string): void {
   emptyReplyDraftByPullRequest.delete(pullRequestId);
   notifyReplyDraftListeners();
 }
+
+export function hasCommentReplyDrafts(): boolean {
+  return [...replyDraftsByPullRequest.values()].some((drafts) =>
+    [...drafts.values()].some((draft) => draft.body.trim().length > 0),
+  );
+}

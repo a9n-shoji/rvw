@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import envPaths from "env-paths";
 import type {
+  CommentFeedFilter,
+  CommentFeedIndex,
   CodeReference,
   CommentPost,
   CommentPostModifier,
@@ -2254,6 +2256,79 @@ export class RvwDatabase {
       )
       .get(id) as DbRow | undefined;
     return row ? this.mapComment(row) : null;
+  }
+
+  listCommentFeed(input: CommentFeedFilter): CommentFeedIndex {
+    const parameters: SQLInputValue[] = [
+      input.status,
+      input.status,
+      input.hideClosedOrMerged ? 1 : 0,
+      input.repository,
+      input.repository,
+      input.pullRequestId,
+      input.pullRequestId,
+      input.search,
+      input.search,
+    ];
+    const matching = `WITH matching AS (
+      SELECT c.id, c.pull_request_id,
+        (SELECT MAX(p.created_at) FROM comment_posts p WHERE p.comment_id = c.id) AS posted_at
+      FROM comments c JOIN pull_requests pr ON pr.id = c.pull_request_id
+      WHERE (? = 'all' OR CASE WHEN ? = 'resolved' THEN c.resolved_at IS NOT NULL ELSE c.resolved_at IS NULL END)
+        AND (? = 0 OR pr.github_state IS NULL OR pr.github_state = 'OPEN')
+        AND (? = '' OR pr.owner || '/' || pr.repository = ?)
+        AND (? = '' OR pr.id = ?)
+        AND (? = '' OR EXISTS (SELECT 1 FROM comment_posts p WHERE p.comment_id = c.id
+          AND instr(lower(p.body), lower(?)) > 0))
+    )`;
+    const totals = this.database
+      .prepare(
+        `${matching}
+      SELECT COUNT(*) AS comments, COUNT(DISTINCT pull_request_id) AS groups FROM matching`,
+      )
+      .get(...parameters) as DbRow;
+    const rows = this.database
+      .prepare(
+        `${matching}, page AS (
+      SELECT pull_request_id, MAX(posted_at) AS posted_at FROM matching
+      GROUP BY pull_request_id ORDER BY posted_at DESC, pull_request_id DESC LIMIT ?
+    ) SELECT m.id, m.pull_request_id FROM matching m JOIN page p ON p.pull_request_id = m.pull_request_id
+      ORDER BY p.posted_at DESC, p.pull_request_id DESC, m.posted_at DESC, m.id DESC`,
+      )
+      .all(...parameters, input.limit) as DbRow[];
+    const pullRequests = (
+      this.database
+        .prepare(
+          `SELECT id, owner, repository, number, latest_title, github_state, github_is_draft
+       FROM pull_requests ORDER BY owner, repository, number DESC`,
+        )
+        .all() as DbRow[]
+    ).map((row) => ({
+      id: stringValue(row, "id"),
+      owner: stringValue(row, "owner"),
+      repository: stringValue(row, "repository"),
+      number: numberValue(row, "number"),
+      title: stringValue(row, "latest_title"),
+      githubState: nullableString(row, "github_state") as GitHubPullRequestState | null,
+      githubIsDraft: row.github_is_draft === null ? null : row.github_is_draft === 1,
+    }));
+    const byId = new Map(pullRequests.map((pr) => [pr.id, pr]));
+    const groups: CommentFeedIndex["groups"] = [];
+    for (const row of rows) {
+      const id = stringValue(row, "pull_request_id");
+      let group = groups.at(-1);
+      if (group?.pullRequest.id !== id) {
+        group = { pullRequest: byId.get(id)!, commentIds: [] };
+        groups.push(group);
+      }
+      group.commentIds.push(stringValue(row, "id"));
+    }
+    return {
+      groups,
+      pullRequests,
+      totalGroups: numberValue(totals, "groups"),
+      totalComments: numberValue(totals, "comments"),
+    };
   }
 
   listComments(pullRequestId: string, resolved?: boolean): ReviewComment[] {

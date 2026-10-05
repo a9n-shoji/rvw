@@ -633,6 +633,50 @@ app.post("/api/test/repository-location", async (context) => {
   });
 });
 
+app.get("/api/comment-feed", (context) => {
+  const pr = currentPullRequest();
+  const pullRequest = {
+    id: pr.id,
+    owner: pr.owner,
+    repository: pr.repository,
+    number: pr.number,
+    title: pr.latestTitle,
+    githubState: pr.githubState,
+    githubIsDraft: pr.githubIsDraft,
+  };
+  const status = context.req.query("status") ?? "unresolved";
+  const search = (context.req.query("search") ?? "").toLowerCase();
+  const repository = context.req.query("repository") ?? "";
+  const requestedPr = context.req.query("pullRequestId") ?? "";
+  const visible = comments
+    .filter(
+      (comment) =>
+        (status === "all" || (status === "resolved") === (comment.resolvedAt !== null)) &&
+        (!search || comment.posts.some((post) => post.body.toLowerCase().includes(search))) &&
+        (!repository || repository === `${pr.owner}/${pr.repository}`) &&
+        (!requestedPr || requestedPr === pr.id) &&
+        (context.req.query("hideClosedOrMerged") === "false" ||
+          !["CLOSED", "MERGED"].includes(pr.githubState)),
+    )
+    .sort((a, b) => {
+      const last = (comment) =>
+        comment.posts
+          .map((post) => post.createdAt)
+          .sort()
+          .at(-1) ?? comment.createdAt;
+      return last(b).localeCompare(last(a)) || b.id.localeCompare(a.id);
+    });
+  return context.json({
+    ok: true,
+    groups: visible.length
+      ? [{ pullRequest, commentIds: visible.map((comment) => comment.id) }]
+      : [],
+    pullRequests: pullRequestListEmpty ? [] : [pullRequest],
+    totalGroups: visible.length ? 1 : 0,
+    totalComments: visible.length,
+  });
+});
+
 app.get("/api/pull-requests", (context) => {
   const offset = Math.max(0, Number(context.req.query("offset") ?? 0));
   const limit = Math.min(100, Math.max(1, Number(context.req.query("limit") ?? 50)));

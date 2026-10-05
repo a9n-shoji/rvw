@@ -458,3 +458,35 @@ export interface ResetCounts {
   structures: number;
   gitRefs: number;
 }
+
+/** SQLite-only index; thread bodies are fetched only for displayed PR groups. */
+export interface CommentFeedPullRequest {
+  id: string;
+  owner: string;
+  repository: string;
+  number: number;
+  title: string;
+  githubState: GitHubPullRequestState | null;
+  githubIsDraft: boolean | null;
+}
+
+export interface CommentFeedGroup {
+  pullRequest: CommentFeedPullRequest;
+  commentIds: string[];
+}
+
+export interface CommentFeedIndex {
+  groups: CommentFeedGroup[];
+  pullRequests: CommentFeedPullRequest[];
+  totalGroups: number;
+  totalComments: number;
+}
+
+export interface CommentFeedFilter {
+  status: "unresolved" | "resolved" | "all";
+  hideClosedOrMerged: boolean;
+  repository: string;
+  pullRequestId: string;
+  search: string;
+  limit: number;
+}

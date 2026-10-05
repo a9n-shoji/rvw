@@ -105,6 +105,7 @@ function CommentCard({
 
 export function CommentSidebar({
   comments,
+  linkedCommentId,
   walkthroughs,
   expanded,
   pullRequestId,
@@ -118,6 +119,7 @@ export function CommentSidebar({
   onOpenRepositoryLink,
 }: {
   comments: ReviewComment[];
+  linkedCommentId?: string | null;
   walkthroughs: WalkthroughSummary[];
   expanded: boolean;
   pullRequestId: string;
@@ -141,6 +143,23 @@ export function CommentSidebar({
   const queryClient = useQueryClient();
   const selectAllRef = useRef<HTMLInputElement>(null);
   const [showResolved, setShowResolved] = useState(false);
+  const lastLinkedComment = useRef<string | null>(null);
+  useEffect(() => {
+    if (!linkedCommentId || lastLinkedComment.current === linkedCommentId) return;
+    const linked = comments.find((comment) => comment.id === linkedCommentId);
+    if (!linked) return;
+    lastLinkedComment.current = linkedCommentId;
+    setShowResolved(linked.resolvedAt !== null);
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(
+          `.comment-sidebar [data-comment-id="${CSS.escape(linkedCommentId)}"]`,
+        )
+        ?.scrollIntoView({ block: "nearest" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [linkedCommentId, comments]);
+
   const [selected, setSelected] = useState(() => new Set<string>());
   const [prComposerOpen, setPrComposerOpen] = useState(false);
   const [prComment, setPrComment] = useState("");

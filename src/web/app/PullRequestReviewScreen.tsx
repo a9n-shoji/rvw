@@ -670,6 +670,12 @@ export function PullRequestReviewScreen({
   const [syncFeedback, setSyncFeedback] = useState<string | null>(null);
   const [themePreference, setThemePreference] = useState<ThemePreference>(initialThemePreference);
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [initialCommentLink] = useState(() => new URL(window.location.href).searchParams);
+  const [commentLinkError, setCommentLinkError] = useState<unknown>(null);
+  const [commentLinkRetry, setCommentLinkRetry] = useState(0);
+  const [linkedCommentId, setLinkedCommentId] = useState<string | null>(null);
+  const replaceNextReadingEntry = useRef(false);
+
   const handleCommentActiveChange = useCallback((commentId: string, active: boolean): void => {
     setActiveCommentId((current) => (active ? commentId : current === commentId ? null : current));
   }, []);
@@ -922,7 +928,16 @@ export function PullRequestReviewScreen({
       }
       const url = new URL(window.location.href);
       url.hash = hash ?? "";
-      window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
+      if (replaceNextReadingEntry.current) {
+        replaceNextReadingEntry.current = false;
+        window.history.replaceState(
+          readingHistoryState(window.history.state, destination),
+          "",
+          url,
+        );
+      } else {
+        window.history.pushState(readingHistoryState(window.history.state, destination), "", url);
+      }
     },
     [cancelReadingHistoryScrollSnapshot, pullRequestId, replaceCurrentReadingHistory],
   );
@@ -2551,6 +2566,105 @@ export function PullRequestReviewScreen({
       openCommentCodeReference(sourceOid, reference, openInRightPane ? "right" : "left"),
     [openCommentCodeReference],
   );
+  const commentLinkAction = useRef<
+    (comment: ReviewComment, placement: CommentPlacement | null) => Promise<void>
+  >(() => Promise.resolve());
+  commentLinkAction.current = async (comment, placement) => {
+    const path = initialCommentLink.get("path");
+    const sourceOid = initialCommentLink.get("sourceOid");
+    replaceNextReadingEntry.current = true;
+    if (path !== null || sourceOid !== null) {
+      if (!path || !sourceOid || !/^[0-9a-f]{40}$/.test(sourceOid))
+        throw new Error("コード参照URLが不正です。");
+      const parseLine = (key: string): number | null => {
+        const raw = initialCommentLink.get(key);
+        if (!raw) return null;
+        const value = Number(raw);
+        if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1)
+          throw new Error("参照行が不正です。");
+        return value;
+      };
+      const line = parseLine("startLine");
+      const endLine = parseLine("endLine");
+      if (endLine !== null && (line === null || endLine < line))
+        throw new Error("参照行範囲が不正です。");
+      navigateToDocument(
+        { kind: "repository-file", path, sourceOid, comparisonPolicy: "exact-source" },
+        "left",
+        { kind: "line", line, ...(endLine === null ? {} : { endLine }) },
+      );
+      setCommentsExpanded(true);
+    } else {
+      await openCommentTarget(comment, placement, false);
+    }
+    setLinkedCommentId(comment.id);
+    activateSidebarComment(comment.id);
+  };
+  const commentLinkReady = Boolean(
+    pullRequestQuery.data &&
+    commentsQuery.isSuccess &&
+    walkthroughsQuery.isSuccess &&
+    selectedOidState,
+  );
+  useEffect(() => {
+    const id = initialCommentLink.get("commentId");
+    if (!id || !commentLinkReady) return;
+    let cancelled = false;
+    const open = async (): Promise<void> => {
+      try {
+        setCommentLinkError(null);
+        const data = queryClient.getQueryData<CommentsResponse>(["comments", pullRequestId]);
+        const comment = data?.comments.find((candidate) => candidate.id === id);
+        if (!comment)
+          throw new Error("コメントが見つかりません。削除されたか、このPRに属していません。");
+        const target = comment.target;
+        let placement: CommentPlacement | null = null;
+        if (
+          target.kind === "walkthrough" ||
+          (target.kind === "document" && target.documentKind === "pull-request-markdown")
+        ) {
+          const query = new URLSearchParams({
+            pullRequestId,
+            ...(target.kind === "walkthrough"
+              ? { kind: "walkthrough", walkthroughId: target.walkthroughId }
+              : { kind: "pull-request-markdown" }),
+          });
+          placement = (
+            await api<{ placement: CommentPlacement }>(`/api/comments/${id}/placement?${query}`)
+          ).placement;
+        }
+        if (cancelled) return;
+        if (
+          restoreReadingHistoryOnMount &&
+          parseReadingHistoryEntry(window.history.state, pullRequestId)
+        ) {
+          setLinkedCommentId(comment.id);
+          activateSidebarComment(comment.id);
+          return;
+        }
+        await commentLinkAction.current(comment, placement);
+      } catch (error) {
+        replaceNextReadingEntry.current = false;
+        if (!cancelled) {
+          setCommentLinkError(error);
+          setCommentsExpanded(true);
+        }
+      }
+    };
+    void open();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    initialCommentLink,
+    commentLinkReady,
+    commentLinkRetry,
+    pullRequestId,
+    queryClient,
+    restoreReadingHistoryOnMount,
+    activateSidebarComment,
+  ]);
+
   const fetchStructureSourceResolution = useCallback(
     async (
       structureId: string,
@@ -3097,6 +3211,8 @@ export function PullRequestReviewScreen({
   const listUrl = new URL(window.location.href);
   listUrl.hash = "";
   listUrl.searchParams.delete("pullRequestId");
+  for (const key of ["commentId", "sourceOid", "path", "startLine", "endLine"])
+    listUrl.searchParams.delete(key);
   const listHref = `${listUrl.pathname}${listUrl.search}`;
 
   return (
@@ -3107,7 +3223,11 @@ export function PullRequestReviewScreen({
       <header className="topbar">
         <a
           className="brand brand-button"
-          aria-label="Pull Request一覧へ"
+          aria-label={
+            listUrl.searchParams.get("view") === "comments"
+              ? "コメント一覧へ"
+              : "Pull Request一覧へ"
+          }
           href={listHref}
           onClick={(event) => {
             if (
@@ -3444,8 +3564,15 @@ export function PullRequestReviewScreen({
             </button>
             <div className="sidebar-stack-body" hidden={!commentsExpanded}>
               <ErrorNotice error={commentsQuery.error} />
+              <ErrorNotice error={commentLinkError} />
+              {Boolean(commentLinkError) && (
+                <button onClick={() => setCommentLinkRetry((value) => value + 1)}>
+                  コメントへの移動を再試行
+                </button>
+              )}
               <CommentSidebar
                 comments={comments}
+                linkedCommentId={linkedCommentId}
                 walkthroughs={walkthroughs}
                 expanded={commentsExpanded}
                 pullRequestId={pullRequest.id}

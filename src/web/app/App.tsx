@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
 import type { ThemePreference } from "../theme.js";
 import { viewerHeartbeatRequest } from "../viewer-session.js";
+import { CommentFeedScreen } from "./CommentFeedScreen.js";
+import { hasCommentReplyDrafts } from "../comment-draft-store.js";
 import { PullRequestListScreen } from "./PullRequestListScreen.js";
 import { PullRequestReviewScreen } from "./PullRequestReviewScreen.js";
 
@@ -10,7 +12,7 @@ const pullRequestIdPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type AppRoute =
-  | { kind: "list"; offset: number }
+  | { kind: "list"; offset: number; view: "prs" | "comments" }
   | { kind: "review"; pullRequestId: string; restoreReadingHistory: boolean }
   | { kind: "invalid" };
 
@@ -24,7 +26,12 @@ function listOffset(searchParams: URLSearchParams): number {
 function routeFromLocation(restoreReadingHistory = false): AppRoute {
   const searchParams = new URL(window.location.href).searchParams;
   const pullRequestId = searchParams.get("pullRequestId");
-  if (pullRequestId === null) return { kind: "list", offset: listOffset(searchParams) };
+  if (pullRequestId === null)
+    return {
+      kind: "list",
+      offset: listOffset(searchParams),
+      view: searchParams.get("view") === "comments" ? "comments" : "prs",
+    };
   return pullRequestIdPattern.test(pullRequestId)
     ? { kind: "review", pullRequestId, restoreReadingHistory }
     : { kind: "invalid" };
@@ -40,6 +47,10 @@ function navigateRoute(
     url.searchParams.set("pullRequestId", route.pullRequestId);
   } else {
     url.searchParams.delete("pullRequestId");
+    for (const key of ["commentId", "sourceOid", "path", "startLine", "endLine"])
+      url.searchParams.delete(key);
+    if (route.view === "comments") url.searchParams.set("view", "comments");
+    else url.searchParams.delete("view");
     if (route.offset === 0) url.searchParams.delete("offset");
     else url.searchParams.set("offset", String(route.offset));
   }
@@ -50,6 +61,9 @@ function navigateRoute(
 export function App({ initialThemePreference }: { initialThemePreference: ThemePreference }) {
   const [route, setRoute] = useState<AppRoute>(routeFromLocation);
   const [hideArchived, setHideArchived] = useState(true);
+  const [feedVisited, setFeedVisited] = useState(
+    () => new URL(window.location.href).searchParams.get("view") === "comments",
+  );
   const [hideClosedOrMerged, setHideClosedOrMerged] = useState(true);
   const heartbeat = useQuery({
     queryKey: ["change-sequence"],
@@ -66,9 +80,26 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent): void => {
+      if (hasCommentReplyDrafts()) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, []);
+  const navigateUrl = useCallback((url: string): void => {
+    window.history.pushState({}, "", url);
+    if (new URL(window.location.href).searchParams.get("view") === "comments") setFeedVisited(true);
+    setRoute(routeFromLocation());
+  }, []);
   const navigateToList = useCallback((): void => {
     const nextRoute = {
       kind: "list",
+      view:
+        new URL(window.location.href).searchParams.get("view") === "comments" ? "comments" : "prs",
       offset: listOffset(new URL(window.location.href).searchParams),
     } as const;
     navigateRoute(nextRoute);
@@ -76,7 +107,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   }, []);
   const navigateToListOffset = useCallback(
     (offset: number, options?: { replace?: boolean }): void => {
-      const nextRoute = { kind: "list", offset } as const;
+      const nextRoute = { kind: "list", offset, view: "prs" } as const;
       navigateRoute(nextRoute, options);
       setRoute(nextRoute);
     },
@@ -96,28 +127,44 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
       </main>
     );
   }
-  if (route.kind === "list") {
-    return (
-      <PullRequestListScreen
-        hideClosedOrMerged={hideClosedOrMerged}
-        hideArchived={hideArchived}
-        onHideArchivedChange={setHideArchived}
-        changeSequence={heartbeat.data?.changeSequence}
-        heartbeatError={heartbeat.error}
-        offset={route.offset}
-        onHideClosedOrMergedChange={setHideClosedOrMerged}
-        onNavigateToOffset={navigateToListOffset}
-        onOpenPullRequest={navigateToPullRequest}
-      />
-    );
-  }
+  const showFeed = route.kind === "list" && route.view === "comments";
   return (
-    <PullRequestReviewScreen
-      key={route.pullRequestId}
-      initialThemePreference={initialThemePreference}
-      pullRequestId={route.pullRequestId}
-      restoreReadingHistoryOnMount={route.restoreReadingHistory}
-      onNavigateToList={navigateToList}
-    />
+    <>
+      {(feedVisited || showFeed) && (
+        <div hidden={!showFeed}>
+          <CommentFeedScreen
+            active={showFeed}
+            changeSequence={heartbeat.data?.changeSequence}
+            heartbeatError={heartbeat.error}
+            themePreference={initialThemePreference}
+            onNavigate={navigateUrl}
+          />
+        </div>
+      )}
+      {route.kind === "list" ? (
+        !showFeed && (
+          <PullRequestListScreen
+            hideClosedOrMerged={hideClosedOrMerged}
+            hideArchived={hideArchived}
+            onHideArchivedChange={setHideArchived}
+            changeSequence={heartbeat.data?.changeSequence}
+            heartbeatError={heartbeat.error}
+            offset={route.offset}
+            onHideClosedOrMergedChange={setHideClosedOrMerged}
+            onNavigateToOffset={navigateToListOffset}
+            onOpenPullRequest={navigateToPullRequest}
+            onShowComments={() => navigateUrl("/?view=comments")}
+          />
+        )
+      ) : (
+        <PullRequestReviewScreen
+          key={`${route.pullRequestId}:${new URL(window.location.href).searchParams.get("commentId") ?? ""}`}
+          initialThemePreference={initialThemePreference}
+          pullRequestId={route.pullRequestId}
+          restoreReadingHistoryOnMount={route.restoreReadingHistory}
+          onNavigateToList={navigateToList}
+        />
+      )}
+    </>
   );
 }
