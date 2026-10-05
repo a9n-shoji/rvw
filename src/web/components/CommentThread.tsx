@@ -248,6 +248,8 @@ export function CommentThread({
   onActiveChange,
   mermaidReviewDisabled = false,
   cancelDraftOnEscape = false,
+  replyRows = 1,
+  replyContextLabel,
 }: {
   comment: ReviewComment;
   variant?: CommentThreadVariant;
@@ -270,6 +272,8 @@ export function CommentThread({
   onActiveChange?: (commentId: string, active: boolean) => void;
   mermaidReviewDisabled?: boolean;
   cancelDraftOnEscape?: boolean;
+  replyRows?: number;
+  replyContextLabel?: string;
 }) {
   const queryClient = useQueryClient();
   const replyDraftKey = [variant, draftScope, comment.id].filter(Boolean).join(":");
@@ -872,10 +876,10 @@ export function CommentThread({
               }}
               placeholder="返信を入力"
               aria-label={`${label}へ返信`}
-              rows={1}
+              rows={replyRows}
             />
             <button
-              aria-label={`${label}の${variant === "sidebar" ? "サイドバー" : "コード内"}から返信を送信`}
+              aria-label={`${label}の${replyContextLabel ?? (variant === "sidebar" ? "サイドバー" : "コード内")}から返信を送信`}
               disabled={!reply.trim() || replyMutation.isPending}
               onClick={() => replyMutation.mutate()}
             >

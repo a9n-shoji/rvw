@@ -3757,3 +3757,39 @@ Git, SQLite, and browser path without a manual reload.
 - 配布はNode/OS別native binaryを増やさず、CLI側へruntime・grammar・query・licenseを同梱する。browserへparserは配らない。
 
 精度、cache、failureとresource budgetの詳細は[code-navigation.md](code-navigation.md)を参照する。
+
+## 2026-10-05: Read cross-PR conversations in an expanded, PR-grouped feed
+
+### Problem
+
+Reviewers need to read and answer conversations across saved PRs without opening each PR or expanding
+individual thread summaries. Live replies and resolving a thread must not unexpectedly move the reading position.
+
+### Choice
+
+Add a Comments view beside the existing PR index. All root posts and replies are expanded by default,
+grouped by PR, with group/thread/global collapse controls. A SQLite-only filtered index returns ordered
+thread IDs and PR metadata; only displayed PR groups load full conversations through the existing comment API.
+Groups are progressively loaded in units of 20, without splitting a PR, up to 1000 PRs before requiring narrower filters.
+Order and filter membership are a reading snapshot, explicitly reapplied, while canonical comment bodies and
+state update independently. Reuse the existing comment mutations and reply draft keys rather than a second comment model.
+
+Comment links identify the PR and thread, restore its exact source or current-document mapping, and expose
+resolved threads in the sidebar. Initial deep-link navigation replaces the viewer's initial history entry,
+so Back returns directly to the feed. Keep the visited feed mounted but inactive during PR review to retain
+scroll, expansion, and input state. The viewer's existing reading history and commit scope remain independent.
+
+### Trade-offs
+
+Full conversation readability takes priority over virtualizing individual posts. A single unusually large
+PR can therefore load many posts; the API bounds PR groups rather than splitting a conversation.
+The index does not compute Git-backed Outdated status; placement is resolved when opening the PR.
+Explicit reapplication delays new group/thread visibility and filter removals, with a visible update action,
+to preserve the reviewer's reading context. This extends the PR-only workspace entrance in section 10;
+no new comment state, GitHub synchronization, agent runtime, or persistent workspace entity is introduced.
+
+## 2026-10-05: Keep initial comment navigation and deleted reply drafts independent of refreshes
+
+Initial comment links are consumed once per mounted route, with a separate attempt for an explicit retry after failure. Background query recovery must not reopen the link or replace the user's reading history. History replacement is an argument to that navigation, not shared mutable state. Feed code targets open their exact source commit; ordinary sidebar target mapping retains its existing behavior.
+
+Reply drafts remain in the existing store after external thread deletion. An app-level recovery panel observes complete comment lists for PRs with nonempty reply drafts, independent of feed filters and mounted groups. It offers readable text, clipboard copy, and explicit per-draft discard. This adds polling only for PRs with unsent replies and avoids silently discarding text or leaving inaccessible drafts behind the unload guard.

@@ -166,6 +166,7 @@ export function PullRequestListScreen({
   onHideClosedOrMergedChange,
   onNavigateToOffset,
   onOpenPullRequest,
+  onShowComments,
 }: {
   hideClosedOrMerged: boolean;
   hideArchived: boolean;
@@ -176,6 +177,7 @@ export function PullRequestListScreen({
   onHideClosedOrMergedChange: (hideClosedOrMerged: boolean) => void;
   onNavigateToOffset: (offset: number, options?: { replace?: boolean }) => void;
   onOpenPullRequest: (pullRequestId: string) => void;
+  onShowComments: () => void;
 }) {
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now());
   const listQuery = useQuery({
@@ -241,6 +243,28 @@ export function PullRequestListScreen({
           <h1>Pull Requests</h1>
           <p>GitHubでの更新が新しい順</p>
         </div>
+        <nav className="workspace-view-switch" aria-label="一覧の表示">
+          <a href="/" aria-current="page">
+            Pull Requests
+          </a>
+          <a
+            href="/?view=comments"
+            onClick={(event) => {
+              if (
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+              )
+                return;
+              event.preventDefault();
+              onShowComments();
+            }}
+          >
+            Comments
+          </a>
+        </nav>
       </header>
       <div className="pull-request-list-content">
         <div className="pull-request-list-filters">

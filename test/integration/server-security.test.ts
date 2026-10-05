@@ -123,6 +123,75 @@ describe("local HTTP security", () => {
     database.close();
   });
 
+  it("indexes cross-PR conversations from SQLite with whole-group limits, literal reply search, and stable post order", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const first = registerPullRequest(database);
+    const second = registerPullRequest(database, { owner: "another", number: 8 });
+    const closed = registerPullRequest(database, { owner: "closed", number: 9, state: "CLOSED" });
+    const app = createApp(new RvwService(database, new GitClient(), github), {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const read = async (query: string) => {
+      const response = await app.request(`http://127.0.0.1:4321/api/comment-feed?${query}`, {
+        headers: { host: "127.0.0.1:4321" },
+      });
+      expect(response.status).toBe(200);
+      return (await response.json()) as import("../../src/domain/models.js").CommentFeedIndex;
+    };
+    vi.useFakeTimers();
+    try {
+      const create = (pullRequestId: string, body: string) =>
+        database.createComment({
+          pullRequestId,
+          createdHeadOid: "b".repeat(40),
+          target: { kind: "pull-request" },
+          body,
+        });
+      vi.setSystemTime(new Date("2026-10-01T00:00:00Z"));
+      const a = create(first, "First root");
+      const b = create(first, "Second root");
+      vi.setSystemTime(new Date("2026-10-02T00:00:00Z"));
+      create(second, "Another repository");
+      create(closed, "Closed PR");
+      vi.setSystemTime(new Date("2026-10-03T00:00:00Z"));
+      database.insertReply(a.id, { body: "Literal 100%_MATCH reply" });
+      const limited = await read("limit=1");
+      expect(limited.totalGroups).toBe(2);
+      expect(limited.totalComments).toBe(3);
+      expect(limited.groups).toHaveLength(1);
+      expect(limited.groups[0]?.pullRequest.id).toBe(first);
+      expect(limited.groups[0]?.commentIds).toEqual([a.id, b.id]);
+      expect(limited.pullRequests).toHaveLength(3);
+      expect(JSON.stringify(limited)).not.toContain("createdHeadOid");
+      expect((await read("search=100%25_match")).groups[0]?.commentIds).toEqual([a.id]);
+      expect((await read("search=%25not-a-wildcard")).groups).toEqual([]);
+      expect((await read("repository=another%2Freview-repo")).groups[0]?.pullRequest.id).toBe(
+        second,
+      );
+      expect((await read(`pullRequestId=${closed}&hideClosedOrMerged=false`)).totalGroups).toBe(1);
+      vi.setSystemTime(new Date("2026-10-04T00:00:00Z"));
+      database.setCommentResolved(b.id, true);
+      expect((await read("status=all&limit=1")).groups[0]?.commentIds).toEqual([a.id, b.id]);
+      expect((await read("status=resolved")).groups[0]?.commentIds).toEqual([b.id]);
+      expect((await read("hideClosedOrMerged=false")).totalGroups).toBe(3);
+      for (const invalid of [
+        "limit=0",
+        "limit=1001",
+        "status=invalid",
+        "pullRequestId=invalid",
+        "hideClosedOrMerged=maybe",
+      ]) {
+        const response = await app.request(`http://127.0.0.1:4321/api/comment-feed?${invalid}`, {
+          headers: { host: "127.0.0.1:4321" },
+        });
+        expect(response.status).toBe(400);
+      }
+    } finally {
+      vi.useRealTimers();
+      database.close();
+    }
+  });
+
   it("preserves single-placement error semantics when a comment source commit is missing", async () => {
     const repository = createGitRepository("rvw-single-placement-");
     const headOid = git(repository, "rev-parse", "HEAD");

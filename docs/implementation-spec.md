@@ -1957,6 +1957,47 @@ middle clickはbrowser標準の別tab遷移を使う。
 一覧からBack / Forwardで既存viewer entryへ戻る場合は、そのentryが持つfocused documentと位置も通常の
 reading historyとして復元する。reloadまたは新しい一覧行選択は従来どおり新しい一時workspaceを開始する。
 
+### 10.1 PR横断コメント一覧
+
+workspace入口は`Pull Requests` / `Comments`を切り替えられる。`?view=comments`はPR横断コメント一覧を
+表し、既存のPR一覧を置換しない。対象はuser-global SQLiteの登録済み全PRのrvw commentであり、GitHub
+review commentは取り込まない。PR全体、PR本文、repository file / line、Walkthroughの全targetを含む。
+
+- PRごとのgroupで、rootと全replyの全文を古い投稿順に最初から表示する。「続きを読む」や詳細paneを
+  開く操作を要求しない。既存のsafe Markdown、code reference、reply / edit / delete / resolve / reopen / URI copyを使う。
+- PR見出しはrepository、番号、最新同期済みtitle、cached状態、表示thread件数と未送信下書き件数。
+  group内をscroll中も見出しをsticky表示し、狭いviewportでは検索欄を独立行にする。threadには対象文書と行、
+  投稿者・日時、未解決／解決済みを表示する。初期状態は全group・全threadを展開する。
+- PR単位、thread単位、全体の展開／折りたたみを提供する。全体の折りたたみはPR見出しを残す。
+  threadだけを閉じた場合はrootの抜粋、返信数、状態、下書きの有無を残す。後から追加表示するgroupにも全体指定を適用する。
+- 状態（未解決が既定／解決済み／すべて）、repository、PR、Closed / Merged非表示（既定ON）、
+  root / reply本文のliteralな部分一致検索で絞る。英字はcase-insensitiveとし、返信だけに一致しても会話全体を表示する。
+  状態未取得のPRは除外しない。該当threadのないgroupは表示しない。
+- groupとその中のthreadは最終post作成日時の降順、同日時は永続IDの降順。解決／再開やpost編集の日時で
+  並びを変えない。本文・状態はpollとmutation結果で更新するが、表示中のgroup / thread順とfilter membershipは
+  維持し、「一覧を更新」または「新しい更新を反映」で再取得した最新の並び・条件を適用する。解決直後にthreadを消さない。削除済みthreadは除去する。
+- reply欄を常設し、返信によって解決状態を変更しない。投稿失敗時はerrorを明示し、本文を保持したまま再送できる。
+  reply draftは既存のPR / comment identityで共有し、折りたたみ・絞り込み・PR往復で保持する。
+  外部削除されたthreadの未送信replyは一覧のfilterやPR遷移に依存しない回収欄へ表示し、本文コピーと明示的な破棄を提供する。自動削除しない。
+  非表示PR分も含む未送信replyがある場合、reload / tab終了時にbrowser標準の警告を要求する。
+- 「PRで開く」は`pullRequestId`と`commentId`を含むURLへ遷移し、対象文書・行とsidebar threadを表示する。
+  resolved threadなら解決済みfilterを選ぶ。codeはtargetのexact commitを開き、global review scopeを変更しない。
+  PR本文／Walkthroughはcurrent本文への保守的mappingを使い、Outdatedなら元quoteをsidebarへ残す。
+  初期リンクは成功後のquery再取得では再実行せず、失敗後は明示的な再試行だけを許可する。履歴の置換はその遷移だけに適用する。
+  URLはreload・別tabでも機能する。post内code referenceとrepository linkもexact sourceへ遷移する。
+  不正／削除済みcommentや位置取得失敗は明示errorとretryにし、推測位置を開かない。
+- PR画面から一覧へのbrand linkとbrowser BackはCommentsへ戻り、同一tab sessionのfilter、展開状態、
+  scroll位置、draftを維持する。viewer内reading historyへのBack / Forwardは既存契約を維持する。
+- 一覧indexの取得はGit / GitHubへ通信せずSQLiteだけを使う。`GET /api/comment-feed`は上記filterと
+  `limit`（既定20、最大1000 PR）を検証し、groupごとのordered comment ID、PR metadata、filter後のPR／thread総数、
+  PR選択候補を返す。本文は含めず、表示groupだけ既存のPRコメントAPIで取得する。検索・status filterをgroup limit前に適用する。
+  PR groupを分割せず20 PRずつ追加表示し、未表示件数を明示する。1000 PRに達した場合は追加取得を止め、絞り込みを案内する。
+  threadのOutdatedは一覧indexでGitを読んで判定せず、PR遷移後のplacementに委ね、未判定を最新として表示しない。
+- 未登録、条件一致なし、取得失敗を区別し、失敗時は表示済み内容を保持して再試行できる。
+  条件一致なしでは全filterを解除する操作を提供する。local server切断は一つのerrorへ集約し、
+  接続の再試行はheartbeatと表示中の一覧／会話をまとめて再取得する。PR固有の取得errorは該当groupに表示する。
+  unread、担当者、通知、一括reply／resolve、新規root作成、Agent起動はこの画面へ追加しない。
+
 Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用者が見失わずに読み進めることである。
 初期表示は全文とし、変更fileとdiffはrepository readingを開始するindexとして扱う。利用者が
 関連file、test、設定、documentへ移動してもcommit範囲とopen documentを維持し、diff外へ出たことを
