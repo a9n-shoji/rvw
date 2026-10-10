@@ -2,10 +2,12 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import type { Command } from "commander";
+import openBrowser from "open";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRuntime, type Runtime } from "../../src/application/runtime.js";
 import type { RvwService } from "../../src/application/rvw-service.js";
-import { createProgram, runCli } from "../../src/cli/main.js";
+import { createProgram, runCli, viewerLaunchOptions } from "../../src/cli/main.js";
 import { structurePublishInputSchema, walkthroughListOutputSchema } from "../../src/cli/schemas.js";
 import type {
   CommentPost,
@@ -15,6 +17,9 @@ import type {
 } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { startRuntimeAgentSocket } from "../../src/server/agent-socket.js";
+import * as viewerServer from "../../src/server/start-server.js";
+
+vi.mock("open", () => ({ default: vi.fn().mockResolvedValue(undefined) }));
 
 const pullRequest: PullRequest = {
   id: "pull-request-1",
@@ -262,6 +267,12 @@ describe("CLI protocol discovery", () => {
         .find((command) => command.name() === "open")
         ?.options.map((option) => option.long),
     ).toEqual(["--no-open", "--foreground", "--port"]);
+    expect(program.options.map((option) => option.long)).toEqual([
+      "--version",
+      "--no-open",
+      "--foreground",
+      "--port",
+    ]);
     expect(
       program
         .createHelp()
@@ -1588,8 +1599,229 @@ describe("CLI viewer runtime options", () => {
     vi.restoreAllMocks();
   });
 
-  it("lets --no-open reuse an active runtime without constructing a local Runtime", async () => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-no-open-"));
+  it.each([
+    ["--help", "commander.helpDisplayed"],
+    ["--version", "commander.version"],
+  ])("does not initialize a runtime for %s", async (option, code) => {
+    const runtimeFactory = vi.fn(() => {
+      throw new Error("help and version must not launch the viewer");
+    });
+    const output = vi.fn();
+    const program = createProgram(runtimeFactory)
+      .exitOverride()
+      .configureOutput({ writeOut: output, writeErr: output });
+
+    await expect(program.parseAsync(["node", "rvw", option])).rejects.toMatchObject({
+      code,
+      exitCode: 0,
+    });
+    expect(output).toHaveBeenCalled();
+    expect(runtimeFactory).not.toHaveBeenCalled();
+  });
+
+  it("passes list and port options to the internal worker command", async () => {
+    const runtimeFactory = vi.fn(() => {
+      throw new Error("parsing worker options must not initialize a runtime");
+    });
+    const program = createProgram(runtimeFactory);
+    const worker = program.commands.find((command) => command.name() === "__open-worker")!;
+    const runWorker = vi.fn();
+    worker.action(runWorker);
+
+    await program.parseAsync([
+      "node",
+      "rvw",
+      "__open-worker",
+      "--list",
+      "--port",
+      "0",
+      "--requested-port",
+      "0",
+    ]);
+
+    expect(runWorker.mock.calls[0]?.[0]).toEqual({ list: true, port: 0, requestedPort: 0 });
+    expect(runtimeFactory).not.toHaveBeenCalled();
+  });
+
+  it.each<{
+    name: string;
+    args: string[];
+    expected: ReturnType<typeof viewerLaunchOptions>;
+  }>([
+    { name: "default options", args: ["open"], expected: { open: true } },
+    {
+      name: "prefix launch options",
+      args: ["--no-open", "--port", "0", "open", "45"],
+      expected: { open: false, port: 0 },
+    },
+    {
+      name: "suffix launch options over parent defaults",
+      args: ["open", "45", "--no-open", "--port", "4321"],
+      expected: { open: false, port: 4321 },
+    },
+    {
+      name: "mixed prefix and suffix launch options",
+      args: ["--no-open", "open", "45", "--port", "4321"],
+      expected: { open: false, port: 4321 },
+    },
+    {
+      name: "suffix port over an explicit prefix port",
+      args: ["--port", "12345", "open", "45", "--port", "0"],
+      expected: { open: true, port: 0 },
+    },
+    {
+      name: "prefix foreground",
+      args: ["--foreground", "open", "45"],
+      expected: { open: true, foreground: true },
+    },
+    {
+      name: "suffix foreground",
+      args: ["open", "45", "--foreground"],
+      expected: { open: true, foreground: true },
+    },
+  ])("resolves $name for rvw open", async ({ args, expected }) => {
+    const runtimeFactory = vi.fn(() => {
+      throw new Error("parsing launch options must not initialize a runtime");
+    });
+    const program = createProgram(runtimeFactory);
+    const open = program.commands.find((command) => command.name() === "open")!;
+    const launch = vi.fn();
+    open.action((_reference: string | undefined, _options: unknown, command: Command) => {
+      launch(viewerLaunchOptions(command));
+    });
+
+    await program.parseAsync(["node", "rvw", ...args]);
+
+    expect(launch).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(runtimeFactory).not.toHaveBeenCalled();
+  });
+
+  it("preserves root launch options without a parent command", async () => {
+    const program = createProgram(() => {
+      throw new Error("parsing launch options must not initialize a runtime");
+    });
+    program.action(() => undefined);
+
+    await program.parseAsync(["node", "rvw", "--no-open", "--foreground", "--port", "0"]);
+
+    expect(viewerLaunchOptions(program)).toEqual({ open: false, foreground: true, port: 0 });
+    expect(viewerLaunchOptions(program)).not.toBe(program.opts());
+  });
+
+  it.each<{ name: string; pullRequests: PullRequest[]; args: string[] }>([
+    { name: "bare rvw", pullRequests: [pullRequest], args: [] },
+    { name: "empty database", pullRequests: [], args: ["--no-open", "--port", "0"] },
+    { name: "saved PR", pullRequests: [pullRequest], args: ["--no-open", "--port", "0"] },
+  ])("starts the list without a PR lookup and serves $name", async ({ pullRequests, args }) => {
+    const openPullRequest = vi.fn().mockRejectedValue(new Error("not a Git repository"));
+    const listPullRequests = vi.fn().mockReturnValue({
+      pullRequests,
+      page: { offset: 0, limit: 50, returned: pullRequests.length, total: pullRequests.length },
+    });
+    const { runtime, close } = mockRuntime({ openPullRequest, listPullRequests });
+    const ready = Promise.withResolvers<string>();
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      const match = /^rvw: (http:\/\/127\.0\.0\.1:\d+\/)\n$/.exec(String(chunk));
+      if (match?.[1]) ready.resolve(match[1]);
+      return true;
+    });
+    vi.mocked(openBrowser).mockClear();
+    const launching = createProgram(() => runtime).parseAsync(["node", "rvw", ...args]);
+    void launching.catch(ready.reject);
+    try {
+      const url = await ready.promise;
+      expect(new URL(url).search).toBe("");
+      const response = await fetch(new URL("/api/pull-requests", url));
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ ok: true, pullRequests });
+      expect(listPullRequests).toHaveBeenCalledOnce();
+      expect(openPullRequest).not.toHaveBeenCalled();
+      if (args.includes("--no-open")) expect(openBrowser).not.toHaveBeenCalled();
+      else expect(openBrowser).toHaveBeenCalledWith(url);
+    } finally {
+      process.emit("SIGTERM", "SIGTERM");
+      await launching;
+    }
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it.each<{ name: string; reference: string | undefined; args: string[] }>([
+    {
+      name: "implicit PR and suffix launch options",
+      reference: undefined,
+      args: ["open", "--no-open", "--port", "0"],
+    },
+    {
+      name: "explicit PR and suffix launch options",
+      reference: "45",
+      args: ["open", "45", "--no-open", "--port", "0"],
+    },
+    {
+      name: "prefix launch options",
+      reference: "45",
+      args: ["--no-open", "--port", "0", "open", "45"],
+    },
+    {
+      name: "mixed prefix and suffix launch options",
+      reference: "45",
+      args: ["--no-open", "open", "45", "--port", "0"],
+    },
+    {
+      name: "suffix port overriding prefix port",
+      reference: "45",
+      args: ["--no-open", "--port", "12345", "open", "45", "--port", "0"],
+    },
+  ])(
+    "keeps rvw open PR resolution when starting a fresh runtime with $name",
+    async ({ reference, args }) => {
+      const openPullRequest = vi.fn().mockResolvedValue({ pullRequest });
+      const listPullRequests = vi.fn().mockReturnValue({
+        pullRequests: [pullRequest],
+        page: { offset: 0, limit: 50, returned: 1, total: 1 },
+      });
+      const { runtime, close } = mockRuntime({ openPullRequest, listPullRequests });
+      const startServer = vi.spyOn(viewerServer, "startServer");
+      const ready = Promise.withResolvers<string>();
+      vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+        const match = /^rvw: (http:\/\/127\.0\.0\.1:\d+\/\?pullRequestId=\S+)\n$/.exec(
+          String(chunk),
+        );
+        if (match?.[1]) ready.resolve(match[1]);
+        return true;
+      });
+      vi.mocked(openBrowser).mockClear();
+      const launching = createProgram(() => runtime).parseAsync(["node", "rvw", ...args]);
+      void launching.catch(ready.reject);
+      try {
+        const url = await ready.promise;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(new URL(url).searchParams.get("pullRequestId")).toBe(pullRequest.id);
+        expect(startServer).toHaveBeenCalledExactlyOnceWith(
+          runtime.service,
+          expect.objectContaining({ port: 0, autoCloseWhenNoViewers: false }),
+        );
+        const response = await fetch(new URL("/api/pull-requests", url));
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+          ok: true,
+          pullRequests: [pullRequest],
+        });
+        expect(openPullRequest).toHaveBeenCalledExactlyOnceWith(reference, process.cwd());
+        expect(openBrowser).not.toHaveBeenCalled();
+      } finally {
+        process.emit("SIGTERM", "SIGTERM");
+        await launching;
+      }
+      expect(close).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.for<{ name: string; args: string[] }>([
+    { name: "bare rvw", args: [] },
+    { name: "--no-open", args: ["--no-open"] },
+    { name: "explicit port", args: ["--no-open", "--port", "4321"] },
+  ])("opens the saved PR list in an existing runtime with $name", async ({ args }, context) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-list-"));
     const databasePath = path.join(directory, "review.db");
     process.env.RVW_DATABASE_PATH = databasePath;
     process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
@@ -1597,14 +1829,16 @@ describe("CLI viewer runtime options", () => {
     try {
       running = await startRuntimeAgentSocket(databasePath);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        context.skip(true, "Unix sockets are unavailable in this environment");
+      }
       throw error;
     }
     const openViewer = vi.fn().mockResolvedValue({
-      url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+      url: "http://127.0.0.1:4321/",
       origin: "http://127.0.0.1:4321",
       port: 4321,
-      pullRequestId: "pr-45",
+      pullRequestId: null,
       ownerPid: process.pid,
     });
     running.setHandler({
@@ -1612,41 +1846,100 @@ describe("CLI viewer runtime options", () => {
       openViewer,
     });
     const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    vi.mocked(openBrowser).mockClear();
     try {
-      await createProgram().parseAsync(["node", "rvw", "open", "45", "--no-open"]);
+      await createProgram().parseAsync(["node", "rvw", ...args]);
       expect(openViewer).toHaveBeenCalledWith({
-        reference: "45",
+        list: true,
         cwd: process.cwd(),
-        requestedPort: 0,
+        requestedPort: args.includes("--port") ? 4321 : 0,
       });
-      expect(stdout).toHaveBeenCalledWith("rvw: http://127.0.0.1:4321/?pullRequestId=pr-45\n");
+      expect(stdout).toHaveBeenCalledWith("rvw: http://127.0.0.1:4321/\n");
+      if (args.includes("--no-open")) expect(openBrowser).not.toHaveBeenCalled();
+      else expect(openBrowser).toHaveBeenCalledWith("http://127.0.0.1:4321/");
     } finally {
       await running.close();
     }
   });
 
-  it("makes --foreground conflict with an active runtime before Runtime construction", async () => {
-    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-foreground-"));
-    const databasePath = path.join(directory, "review.db");
-    process.env.RVW_DATABASE_PATH = databasePath;
-    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
-    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
-    try {
-      running = await startRuntimeAgentSocket(databasePath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EPERM") return;
-      throw error;
-    }
-    running.setHandler({
-      service: { database: { filePath: databasePath } } as unknown as RvwService,
-      openViewer: vi.fn(),
-    });
-    try {
-      await expect(
-        createProgram().parseAsync(["node", "rvw", "open", "45", "--foreground"]),
-      ).rejects.toMatchObject({ code: "PROCESS_FAILED" });
-    } finally {
-      await running.close();
-    }
-  });
+  it.for(["45", undefined])(
+    "keeps rvw open PR selection when reusing an active runtime: %s",
+    async (reference, context) => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-no-open-"));
+      const databasePath = path.join(directory, "review.db");
+      process.env.RVW_DATABASE_PATH = databasePath;
+      process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+      let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+      try {
+        running = await startRuntimeAgentSocket(databasePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPERM") {
+          context.skip(true, "Unix sockets are unavailable in this environment");
+        }
+        throw error;
+      }
+      const openViewer = vi.fn().mockResolvedValue({
+        url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        pullRequestId: "pr-45",
+        ownerPid: process.pid,
+      });
+      running.setHandler({
+        service: { database: { filePath: databasePath } } as unknown as RvwService,
+        openViewer,
+      });
+      const stdout = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+      try {
+        await createProgram().parseAsync([
+          "node",
+          "rvw",
+          "open",
+          ...(reference === undefined ? [] : [reference]),
+          "--no-open",
+        ]);
+        expect(openViewer).toHaveBeenCalledWith({
+          ...(reference === undefined ? {} : { reference }),
+          cwd: process.cwd(),
+          requestedPort: 0,
+        });
+        expect(stdout).toHaveBeenCalledWith("rvw: http://127.0.0.1:4321/?pullRequestId=pr-45\n");
+      } finally {
+        await running.close();
+      }
+    },
+  );
+
+  it.for([
+    { name: "rvw open", args: ["open", "45", "--foreground"] },
+    { name: "rvw", args: ["--foreground"] },
+  ])(
+    "makes $name --foreground conflict with an active runtime before Runtime construction",
+    async ({ args }, context) => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-cli-foreground-"));
+      const databasePath = path.join(directory, "review.db");
+      process.env.RVW_DATABASE_PATH = databasePath;
+      process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+      let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+      try {
+        running = await startRuntimeAgentSocket(databasePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EPERM") {
+          context.skip(true, "Unix sockets are unavailable in this environment");
+        }
+        throw error;
+      }
+      running.setHandler({
+        service: { database: { filePath: databasePath } } as unknown as RvwService,
+        openViewer: vi.fn(),
+      });
+      try {
+        await expect(createProgram().parseAsync(["node", "rvw", ...args])).rejects.toMatchObject({
+          code: "PROCESS_FAILED",
+        });
+      } finally {
+        await running.close();
+      }
+    },
+  );
 });

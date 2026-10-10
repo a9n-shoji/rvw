@@ -32,11 +32,16 @@ gh auth setup-git
 # インストール
 npm install --global @a9n-shoji/rvw
 
-# baseリポジトリへ移動して起動
+# 登録済みPRの一覧を開く（リポジトリの外でも実行可能）
+rvw
+
+# 初めてのPRを登録して開く
 cd /path/to/base-repository-clone
 rvw doctor
 rvw open https://github.com/owner/repository/pull/123
 ```
+
+`rvw` だけで登録済みPRの一覧を開き、行を選んでレビューを再開できます。未登録の場合は `rvw open <PR URL>` でPRを追加してください。
 
 `http://127.0.0.1:43117` でブラウザが開きます。ブラウザのタブをすべて閉じると、サーバーも自動停止します。
 

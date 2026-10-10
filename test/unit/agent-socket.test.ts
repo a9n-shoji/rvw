@@ -14,6 +14,7 @@ import {
   startRuntimeAgentSocket,
   tryAgentSocketRequest,
   tryRuntimeViewerOpen,
+  type RuntimeViewerOpenInput,
 } from "../../src/server/agent-socket.js";
 
 async function waitForChildMessage<T>(
@@ -793,6 +794,62 @@ describe("Agent socket", () => {
     } finally {
       await running.close();
     }
+  });
+
+  it("passes list mode through the runtime socket and accepts an unselected PR result", async (context) => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-runtime-list-"));
+    process.env.RVW_AGENT_SOCKET_PATH = path.join(directory, "agent.sock");
+    const databasePath = path.join(directory, "review.db");
+    let running: Awaited<ReturnType<typeof startRuntimeAgentSocket>>;
+    try {
+      running = await startRuntimeAgentSocket(databasePath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EPERM") {
+        context.skip(true, "Unix sockets are unavailable in this environment");
+      }
+      throw error;
+    }
+    const result = {
+      url: "http://127.0.0.1:4321/",
+      origin: "http://127.0.0.1:4321",
+      port: 4321,
+      pullRequestId: null,
+      ownerPid: process.pid,
+    };
+    const openViewer = vi.fn().mockResolvedValue(result);
+    running.setHandler({
+      service: { database: { filePath: databasePath } } as unknown as RvwService,
+      openViewer,
+    });
+    const input = { list: true, cwd: directory, requestedPort: 0 };
+
+    try {
+      await expect(tryRuntimeViewerOpen(input, databasePath)).resolves.toEqual({
+        available: true,
+        result,
+      });
+      expect(openViewer).toHaveBeenCalledWith(input);
+
+      await expect(
+        tryAgentSocketRequest(
+          "viewer.open",
+          { ...input, reference: "45" },
+          { expectedDatabasePath: databasePath },
+        ),
+      ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(openViewer).toHaveBeenCalledOnce();
+    } finally {
+      await running.close();
+    }
+  });
+
+  it.each([
+    { list: "true", cwd: "/repo", requestedPort: 0 },
+    { list: true, reference: "45", cwd: "/repo", requestedPort: 0 },
+  ])("rejects invalid list viewer input before contacting a runtime: %j", async (input) => {
+    await expect(
+      tryRuntimeViewerOpen(input as unknown as RuntimeViewerOpenInput),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
   it("gives concurrent runtime contenders one owner without follower takeover", async () => {
