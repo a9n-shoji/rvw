@@ -1,5 +1,13 @@
 # Architecture decisions
 
+## 2026-10-10: Launch the saved PR list with bare rvw
+
+The root CLI action opens the existing user-global PR list without resolving a repository or PR.
+Keep `rvw open [PR]` as the explicit current-branch or PR entry point. Both targets share startup,
+runtime ownership, browser leases, ports, and shutdown behavior. No new persisted workspace or
+GitHub discovery is introduced. The internal socket protocol advances to 7 for the list target and
+nullable result PR ID; public Agent protocol 6 and its capabilities remain unchanged.
+
 ## 2026-10-02: Store PR archives as local list organization
 
 Archive state belongs to a saved Pull Request in the local database, independently of GitHub state and

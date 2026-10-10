@@ -39,12 +39,17 @@ rvwはコミットを取得して読み、作業ブランチをPRのブランチ
 登録後にClosed / Mergedになっても、保持したコードを表示し、GitHubと同期できます。
 
 ```bash
+# 登録済みPRの一覧を開く（リポジトリ外や未登録の状態でも起動可能）
+rvw
+
 # 現在のブランチから初めてPRを探す
 rvw open
 
 # 登録済みPRなら、リポジトリの外からもURLで指定できる
 rvw open https://github.com/owner/repository/pull/123
 ```
+
+`rvw` はPRの検出やGitHubへの問い合わせをせず一覧を表示します。`rvw --no-open`、`rvw --foreground`、`rvw --port <port>` も使えます。
 
 登録済みPRがそのcloneに一件だけある場合、引数なしの `rvw open` はそのPRを先に開きます。
 複数PRを扱うときや、ブランチを変えた後はURLを明示すると確実です。

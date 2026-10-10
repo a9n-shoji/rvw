@@ -184,6 +184,7 @@ interface BackgroundOpenDependencies {
     reference: string | undefined,
     port: number,
     requestedPort: number,
+    list: boolean,
   ) => BackgroundOpenChild;
   launchBrowser?: (url: string) => Promise<unknown>;
   tryRuntimeOpen?: (
@@ -388,6 +389,7 @@ function forkOpenWorker(
   reference: string | undefined,
   port: number,
   requestedPort: number,
+  list: boolean,
 ): BackgroundOpenChild {
   const modulePath = process.argv[1];
   if (!modulePath) {
@@ -395,6 +397,7 @@ function forkOpenWorker(
   }
   const args = ["__open-worker", "--port", String(port), "--requested-port", String(requestedPort)];
   if (reference !== undefined) args.push("--reference", reference);
+  if (list) args.push("--list");
   return fork(path.resolve(modulePath), args, {
     cwd: process.cwd(),
     env: process.env,
@@ -407,11 +410,13 @@ export async function startBackgroundOpen(
   reference: string | undefined,
   port: number | undefined,
   dependencies: BackgroundOpenDependencies = {},
+  list = false,
 ): Promise<string> {
   const startupPort = port ?? DEFAULT_VIEWER_PORT;
   const requestedPort = port ?? 0;
   const input: RuntimeViewerOpenInput = {
     ...(reference === undefined ? {} : { reference }),
+    ...(list ? { list: true } : {}),
     cwd: process.cwd(),
     requestedPort,
   };
@@ -433,7 +438,12 @@ export async function startBackgroundOpen(
       { details: existing.details },
     );
   }
-  const child = (dependencies.forkWorker ?? forkOpenWorker)(reference, startupPort, requestedPort);
+  const child = (dependencies.forkWorker ?? forkOpenWorker)(
+    reference,
+    startupPort,
+    requestedPort,
+    list,
+  );
   return await completeBackgroundOpen(child, launchBrowser);
 }
 
@@ -478,9 +488,11 @@ function runtimeViewerOpenInput(
   reference: string | undefined,
   cwd: string,
   requestedPort: number,
+  list: boolean,
 ): RuntimeViewerOpenInput {
   return {
     ...(reference === undefined ? {} : { reference }),
+    ...(list ? { list: true } : {}),
     cwd,
     requestedPort,
   };
@@ -507,16 +519,18 @@ export function createRuntimeAgentSocketHandler(
       }
       const viewerLeaseId = running.reserveViewer();
       try {
-        const opened = await activeRuntime.service.openPullRequest(input.reference, input.cwd);
+        const opened = input.list
+          ? null
+          : await activeRuntime.service.openPullRequest(input.reference, input.cwd);
         if (viewerLeaseId !== null) running.armViewerReservation(viewerLeaseId);
         const url = new URL(running.origin);
-        url.searchParams.set("pullRequestId", opened.pullRequest.id);
+        if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
         if (viewerLeaseId !== null) url.searchParams.set(VIEWER_OPEN_LEASE_QUERY, viewerLeaseId);
         return {
           url: url.toString(),
           origin: running.origin,
           port: running.port,
-          pullRequestId: opened.pullRequest.id,
+          pullRequestId: opened?.pullRequest.id ?? null,
           ownerPid: process.pid,
           ...(viewerLeaseId === null ? {} : { viewerLeaseId }),
         };
@@ -671,6 +685,7 @@ async function runOpenServer(
   openAutomatically: boolean,
   useAgentSocket: boolean,
   reuseExisting: boolean,
+  list = false,
 ): Promise<void> {
   const startupPort = port ?? DEFAULT_VIEWER_PORT;
   const requestedPort = port ?? 0;
@@ -682,7 +697,7 @@ async function runOpenServer(
       const databaseFilePath = databasePathConfiguration().filePath;
       if (reuseExisting) {
         const startup = await acquireRuntimeOrReuseExisting(
-          runtimeViewerOpenInput(reference, process.cwd(), requestedPort),
+          runtimeViewerOpenInput(reference, process.cwd(), requestedPort, list),
           databaseFilePath,
         );
         if (startup.kind === "reused") {
@@ -708,7 +723,9 @@ async function runOpenServer(
       }
     }
     activeRuntime = runtimeFactory();
-    const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
+    const opened = list
+      ? null
+      : await activeRuntime.service.openPullRequest(reference, process.cwd());
     running = await startServer(activeRuntime.service, {
       port: startupPort,
       staticDirectory: staticDirectory(),
@@ -716,7 +733,7 @@ async function runOpenServer(
     });
     agentSocket?.setHandler(createRuntimeAgentSocketHandler(activeRuntime, running));
     const url = new URL(running.origin);
-    url.searchParams.set("pullRequestId", opened.pullRequest.id);
+    if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
     process.stdout.write(`rvw: ${url.toString()}\n`);
     if (openAutomatically) await openBrowser(url.toString());
     const reason = await waitForServerShutdown(running.allViewersClosed);
@@ -733,6 +750,7 @@ async function runOpenWorker(
   reference: string | undefined,
   port: number,
   requestedPort: number,
+  list: boolean,
 ): Promise<void> {
   let activeRuntime: Runtime | undefined;
   let running: RunningServer | undefined;
@@ -743,7 +761,7 @@ async function runOpenWorker(
     }
     const databaseFilePath = databasePathConfiguration().filePath;
     const startup = await acquireRuntimeOrReuseExisting(
-      runtimeViewerOpenInput(reference, process.cwd(), requestedPort),
+      runtimeViewerOpenInput(reference, process.cwd(), requestedPort, list),
       databaseFilePath,
     );
     if (startup.kind === "reused") {
@@ -755,7 +773,9 @@ async function runOpenWorker(
     }
     agentSocket = startup.agentSocket;
     activeRuntime = runtimeFactory();
-    const opened = await activeRuntime.service.openPullRequest(reference, process.cwd());
+    const opened = list
+      ? null
+      : await activeRuntime.service.openPullRequest(reference, process.cwd());
     running = await startServer(activeRuntime.service, {
       port,
       staticDirectory: staticDirectory(),
@@ -763,7 +783,7 @@ async function runOpenWorker(
     });
     agentSocket.setHandler(createRuntimeAgentSocketHandler(activeRuntime, running));
     const url = new URL(running.origin);
-    url.searchParams.set("pullRequestId", opened.pullRequest.id);
+    if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
     if (!(await sendOpenWorkerMessage({ type: "ready", url: url.toString() }))) return;
     const firstViewerConnected = running.firstViewerConnected;
     if (!firstViewerConnected) {
@@ -808,8 +828,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
   const program = new Command();
   program
     .name("rvw")
-    .description("GitHub Pull Requestをcommit単位で閲覧・コメントするローカルviewer")
+    .description(
+      "GitHub Pull Requestをcommit単位で閲覧・コメントするローカルviewer。引数なしで登録済みPR一覧を開く",
+    )
     .version(APP_VERSION)
+    .enablePositionalOptions()
     .showHelpAfterError();
 
   program
@@ -926,6 +949,35 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
       if (!ok) process.exitCode = 2;
     });
 
+  const launchViewer = async (
+    reference: string | undefined,
+    options: { open: boolean; foreground?: boolean; port?: number },
+    list: boolean,
+  ): Promise<void> => {
+    if (options.open && !options.foreground && useAgentSocket) {
+      const url = await startBackgroundOpen(reference, options.port, {}, list);
+      process.stdout.write(`rvw: ${url}\n`);
+      return;
+    }
+    await runOpenServer(
+      getRuntime,
+      reference,
+      options.port,
+      options.open,
+      useAgentSocket,
+      !options.foreground,
+      list,
+    );
+  };
+
+  program
+    .option("--no-open", "ブラウザを開かない")
+    .option("--foreground", "terminalに接続したままviewerを実行")
+    .option("--port <port>", `listen port（既定${DEFAULT_VIEWER_PORT}、0は自動）`, parsePort)
+    .action(async (options: { open: boolean; foreground?: boolean; port?: number }) => {
+      await launchViewer(undefined, options, true);
+    });
+
   program
     .command("open")
     .argument("[pull-request]", "PR URLまたは番号")
@@ -938,40 +990,42 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         reference: string | undefined,
         options: { open: boolean; foreground?: boolean; port?: number },
       ) => {
-        if (options.open && !options.foreground && useAgentSocket) {
-          const url = await startBackgroundOpen(reference, options.port);
-          process.stdout.write(`rvw: ${url}\n`);
-          return;
-        }
-        await runOpenServer(
-          getRuntime,
-          reference,
-          options.port,
-          options.open,
-          useAgentSocket,
-          !options.foreground,
-        );
+        await launchViewer(reference, options, false);
       },
     );
 
   program
     .command("__open-worker", { hidden: true })
     .option("--reference <pull-request>")
+    .option("--list", "登録済みPR一覧を開く")
     .requiredOption("--port <port>", "listen port", parsePort)
     .requiredOption("--requested-port <port>", "requested listen port", parsePort)
-    .action(async (options: { reference?: string; port: number; requestedPort: number }) => {
-      try {
-        await runOpenWorker(getRuntime, options.reference, options.port, options.requestedPort);
-      } catch (error) {
-        const rvwError = asRvwError(error);
-        const sent = await sendOpenWorkerMessage({
-          type: "error",
-          error: { ...rvwError.toJSON(), status: rvwError.status },
-        });
-        if (!sent) throw error;
-        process.exitCode = rvwError.status >= 500 ? 1 : 2;
-      }
-    });
+    .action(
+      async (options: {
+        reference?: string;
+        port: number;
+        requestedPort: number;
+        list?: boolean;
+      }) => {
+        try {
+          await runOpenWorker(
+            getRuntime,
+            options.reference,
+            options.port,
+            options.requestedPort,
+            options.list ?? false,
+          );
+        } catch (error) {
+          const rvwError = asRvwError(error);
+          const sent = await sendOpenWorkerMessage({
+            type: "error",
+            error: { ...rvwError.toJSON(), status: rvwError.status },
+          });
+          if (!sent) throw error;
+          process.exitCode = rvwError.status >= 500 ? 1 : 2;
+        }
+      },
+    );
 
   const pr = program.command("pr").description("Pull Request状態を管理");
   pr.command("list")
@@ -1694,7 +1748,11 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     });
 
   program.hook("postAction", (_command, actionCommand) => {
-    if (actionCommand.name() !== "open" && actionCommand.name() !== "__open-worker") {
+    if (
+      actionCommand !== program &&
+      actionCommand.name() !== "open" &&
+      actionCommand.name() !== "__open-worker"
+    ) {
       runtime?.close();
     }
   });

@@ -341,6 +341,72 @@ describe("completeBackgroundOpen", () => {
 describe("database-scoped viewer runtime reuse", () => {
   beforeEach(() => vi.useRealTimers());
 
+  it("opens the saved PR list in an active runtime without selecting a PR or forking", async () => {
+    const forkWorker = vi.fn();
+    const launchBrowser = vi.fn().mockResolvedValue(undefined);
+    const tryRuntimeOpen = vi.fn().mockResolvedValue({
+      available: true,
+      result: {
+        url: "http://127.0.0.1:4321/",
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        pullRequestId: null,
+        ownerPid: 123,
+      },
+    });
+
+    await expect(
+      startBackgroundOpen(
+        undefined,
+        undefined,
+        { forkWorker, launchBrowser, tryRuntimeOpen },
+        true,
+      ),
+    ).resolves.toBe("http://127.0.0.1:4321/");
+
+    expect(tryRuntimeOpen).toHaveBeenCalledWith({
+      list: true,
+      cwd: process.cwd(),
+      requestedPort: 0,
+    });
+    expect(launchBrowser).toHaveBeenCalledWith("http://127.0.0.1:4321/");
+    expect(forkWorker).not.toHaveBeenCalled();
+  });
+
+  it("passes list mode to the first background worker on the stable default port", async () => {
+    const child = backgroundChild();
+    const forkWorker = vi.fn(() => {
+      setTimeout(() => {
+        child.emit("message", {
+          type: "ready",
+          url: `http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`,
+        });
+        child.emit("message", { type: "viewer-connected" });
+      }, 0);
+      return child;
+    });
+    const tryRuntimeOpen = vi.fn().mockResolvedValue({
+      available: false,
+      reason: "socket-not-found",
+    });
+
+    await expect(
+      startBackgroundOpen(
+        undefined,
+        undefined,
+        { forkWorker, launchBrowser: vi.fn().mockResolvedValue(undefined), tryRuntimeOpen },
+        true,
+      ),
+    ).resolves.toBe(`http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`);
+
+    expect(tryRuntimeOpen).toHaveBeenCalledWith({
+      list: true,
+      cwd: process.cwd(),
+      requestedPort: 0,
+    });
+    expect(forkWorker).toHaveBeenCalledWith(undefined, DEFAULT_VIEWER_PORT, 0, true);
+  });
+
   it("opens an additional viewer in an active runtime without forking a worker", async () => {
     const forkWorker = vi.fn();
     const launchBrowser = vi.fn().mockResolvedValue(undefined);
@@ -388,7 +454,7 @@ describe("database-scoped viewer runtime reuse", () => {
         }),
       }),
     ).resolves.toBe("http://127.0.0.1:4321/");
-    expect(forkWorker).toHaveBeenCalledWith(undefined, 4321, 4321);
+    expect(forkWorker).toHaveBeenCalledWith(undefined, 4321, 4321, false);
   });
 
   it("starts the first runtime on the stable default port while treating an omitted port as reusable", async () => {
@@ -417,7 +483,7 @@ describe("database-scoped viewer runtime reuse", () => {
     ).resolves.toBe(`http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`);
 
     expect(tryRuntimeOpen).toHaveBeenCalledWith({ cwd: process.cwd(), requestedPort: 0 });
-    expect(forkWorker).toHaveBeenCalledWith(undefined, DEFAULT_VIEWER_PORT, 0);
+    expect(forkWorker).toHaveBeenCalledWith(undefined, DEFAULT_VIEWER_PORT, 0, false);
   });
 
   it("hands a stopping runtime off to a background worker", async () => {
@@ -441,7 +507,40 @@ describe("database-scoped viewer runtime reuse", () => {
         ),
       }),
     ).resolves.toBe("http://127.0.0.1:4321/");
-    expect(forkWorker).toHaveBeenCalledWith(undefined, 0, 0);
+    expect(forkWorker).toHaveBeenCalledWith(undefined, 0, 0, false);
+  });
+
+  it("reserves the saved PR list viewer without resolving a repository or PR", async () => {
+    const openPullRequest = vi.fn().mockRejectedValue(new Error("not a Git repository"));
+    const viewerLeaseId = "55555555-5555-4555-8555-555555555555";
+    const reserveViewer = vi.fn().mockReturnValue(viewerLeaseId);
+    const armViewerReservation = vi.fn();
+    const cancelViewerReservation = vi.fn();
+    const handler = createRuntimeAgentSocketHandler(
+      { service: { openPullRequest } } as unknown as Runtime,
+      {
+        origin: "http://127.0.0.1:4321",
+        port: 4321,
+        reserveViewer,
+        armViewerReservation,
+        cancelViewerReservation,
+      } as unknown as RunningServer,
+    );
+
+    await expect(
+      handler.openViewer({ list: true, cwd: "/not-a-repository", requestedPort: 0 }),
+    ).resolves.toEqual({
+      url: `http://127.0.0.1:4321/?viewerLease=${viewerLeaseId}`,
+      origin: "http://127.0.0.1:4321",
+      port: 4321,
+      pullRequestId: null,
+      ownerPid: process.pid,
+      viewerLeaseId,
+    });
+    expect(openPullRequest).not.toHaveBeenCalled();
+    expect(reserveViewer).toHaveBeenCalledOnce();
+    expect(armViewerReservation).toHaveBeenCalledWith(viewerLeaseId);
+    expect(cancelViewerReservation).not.toHaveBeenCalled();
   });
 
   it("reuses the active origin and rejects a conflicting explicit port before opening a PR", async () => {

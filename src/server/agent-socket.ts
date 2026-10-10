@@ -25,7 +25,7 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-export const AGENT_SOCKET_PROTOCOL_VERSION = 6;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 7;
 export const RUNTIME_VIEWER_OPEN_OPERATION = "viewer.open";
 const AGENT_SOCKET_RESTART_SUGGESTION =
   "起動中のrvw viewerを停止し、更新後のrvw openで再起動してください。";
@@ -90,6 +90,7 @@ export interface RunningAgentSocket {
 
 export interface RuntimeViewerOpenInput {
   reference?: string;
+  list?: boolean;
   cwd: string;
   requestedPort: number;
 }
@@ -98,7 +99,7 @@ export interface RuntimeViewerOpenResult {
   url: string;
   origin: string;
   port: number;
-  pullRequestId: string;
+  pullRequestId: string | null;
   ownerPid: number;
   viewerLeaseId?: string;
 }
@@ -157,17 +158,21 @@ const agentRequestEnvelopeSchema = z
 const runtimeViewerOpenInputSchema = z
   .object({
     reference: z.string().min(1).optional(),
+    list: z.boolean().optional(),
     cwd: z.string().min(1),
     requestedPort: z.number().int().min(0).max(65_535),
   })
-  .strict();
+  .strict()
+  .refine((input) => !input.list || input.reference === undefined, {
+    message: "一覧起動にはPRを指定できません。",
+  });
 
 const runtimeViewerOpenResultSchema = z
   .object({
     url: z.string().url(),
     origin: z.string().url(),
     port: z.number().int().min(1).max(65_535),
-    pullRequestId: z.string().min(1),
+    pullRequestId: z.string().min(1).nullable(),
     ownerPid: z.number().int().positive(),
     viewerLeaseId: z.uuid().optional(),
   })
@@ -1158,6 +1163,7 @@ export async function startRuntimeAgentSocket(
           await handlerPromise
         ).openViewer({
           ...(parsed.data.reference === undefined ? {} : { reference: parsed.data.reference }),
+          ...(parsed.data.list === undefined ? {} : { list: parsed.data.list }),
           cwd: parsed.data.cwd,
           requestedPort: parsed.data.requestedPort,
         });

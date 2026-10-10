@@ -1643,8 +1643,10 @@ chmodしない。rvwが不足directory/fileを新規作成する場合はchmod�
 
 通常権限のviewer runtimeは`0700`のuser専用一時directory内へdatabase別Unix socket（`0600`）を
 提供する。同じdatabase pathでは一つのruntime processだけを許し、別の`RVW_DATABASE_PATH`は独立した
-runtimeを持てる。通常の`rvw open`はこのsocketの内部`viewer.open`操作でactive runtimeを発見し、
-requested PRを同じHTTP originへ追加してURLを受け取る。これは公開Agent command / capabilityではない。
+runtimeを持てる。通常の`rvw`と`rvw open`はこのsocketの内部`viewer.open`操作でactive runtimeを発見し、
+一覧またはrequested PRを同じHTTP originへ追加してURLを受け取る。これは公開Agent command / capabilityではない。
+内部socket protocolは7とし、一覧targetでは`list: true`を送り、responseの`pullRequestId`は`null`にする。
+PR targetでは従来どおりreferenceを解決する。公開CLI protocolは6のまま変更しない。
 Agent CLIはDBを直接開く前に
 socketへ同じapplication service操作を依頼する。`RVW_AGENT_SOCKET_PATH`未指定時はrequest送信前の接続失敗
 だけ従来のdirect CLIへfallbackできる。明示時はそのsocketを必須とし、接続失敗またはDB不一致を
@@ -1937,6 +1939,9 @@ protocol v6の追加capabilityは`pullRequest.list`と`pullRequest.archive`。
 
 ## 10. Viewer UX
 
+引数なしの`rvw`はPR解決を行わずserverを起動または再利用し、一覧URLをbrowserで開く。Git repository外や空のDBでも起動でき、
+Git / GitHubには問い合わせない。`rvw open [PR]`の保存済みPR／現在branchの解決は変更しない。
+`--no-open`、`--foreground`、`--port`は両方の起動方法で同じlifecycle規則に従う。
 URLに`pullRequestId`がない場合はuser-global SQLiteへ登録済みのPull Request一覧をworkspace入口として表示する。
 一覧は`owner/repository`、PR番号、title、cached Approve数、未解決／解決済みcomment数、Walkthrough数、Structure数、GitHub上の作成／更新日時を
 一行にまとめ、未解決comment数は`unresolved`と表示する。左列はPR identityを1段目、状態とApproveのbadgeを
@@ -2070,7 +2075,7 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 ## 12. Server / security
 
 - Node 24 LTS、Hono、React/Vite、TypeScript strict、pnpm 11
-- `127.0.0.1`だけへbindし、`rvw open`でactive runtimeがない場合の既定portは`43117`とする。
+- `127.0.0.1`だけへbindし、`rvw`または`rvw open`でactive runtimeがない場合の既定portは`43117`とする。
   `--port 0`を明示した場合だけ空きportを自動選択する。既定portが使用中ならsilentに別portへ移らず、
   別の`--port`または`--port 0`を案内する明示errorを返す
 - expected Hostを検証
