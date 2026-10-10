@@ -2,11 +2,12 @@ import { mkdtempSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
+import type { Command } from "commander";
 import openBrowser from "open";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRuntime, type Runtime } from "../../src/application/runtime.js";
 import type { RvwService } from "../../src/application/rvw-service.js";
-import { createProgram, runCli } from "../../src/cli/main.js";
+import { createProgram, runCli, viewerLaunchOptions } from "../../src/cli/main.js";
 import { structurePublishInputSchema, walkthroughListOutputSchema } from "../../src/cli/schemas.js";
 import type {
   CommentPost,
@@ -16,6 +17,7 @@ import type {
 } from "../../src/domain/models.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { startRuntimeAgentSocket } from "../../src/server/agent-socket.js";
+import * as viewerServer from "../../src/server/start-server.js";
 
 vi.mock("open", () => ({ default: vi.fn().mockResolvedValue(undefined) }));
 
@@ -1641,6 +1643,71 @@ describe("CLI viewer runtime options", () => {
     expect(runtimeFactory).not.toHaveBeenCalled();
   });
 
+  it.each<{
+    name: string;
+    args: string[];
+    expected: ReturnType<typeof viewerLaunchOptions>;
+  }>([
+    { name: "default options", args: ["open"], expected: { open: true } },
+    {
+      name: "prefix launch options",
+      args: ["--no-open", "--port", "0", "open", "45"],
+      expected: { open: false, port: 0 },
+    },
+    {
+      name: "suffix launch options over parent defaults",
+      args: ["open", "45", "--no-open", "--port", "4321"],
+      expected: { open: false, port: 4321 },
+    },
+    {
+      name: "mixed prefix and suffix launch options",
+      args: ["--no-open", "open", "45", "--port", "4321"],
+      expected: { open: false, port: 4321 },
+    },
+    {
+      name: "suffix port over an explicit prefix port",
+      args: ["--port", "12345", "open", "45", "--port", "0"],
+      expected: { open: true, port: 0 },
+    },
+    {
+      name: "prefix foreground",
+      args: ["--foreground", "open", "45"],
+      expected: { open: true, foreground: true },
+    },
+    {
+      name: "suffix foreground",
+      args: ["open", "45", "--foreground"],
+      expected: { open: true, foreground: true },
+    },
+  ])("resolves $name for rvw open", async ({ args, expected }) => {
+    const runtimeFactory = vi.fn(() => {
+      throw new Error("parsing launch options must not initialize a runtime");
+    });
+    const program = createProgram(runtimeFactory);
+    const open = program.commands.find((command) => command.name() === "open")!;
+    const launch = vi.fn();
+    open.action((_reference: string | undefined, _options: unknown, command: Command) => {
+      launch(viewerLaunchOptions(command));
+    });
+
+    await program.parseAsync(["node", "rvw", ...args]);
+
+    expect(launch).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(runtimeFactory).not.toHaveBeenCalled();
+  });
+
+  it("preserves root launch options without a parent command", async () => {
+    const program = createProgram(() => {
+      throw new Error("parsing launch options must not initialize a runtime");
+    });
+    program.action(() => undefined);
+
+    await program.parseAsync(["node", "rvw", "--no-open", "--foreground", "--port", "0"]);
+
+    expect(viewerLaunchOptions(program)).toEqual({ open: false, foreground: true, port: 0 });
+    expect(viewerLaunchOptions(program)).not.toBe(program.opts());
+  });
+
   it.each<{ name: string; pullRequests: PullRequest[]; args: string[] }>([
     { name: "bare rvw", pullRequests: [pullRequest], args: [] },
     { name: "empty database", pullRequests: [], args: ["--no-open", "--port", "0"] },
@@ -1678,11 +1745,42 @@ describe("CLI viewer runtime options", () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
-  it.each([undefined, "45"])(
-    "keeps rvw open PR resolution when starting a fresh runtime: %s",
-    async (reference) => {
+  it.each<{ name: string; reference: string | undefined; args: string[] }>([
+    {
+      name: "implicit PR and suffix launch options",
+      reference: undefined,
+      args: ["open", "--no-open", "--port", "0"],
+    },
+    {
+      name: "explicit PR and suffix launch options",
+      reference: "45",
+      args: ["open", "45", "--no-open", "--port", "0"],
+    },
+    {
+      name: "prefix launch options",
+      reference: "45",
+      args: ["--no-open", "--port", "0", "open", "45"],
+    },
+    {
+      name: "mixed prefix and suffix launch options",
+      reference: "45",
+      args: ["--no-open", "open", "45", "--port", "0"],
+    },
+    {
+      name: "suffix port overriding prefix port",
+      reference: "45",
+      args: ["--no-open", "--port", "12345", "open", "45", "--port", "0"],
+    },
+  ])(
+    "keeps rvw open PR resolution when starting a fresh runtime with $name",
+    async ({ reference, args }) => {
       const openPullRequest = vi.fn().mockResolvedValue({ pullRequest });
-      const { runtime, close } = mockRuntime({ openPullRequest });
+      const listPullRequests = vi.fn().mockReturnValue({
+        pullRequests: [pullRequest],
+        page: { offset: 0, limit: 50, returned: 1, total: 1 },
+      });
+      const { runtime, close } = mockRuntime({ openPullRequest, listPullRequests });
+      const startServer = vi.spyOn(viewerServer, "startServer");
       const ready = Promise.withResolvers<string>();
       vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
         const match = /^rvw: (http:\/\/127\.0\.0\.1:\d+\/\?pullRequestId=\S+)\n$/.exec(
@@ -1692,20 +1790,22 @@ describe("CLI viewer runtime options", () => {
         return true;
       });
       vi.mocked(openBrowser).mockClear();
-      const launching = createProgram(() => runtime).parseAsync([
-        "node",
-        "rvw",
-        "open",
-        ...(reference === undefined ? [] : [reference]),
-        "--no-open",
-        "--port",
-        "0",
-      ]);
+      const launching = createProgram(() => runtime).parseAsync(["node", "rvw", ...args]);
       void launching.catch(ready.reject);
       try {
         const url = await ready.promise;
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(new URL(url).searchParams.get("pullRequestId")).toBe(pullRequest.id);
+        expect(startServer).toHaveBeenCalledExactlyOnceWith(
+          runtime.service,
+          expect.objectContaining({ port: 0, autoCloseWhenNoViewers: false }),
+        );
+        const response = await fetch(new URL("/api/pull-requests", url));
+        expect(response.status).toBe(200);
+        await expect(response.json()).resolves.toMatchObject({
+          ok: true,
+          pullRequests: [pullRequest],
+        });
         expect(openPullRequest).toHaveBeenCalledExactlyOnceWith(reference, process.cwd());
         expect(openBrowser).not.toHaveBeenCalled();
       } finally {

@@ -50,6 +50,7 @@ rvw open https://github.com/owner/repository/pull/123
 ```
 
 `rvw` はPRの検出やGitHubへの問い合わせをせず一覧を表示します。`rvw --no-open`、`rvw --foreground`、`rvw --port <port>` も使えます。
+`open` を使う場合、これらのoptionは前後どちらにも指定できます。同じoptionを両方に明示した場合は `open` の後の値を優先し、既定値で明示指定を上書きしません。
 
 登録済みPRがそのcloneに一件だけある場合、引数なしの `rvw open` はそのPRを先に開きます。
 複数PRを扱うときや、ブランチを変えた後はURLを明示すると確実です。

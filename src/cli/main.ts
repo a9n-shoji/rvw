@@ -84,6 +84,26 @@ interface OutputOptions {
   json?: boolean;
 }
 
+interface ViewerLaunchOptions {
+  open: boolean;
+  foreground?: boolean;
+  port?: number;
+}
+
+export function viewerLaunchOptions(command: Command): ViewerLaunchOptions {
+  let options = { ...command.opts<ViewerLaunchOptions>() };
+  const parent = command.parent;
+  for (const key of ["open", "foreground", "port"] as const) {
+    if (
+      command.getOptionValueSource(key) !== "cli" &&
+      parent?.getOptionValueSource(key) === "cli"
+    ) {
+      options = { ...options, [key]: parent.opts<ViewerLaunchOptions>()[key] };
+    }
+  }
+  return options;
+}
+
 function writeJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
@@ -951,7 +971,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
 
   const launchViewer = async (
     reference: string | undefined,
-    options: { open: boolean; foreground?: boolean; port?: number },
+    options: ViewerLaunchOptions,
     list: boolean,
   ): Promise<void> => {
     if (options.open && !options.foreground && useAgentSocket) {
@@ -974,7 +994,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .option("--no-open", "ブラウザを開かない")
     .option("--foreground", "terminalに接続したままviewerを実行")
     .option("--port <port>", `listen port（既定${DEFAULT_VIEWER_PORT}、0は自動）`, parsePort)
-    .action(async (options: { open: boolean; foreground?: boolean; port?: number }) => {
+    .action(async (options: ViewerLaunchOptions) => {
       await launchViewer(undefined, options, true);
     });
 
@@ -986,11 +1006,8 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .option("--port <port>", `listen port（既定${DEFAULT_VIEWER_PORT}、0は自動）`, parsePort)
     .description("Pull Requestを開いてローカルviewerを起動")
     .action(
-      async (
-        reference: string | undefined,
-        options: { open: boolean; foreground?: boolean; port?: number },
-      ) => {
-        await launchViewer(reference, options, false);
+      async (reference: string | undefined, _options: ViewerLaunchOptions, command: Command) => {
+        await launchViewer(reference, viewerLaunchOptions(command), false);
       },
     );
 
