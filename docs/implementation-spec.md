@@ -1,6 +1,6 @@
 # rvw implementation specification
 
-**基準日:** 2026-09-05
+**基準日:** 2026-10-14
 **対象:** Phase 1のローカル実用品とPhase 2の配布
 **一次仕様:** この文書を実装・テスト・README・Skill契約のsource of truthとする。commitモデルへの
 移行は、それと無関係な既存のViewer、comment、CLI、security、配布要件を破棄しない。
@@ -1166,7 +1166,7 @@ invalidateし、完全なserver一覧をconsistency barrierとして取得する
 cache反映までであり、このGETを待たない。これによりinitial GET、外部更新、並行mutation、response逆転の
 いずれも最終server snapshotへ収束する。client側でmutationとserver revisionの因果を推測するrevision creditは
 持たない。pollも外部CLI更新を取り込むため継続し、mutation直後のconsistency GET後に同じrevision変化を観測した
-heartbeatが追加のcomments再検証を行う場合がある。1 mutation = exactly 1 GETは性能契約にしない。
+change-sequence pollが追加のcomments再検証を行う場合がある。1 mutation = exactly 1 GETは性能契約にしない。
 
 viewerのplacementは
 `POST /api/pull-requests/:pullRequestId/comment-placements/resolve`へcomment ID列と最大4件のdestination
@@ -1644,9 +1644,11 @@ chmodしない。rvwが不足directory/fileを新規作成する場合はchmod�
 通常権限のviewer runtimeは`0700`のuser専用一時directory内へdatabase別Unix socket（`0600`）を
 提供する。同じdatabase pathでは一つのruntime processだけを許し、別の`RVW_DATABASE_PATH`は独立した
 runtimeを持てる。通常の`rvw`と`rvw open`はこのsocketの内部`viewer.open`操作でactive runtimeを発見し、
-一覧またはrequested PRを同じHTTP originへ追加してURLを受け取る。これは公開Agent command / capabilityではない。
-内部socket protocolは7とし、一覧targetでは`list: true`を送り、responseの`pullRequestId`は`null`にする。
-PR targetでは従来どおりreferenceを解決する。公開CLI protocolは6のまま変更しない。
+一覧またはrequested PRを同じHTTP originへ追加してURLを受け取る。`rvw stop`は同じsocketの内部
+`runtime.stop`操作で現在のdatabaseのruntimeだけを停止する。これらの内部操作は公開Agent capabilityにしない。
+内部socket protocolは8とし、旧browser管理runtimeとの混在を拒否する。一覧targetでは`list: true`を送り、
+responseの`pullRequestId`は`null`にする。PR targetでは従来どおりreferenceを解決する。
+`viewer.open`はviewer leaseやstartup reservationを作らない。公開CLI protocolは6のまま変更しない。
 Agent CLIはDBを直接開く前に
 socketへ同じapplication service操作を依頼する。`RVW_AGENT_SOCKET_PATH`未指定時はrequest送信前の接続失敗
 だけ従来のdirect CLIへfallbackできる。明示時はそのsocketを必須とし、接続失敗またはDB不一致を
@@ -1664,7 +1666,7 @@ ownership取得を再試行する。複数workerが再試行してもlockのwinn
 終了時はowner lockをRuntime全体の寿命まで保持し、Agent requestの受付停止、HTTP serverのdrain、
 Runtime / SQLiteのclose、socket cleanup、owner lock解放の順に処理する。受付を止めた後もlockを解放するまでは
 同じdatabaseの新しいRuntimeを作らない。
-lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner終了後の新しい起動だけがexact
+lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner終了後の起動またはstopだけがexact
 inodeを確認してstale lock/socketを除去する。`doctor --json`はDBの
 mode/ownerに加えてrollbackするwrite transactionとAgent疎通を実行・報告する。
 
@@ -1690,11 +1692,11 @@ document/search、comments、Walkthrough、Structure/indexをそれぞれ独立�
 理由に全queryをinvalidateしない。PR metadata、comments、Walkthrough、Structureのmutable queryは初回domain revision
 snapshot取得後にだけenableする。stable keyのmutable queryでrevision変更を検出した場合は、data未取得の初回fetchも含めて
 対象fetchをcancelしてからinvalidateし、旧requestの成功が新revisionの再取得を消さないようにする。
-heartbeatはglobal sequenceと全domain revisionを1 SQL statementでsnapshot化する。
+change-sequence pollはglobal sequenceと全domain revisionを1 SQL statementでsnapshot化する。
 `Pull Request.md`本文、本文search、placementはcontent fingerprintをquery identityへ含めて新generationへ切り替える。
 stable keyを使うcomments queryは
 `comments GET → 外部write → 初回revision baseline`の順序で更新を取りこぼさない。snapshot前のwriteは初回GETへ入り、
-snapshot後のwriteは次heartbeatが検出する。repository locationはGit object availabilityを変え得るため、
+snapshot後のwriteは次のpollが検出する。repository locationはGit object availabilityを変え得るため、
 `pullRequests` refetch後に`localRepositoryPath`または`gitCommonDir`の実変更を検出した場合だけ、そのPRのtree、changed files、
 repository document/diff/search、Structure reverse index、Mermaid peek、repository-file comment placementのin-flight fetchを
 cancelしてから明示invalidateする。
@@ -2000,7 +2002,7 @@ review commentは取り込まない。PR全体、PR本文、repository file / li
   threadのOutdatedは一覧indexでGitを読んで判定せず、PR遷移後のplacementに委ね、未判定を最新として表示しない。
 - 未登録、条件一致なし、取得失敗を区別し、失敗時は表示済み内容を保持して再試行できる。
   条件一致なしでは全filterを解除する操作を提供する。local server切断は一つのerrorへ集約し、
-  接続の再試行はheartbeatと表示中の一覧／会話をまとめて再取得する。PR固有の取得errorは該当groupに表示する。
+  接続の再試行はchange-sequence pollと表示中の一覧／会話をまとめて再取得する。PR固有の取得errorは該当groupに表示する。
   unread、担当者、通知、一括reply／resolve、新規root作成、Agent起動はこの画面へ追加しない。
 
 Viewerの最優先目的は、選択commitが作るrepositoryの状態を利用者が見失わずに読み進めることである。
@@ -2044,7 +2046,7 @@ tab row
 - 明示capture button、未取り込みbanner、version selectorは存在しない。
 - refreshは取得・ref保持・cache更新を一度に行い、Pull Request行と同じ短いDB snapshotで読んだ
   `changeSequence`、domain revisions、content fingerprintをresponseへ含める。長いGit commit列挙中はtransactionを保持しない。
-  viewerは採用前に同じPR GETとheartbeat GETをcancelし、既に観測したsequenceより古いrefresh responseをcacheへ書かない。
+  viewerは採用前に同じPR GETとchange-sequence GETをcancelし、既に観測したsequenceより古いrefresh responseをcacheへ書かない。
   PR metadata queryはinfinite freshとし、domain revisionと明示refreshだけで更新する。
 
 ファイル、コメント、検索、diff style、line selectionの既存UXは維持する。PR本文とWalkthroughはExplorer先頭の
@@ -2083,21 +2085,37 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
 - same-origin以外のwriteを拒否、CORSを有効にしない
 - GitHub attachment readも存在するFetch Metadataと`Origin`でsame-originへ限定し、画像responseへ
   `Cross-Origin-Resource-Policy: same-origin`を付ける
-- browser tab leaseはtransport-onlyで永続化しない。一覧画面も同じviewer heartbeatを更新する
-- 通常の自動openはactive runtimeがなければdatabase ownershipを持つbackground workerを一つだけ起動する。
-  worker ready後にbrowserを開き、最初のviewer heartbeatを確認してから親CLIを終了する
+- browserのchange-sequence pollはUIのdata更新だけを担う。viewer ID、tab lease、close時のrelease、
+  last-tab grace timer、heartbeat timeoutをserver lifecycleへ使わない
+- 通常の`rvw` / `rvw open`はactive runtimeがなければdatabase ownershipを持つbackground workerを一つだけ
+  起動する。worker ready後にbrowserを開き、OSのbrowser起動要求が成功したら親CLIを終了する。
+  browserからの最初のrequestやpollは待たず、未接続でもruntimeを停止しない
 - 同じdatabaseのactive runtimeがあればworker、Runtime、SQLite、HTTP serverを追加せず、内部socket操作で
-  requested PRを開いて同じoriginのURLをbrowserへ渡す。この操作はPR解決中に期限なしのoperation reservationで
-  runtimeを維持し、解決後に30秒のbrowser startup reservationへ切り替える。最初のbrowser heartbeatが通常の
-  tab leaseへ引き継ぐ。reservation中は最後のtab終了後の停止を延期し、解決後も未接続ならtimeout後に解放する
-- browser起動失敗、初回worker error、30秒以内に最初のviewer heartbeatがない場合は初回workerを停止して
-  明示的なerrorを返す。再利用時のbrowser起動失敗は既存runtimeを停止しない
-- background runtimeはpersistent daemonではなく、一覧を含む最後のviewer tab終了後に短い猶予を置いて
-  serverとともに停止する。複数tabの一つを閉じても他が残る間は停止しない
-- `--foreground`はterminal接続serverを明示的に起動し、同じdatabaseのruntimeが既にあればconflict errorを返す
-- `--no-open`はbrowser自動起動だけを無効にする。active runtimeは再利用し、active runtimeがなければ従来どおり
-  signal管理のserverを起動する。browser管理のactive runtimeを再利用した場合はCLI自身がviewer leaseを
-  Ctrl+Cまでheartbeatし、終了時にreleaseする
+  一覧またはrequested PRの同じoriginのURLを得る。browser起動後、または`--no-open`のURL表示後にCLIを終了し、
+  viewer reservationやCLIによるlifetime更新は行わない
+- browser起動失敗または初回worker errorでは新規workerをcleanupして明示的なerrorを返す。
+  再利用時のbrowser起動失敗は既存runtimeを停止しない
+- runtimeはtab数と独立して稼働し、最後のtabのclose、reload、browser crash、poll停止、machine suspendでは
+  停止しない。`rvw stop`、SIGINT / SIGTERM、process終了で停止する
+- `rvw stop [--json]`は現在選択したdatabaseのownerへprivate socket経由で停止を要求する。Runtime / SQLiteを
+  初期化せず、DBやdirectoryを新規作成せず、recorded PIDへのsignalやHTTP portを占有するprocessのkillを行わない。
+  `RVW_DATABASE_PATH`が別なら停止対象も独立する。owner recordに起動ごとのUUID tokenを持ち、stop request、
+  ack、完了確認でfile identityとともに照合する。inodeが再利用されても別runtimeを停止しない
+- stopはsocket request受付を止め、処理中requestとHTTPをdrainし、Runtime / SQLite、socket、owner lockの順で
+  cleanupする。clientが切断済みでも受理済みapplication処理の完了を待つ。CLIは停止ackと元owner lockの
+  解放を確認してから成功を返し、待機timeoutは明示errorにする。
+  JSON成功値は`{ ok: true, stopped: boolean, databasePath: string }`とし、停止確認済みは`stopped: true`、
+  active runtimeがない場合は`false`にする
+- socketがなくlive ownerもない場合のstopは冪等な成功とし、明示`RVW_AGENT_SOCKET_PATH`でもDBへfallbackしない。
+  dead-PIDのstale lock/socketはexact inodeを確認して回収できるが、権限error、DB不一致、non-rvw / malformed /
+  incompatible protocol、valid tokenがないlive owner、応答しないlive ownerはfail closedする。
+  無関係なlive PIDを停止しない
+- 更新前のbrowser管理runtimeは旧lifecycleで停止してから新runtimeを起動する。新CLIのstopはincompatibleな
+  runtimeをPID killしない
+- `--foreground`はterminal接続serverを明示的に起動し、同じdatabaseのruntimeが既にあればconflict errorを返す。
+  browserを閉じても停止せず、Ctrl+Cまたは`rvw stop`で停止する
+- `--no-open`はbrowser自動起動だけを無効にする。active runtimeはURLを表示して再利用し、CLIを直ちに終了する。
+  active runtimeがなければterminal接続のsignal管理serverを起動し、Ctrl+Cまたは`rvw stop`まで稼働する
 - 初回の明示`--port`は尊重する。省略時は新規runtimeに既定`43117`を使うが、active runtimeがある場合は
   そのportを問わず同じoriginを再利用する。active runtimeと異なる非0 portを明示した再利用はconflict errorとし、
   二つ目のserverを起動しない。異なるdatabaseのruntimeを同時に使う場合は、二つ目へ別の固定portまたは
@@ -2168,6 +2186,11 @@ Integration（実git + fake GitHub）:
 - `comment get --live`のread-only stale判定
 - Agent socket経由のwrite、implicit fallback、explicit fail-closed、diagnostic、process間単一runtime owner、
   同一databaseのopen再利用、異なるdatabaseの独立runtime、stale owner/socket recovery、明示port conflict
+- browser未接続でもbackground起動が完了すること、最後のtabのcloseとpoll停止後もruntimeが稼働すること、
+  再open時の同一origin再利用、stop後の再起動
+- `rvw stop` / `--json`のshutdown完了待ち、繰り返し成功、DB未作成、custom DBの分離、権限・protocol・DB不一致と
+  live-owner timeoutのfail-closed、無関係なprocessを停止しないこと、並行open / stop時のownership
+- `--foreground`のowner競合とsignal停止、`--no-open`の新規foreground起動と既存runtime再利用時の即時return
 - doctorのDB write transactionとAgent疎通
 - source anchor付きWalkthroughの登録、取得、同一ID完全置換、全体／行comment保持とOutdated、確認付き削除、reset削除
 - source anchorとrequired nullable presentation付きStructureの登録、一覧、取得、同一ID atomic完全置換、
@@ -2180,7 +2203,7 @@ Integration（実git + fake GitHub）:
 E2Eで登録済みPR一覧、Closed / Merged filterと状態未取得行、empty state、URLに保持するpagination、
 2ページ目からviewerを開いた後の
 Back / Forward、一覧遷移後の未送信draft警告、一覧へ戻る直前のreading position、相対日時の更新、
-Open / Draft / Closed / Merged badge、一覧表示中のviewer heartbeatを確認する。既存のreview E2Eは次を維持する。
+Open / Draft / Closed / Merged badge、一覧表示中のchange-sequence pollingを確認する。既存のreview E2Eは次を維持する。
 
 1. PRを開きlatest commitと最新Pull Request.mdを表示
 2. commit subjectで一件選択へ切り替え、open tabを維持

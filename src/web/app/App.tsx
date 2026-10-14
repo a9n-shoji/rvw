@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api.js";
 import type { ThemePreference } from "../theme.js";
-import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { CommentFeedScreen } from "./CommentFeedScreen.js";
 import { DeletedCommentDrafts } from "../components/DeletedCommentDrafts.js";
 import { hasCommentReplyDrafts } from "../comment-draft-store.js";
@@ -68,8 +67,7 @@ export function App({ initialThemePreference }: { initialThemePreference: ThemeP
   const [hideClosedOrMerged, setHideClosedOrMerged] = useState(true);
   const heartbeat = useQuery({
     queryKey: ["change-sequence"],
-    queryFn: async () =>
-      await api<{ changeSequence: number }>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+    queryFn: async () => await api<{ changeSequence: number }>("/api/meta/change-sequence"),
     refetchInterval: 1000,
     refetchIntervalInBackground: true,
     networkMode: "always",

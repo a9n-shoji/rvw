@@ -6,7 +6,6 @@ import {
   closeOwnedRuntime,
   completeBackgroundOpen,
   createRuntimeAgentSocketHandler,
-  holdRuntimeViewerLease,
   startBackgroundOpen,
   waitForServerShutdown,
   type BackgroundOpenChild,
@@ -16,7 +15,6 @@ import { DEFAULT_VIEWER_PORT } from "../../src/shared/constants.js";
 import { RvwError } from "../../src/shared/errors.js";
 import type { RunningRuntimeAgentSocket } from "../../src/server/agent-socket.js";
 import { startServer, type RunningServer } from "../../src/server/start-server.js";
-import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
 
 function backgroundChild(): BackgroundOpenChild & {
   emit(event: string, ...args: unknown[]): boolean;
@@ -36,228 +34,35 @@ function backgroundChild(): BackgroundOpenChild & {
   return child;
 }
 
-describe("ViewerLifecycle", () => {
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it("stops only after the last viewer is released and the reload grace has elapsed", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 10_000,
-      closeGraceMs: 500,
-    });
-
-    lifecycle.heartbeat("viewer-a");
-    lifecycle.heartbeat("viewer-b");
-    lifecycle.release("viewer-a");
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-
-    lifecycle.release("viewer-b");
-    await vi.advanceTimersByTimeAsync(499);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
-    expect(onAllViewersClosed).toHaveBeenCalledOnce();
-  });
-
-  it("reports the first viewer connection exactly once", () => {
-    const onFirstViewerConnected = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed: vi.fn(),
-      onFirstViewerConnected,
-    });
-
-    lifecycle.heartbeat("viewer-a");
-    lifecycle.heartbeat("viewer-a");
-    lifecycle.heartbeat("viewer-b");
-
-    expect(onFirstViewerConnected).toHaveBeenCalledOnce();
-  });
-
-  it("cancels shutdown when a reloaded viewer reconnects during the grace period", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 10_000,
-      closeGraceMs: 500,
-    });
-
-    lifecycle.heartbeat("old-document");
-    lifecycle.release("old-document");
-    await vi.advanceTimersByTimeAsync(250);
-    lifecycle.heartbeat("reloaded-document");
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    expect(lifecycle.activeViewerCount).toBe(1);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-  });
-
-  it("keeps the runtime alive when viewer.open reserves a viewer during the close grace", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 10_000,
-      startupTimeoutMs: 1_000,
-      closeGraceMs: 500,
-    });
-
-    lifecycle.heartbeat("old-document");
-    lifecycle.release("old-document");
-    await vi.advanceTimersByTimeAsync(499);
-    expect(lifecycle.reserveViewer("55555555-5555-4555-8555-555555555555")).toBe(true);
-    await vi.advanceTimersByTimeAsync(2);
-
-    expect(lifecycle.pendingViewerCount).toBe(1);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-
-    lifecycle.heartbeat("new-document", "55555555-5555-4555-8555-555555555555");
-    expect(lifecycle.pendingViewerCount).toBe(0);
-    expect(lifecycle.activeViewerCount).toBe(1);
-  });
-
-  it("releases an unused viewer.open reservation and then applies the close grace", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      startupTimeoutMs: 100,
-      closeGraceMs: 50,
-    });
-
-    lifecycle.reserveViewer("55555555-5555-4555-8555-555555555555");
-    lifecycle.armViewerReservation("55555555-5555-4555-8555-555555555555");
-    await vi.advanceTimersByTimeAsync(100);
-    expect(lifecycle.pendingViewerCount).toBe(0);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(50);
-    expect(onAllViewersClosed).toHaveBeenCalledOnce();
-  });
-
-  it("does not expire a viewer reservation while PR resolution is still running", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      startupTimeoutMs: 100,
-      closeGraceMs: 50,
-    });
-    const leaseId = "55555555-5555-4555-8555-555555555555";
-
-    lifecycle.reserveViewer(leaseId);
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(lifecycle.pendingViewerCount).toBe(1);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-
-    lifecycle.armViewerReservation(leaseId);
-    await vi.advanceTimersByTimeAsync(100);
-    expect(lifecycle.pendingViewerCount).toBe(0);
-    await vi.advanceTimersByTimeAsync(50);
-    expect(onAllViewersClosed).toHaveBeenCalledOnce();
-  });
-
-  it("ignores an in-flight heartbeat that arrives after the viewer release", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 10_000,
-      closeGraceMs: 500,
-    });
-
-    lifecycle.heartbeat("closing-document");
-    lifecycle.release("closing-document");
-    lifecycle.heartbeat("closing-document");
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(lifecycle.activeViewerCount).toBe(0);
-    expect(onAllViewersClosed).toHaveBeenCalledOnce();
-  });
-
-  it("uses lease expiry when a browser cannot send its release beacon", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 1_000,
-      closeGraceMs: 100,
-    });
-
-    lifecycle.heartbeat("crashed-viewer");
-    await vi.advanceTimersByTimeAsync(999);
-    expect(lifecycle.activeViewerCount).toBe(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(lifecycle.activeViewerCount).toBe(0);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(100);
-    expect(onAllViewersClosed).toHaveBeenCalledOnce();
-  });
-
-  it("does not interpret a suspended event loop as a dead viewer", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-08T00:00:00.000Z"));
-    const onAllViewersClosed = vi.fn();
-    const lifecycle = new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 1_000,
-      closeGraceMs: 100,
-      timerLatenessToleranceMs: 100,
-    });
-
-    lifecycle.heartbeat("sleeping-machine");
-    vi.setSystemTime(new Date("2026-08-08T00:01:00.000Z"));
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    expect(lifecycle.activeViewerCount).toBe(1);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-  });
-
-  it("does not auto-stop before any viewer has connected", async () => {
-    vi.useFakeTimers();
-    const onAllViewersClosed = vi.fn();
-    new ViewerLifecycle({
-      onAllViewersClosed,
-      leaseTimeoutMs: 100,
-      closeGraceMs: 10,
-    });
-
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(onAllViewersClosed).not.toHaveBeenCalled();
-  });
-});
+afterEach(() => vi.useRealTimers());
 
 describe("waitForServerShutdown", () => {
-  it("resolves from viewer shutdown and removes process signal listeners", async () => {
+  it("resolves from an explicit stop request and removes process signal listeners", async () => {
     const listenersBefore = {
       sigint: process.listenerCount("SIGINT"),
       sigterm: process.listenerCount("SIGTERM"),
     };
-    const viewersClosed = Promise.withResolvers<void>();
-    const waiting = waitForServerShutdown(viewersClosed.promise);
+    const stopRequested = Promise.withResolvers<void>();
+    const waiting = waitForServerShutdown(stopRequested.promise);
 
-    viewersClosed.resolve();
-    await expect(waiting).resolves.toBe("viewers-closed");
+    stopRequested.resolve();
+    await expect(waiting).resolves.toBe("stop-command");
     expect(process.listenerCount("SIGINT")).toBe(listenersBefore.sigint);
     expect(process.listenerCount("SIGTERM")).toBe(listenersBefore.sigterm);
   });
 });
 
 describe("completeBackgroundOpen", () => {
-  it("returns only after the browser opens and its first viewer connects", async () => {
+  it("returns after browser launch without waiting for a viewer connection", async () => {
     const child = backgroundChild();
     const launchBrowser = vi.fn().mockResolvedValue(undefined);
     const opening = completeBackgroundOpen(child, launchBrowser, {
       readyTimeoutMs: 1_000,
-      viewerTimeoutMs: 1_000,
+      browserTimeoutMs: 1_000,
     });
 
     child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/?pullRequestId=pr-1" });
     await vi.waitFor(() => expect(launchBrowser).toHaveBeenCalledOnce());
-    child.emit("message", { type: "viewer-connected" });
 
     await expect(opening).resolves.toBe("http://127.0.0.1:4321/?pullRequestId=pr-1");
     expect(child.disconnect.mock.calls).toHaveLength(1);
@@ -270,7 +75,7 @@ describe("completeBackgroundOpen", () => {
     const opening = completeBackgroundOpen(
       child,
       vi.fn().mockRejectedValue(new Error("browser launch failed")),
-      { readyTimeoutMs: 1_000, viewerTimeoutMs: 1_000 },
+      { readyTimeoutMs: 1_000, browserTimeoutMs: 1_000 },
     );
 
     child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
@@ -284,7 +89,7 @@ describe("completeBackgroundOpen", () => {
     const child = backgroundChild();
     const opening = completeBackgroundOpen(child, vi.fn().mockResolvedValue(undefined), {
       readyTimeoutMs: 1_000,
-      viewerTimeoutMs: 1_000,
+      browserTimeoutMs: 1_000,
     });
 
     child.emit("message", {
@@ -310,7 +115,7 @@ describe("completeBackgroundOpen", () => {
     const child = backgroundChild();
     const opening = completeBackgroundOpen(child, vi.fn().mockResolvedValue(undefined), {
       readyTimeoutMs: 100,
-      viewerTimeoutMs: 100,
+      browserTimeoutMs: 100,
     });
 
     const rejection = expect(opening).rejects.toMatchObject({ code: "PROCESS_TIMEOUT" });
@@ -319,13 +124,13 @@ describe("completeBackgroundOpen", () => {
     expect(child.kill.mock.calls).toEqual([["SIGTERM"]]);
   });
 
-  it("stops a ready worker when no browser viewer connects", async () => {
+  it("stops a ready worker when the OS browser launch does not complete", async () => {
     vi.useFakeTimers();
     const child = backgroundChild();
-    const launchBrowser = vi.fn().mockResolvedValue(undefined);
+    const launchBrowser = vi.fn(() => new Promise<void>(() => {}));
     const opening = completeBackgroundOpen(child, launchBrowser, {
       readyTimeoutMs: 1_000,
-      viewerTimeoutMs: 100,
+      browserTimeoutMs: 100,
     });
 
     child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
@@ -381,7 +186,6 @@ describe("database-scoped viewer runtime reuse", () => {
           type: "ready",
           url: `http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`,
         });
-        child.emit("message", { type: "viewer-connected" });
       }, 0);
       return child;
     });
@@ -439,7 +243,6 @@ describe("database-scoped viewer runtime reuse", () => {
     const forkWorker = vi.fn(() => {
       setTimeout(() => {
         child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
-        child.emit("message", { type: "viewer-connected" });
       }, 0);
       return child;
     });
@@ -465,7 +268,6 @@ describe("database-scoped viewer runtime reuse", () => {
           type: "ready",
           url: `http://127.0.0.1:${DEFAULT_VIEWER_PORT}/`,
         });
-        child.emit("message", { type: "viewer-connected" });
       }, 0);
       return child;
     });
@@ -491,7 +293,6 @@ describe("database-scoped viewer runtime reuse", () => {
     const forkWorker = vi.fn(() => {
       setTimeout(() => {
         child.emit("message", { type: "ready", url: "http://127.0.0.1:4321/" });
-        child.emit("message", { type: "viewer-connected" });
       }, 0);
       return child;
     });
@@ -510,52 +311,35 @@ describe("database-scoped viewer runtime reuse", () => {
     expect(forkWorker).toHaveBeenCalledWith(undefined, 0, 0, false);
   });
 
-  it("reserves the saved PR list viewer without resolving a repository or PR", async () => {
+  it("opens the saved PR list without browser leases or resolving a repository or PR", async () => {
     const openPullRequest = vi.fn().mockRejectedValue(new Error("not a Git repository"));
-    const viewerLeaseId = "55555555-5555-4555-8555-555555555555";
-    const reserveViewer = vi.fn().mockReturnValue(viewerLeaseId);
-    const armViewerReservation = vi.fn();
-    const cancelViewerReservation = vi.fn();
     const handler = createRuntimeAgentSocketHandler(
       { service: { openPullRequest } } as unknown as Runtime,
       {
         origin: "http://127.0.0.1:4321",
         port: 4321,
-        reserveViewer,
-        armViewerReservation,
-        cancelViewerReservation,
       } as unknown as RunningServer,
     );
 
     await expect(
       handler.openViewer({ list: true, cwd: "/not-a-repository", requestedPort: 0 }),
     ).resolves.toEqual({
-      url: `http://127.0.0.1:4321/?viewerLease=${viewerLeaseId}`,
+      url: "http://127.0.0.1:4321/",
       origin: "http://127.0.0.1:4321",
       port: 4321,
       pullRequestId: null,
       ownerPid: process.pid,
-      viewerLeaseId,
     });
     expect(openPullRequest).not.toHaveBeenCalled();
-    expect(reserveViewer).toHaveBeenCalledOnce();
-    expect(armViewerReservation).toHaveBeenCalledWith(viewerLeaseId);
-    expect(cancelViewerReservation).not.toHaveBeenCalled();
   });
 
   it("reuses the active origin and rejects a conflicting explicit port before opening a PR", async () => {
     const openPullRequest = vi.fn().mockResolvedValue({ pullRequest: { id: "pr-45" } });
-    const reserveViewer = vi.fn().mockReturnValue("55555555-5555-4555-8555-555555555555");
-    const armViewerReservation = vi.fn();
-    const cancelViewerReservation = vi.fn();
     const handler = createRuntimeAgentSocketHandler(
       { service: { openPullRequest } } as unknown as Runtime,
       {
         origin: "http://127.0.0.1:4321",
         port: 4321,
-        reserveViewer,
-        armViewerReservation,
-        cancelViewerReservation,
       } as unknown as RunningServer,
     );
 
@@ -570,27 +354,17 @@ describe("database-scoped viewer runtime reuse", () => {
     await expect(
       handler.openViewer({ reference: "45", cwd: "/repo", requestedPort: 4321 }),
     ).resolves.toEqual({
-      url: "http://127.0.0.1:4321/?pullRequestId=pr-45&viewerLease=55555555-5555-4555-8555-555555555555",
+      url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
       origin: "http://127.0.0.1:4321",
       port: 4321,
       pullRequestId: "pr-45",
       ownerPid: process.pid,
-      viewerLeaseId: "55555555-5555-4555-8555-555555555555",
     });
     expect(openPullRequest).toHaveBeenCalledWith("45", "/repo");
-    expect(reserveViewer).toHaveBeenCalledOnce();
-    expect(reserveViewer.mock.invocationCallOrder[0]).toBeLessThan(
-      openPullRequest.mock.invocationCallOrder[0]!,
-    );
-    expect(openPullRequest.mock.invocationCallOrder[0]).toBeLessThan(
-      armViewerReservation.mock.invocationCallOrder[0]!,
-    );
-    expect(cancelViewerReservation).not.toHaveBeenCalled();
   });
 
-  it("cancels a pending viewer reservation when PR resolution fails", async () => {
+  it("propagates PR resolution failures without a browser reservation", async () => {
     const failure = new Error("unknown PR");
-    const cancelViewerReservation = vi.fn();
     const handler = createRuntimeAgentSocketHandler(
       {
         service: { openPullRequest: vi.fn().mockRejectedValue(failure) },
@@ -598,15 +372,12 @@ describe("database-scoped viewer runtime reuse", () => {
       {
         origin: "http://127.0.0.1:4321",
         port: 4321,
-        reserveViewer: () => "55555555-5555-4555-8555-555555555555",
-        cancelViewerReservation,
       } as unknown as RunningServer,
     );
 
     await expect(
       handler.openViewer({ reference: "999", cwd: "/repo", requestedPort: 0 }),
     ).rejects.toBe(failure);
-    expect(cancelViewerReservation).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
   });
 });
 
@@ -678,6 +449,52 @@ describe("runtime shutdown sequencing", () => {
     expect(calls).toEqual(["agent-stop", "http-close", "runtime-close", "owner-release"]);
   });
 
+  it("drains an accepted HTTP operation even after its browser connection is aborted", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let operationCompleted = false;
+    const service = {
+      refreshPullRequestStatuses: async () => {
+        entered.resolve();
+        await release.promise;
+        operationCompleted = true;
+        return { updated: [], failures: [] };
+      },
+    } as unknown as Parameters<typeof startServer>[0];
+    const running = await startServer(service);
+    const abort = new AbortController();
+    const request = fetch(`${running.origin}/api/pull-requests/refresh-statuses`, {
+      method: "POST",
+      headers: { origin: running.origin, "content-type": "application/json" },
+      body: "{}",
+      signal: abort.signal,
+    }).catch(() => undefined);
+    const runtimeClose = vi.fn();
+    let closing: Promise<void> | undefined;
+    try {
+      await entered.promise;
+      abort.abort();
+      await request;
+      closing = closeOwnedRuntime(undefined, running, {
+        close: runtimeClose,
+      } as unknown as Runtime);
+      await new Promise<void>((resolve) => setTimeout(resolve, 30));
+      expect(operationCompleted).toBe(false);
+      expect(runtimeClose).not.toHaveBeenCalled();
+      release.resolve();
+      await closing;
+      expect(operationCompleted).toBe(true);
+      expect(runtimeClose).toHaveBeenCalledOnce();
+      await running.close();
+    } finally {
+      release.resolve();
+      abort.abort();
+      await request;
+      await closing;
+      await running.close();
+    }
+  });
+
   it("retries ownership after a draining runtime disappears", async () => {
     const closeFollower = vi.fn().mockResolvedValue(undefined);
     const follower = {
@@ -729,38 +546,5 @@ describe("runtime shutdown sequencing", () => {
       }),
     ).resolves.toEqual({ kind: "owned", agentSocket: owner });
     expect(startSocket).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("--no-open runtime lease", () => {
-  it("heartbeats until a signal and releases its CLI-held viewer", async () => {
-    const fetchRequest = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    const holding = holdRuntimeViewerLease(
-      {
-        url: "http://127.0.0.1:4321/?pullRequestId=pr-45",
-        origin: "http://127.0.0.1:4321",
-        port: 4321,
-        pullRequestId: "pr-45",
-        ownerPid: 123,
-        viewerLeaseId: "55555555-5555-4555-8555-555555555555",
-      },
-      { fetch: fetchRequest, heartbeatIntervalMs: 60_000 },
-    );
-    await vi.waitFor(() => expect(fetchRequest).toHaveBeenCalledOnce());
-    process.emit("SIGTERM", "SIGTERM");
-    await holding;
-
-    expect(fetchRequest).toHaveBeenCalledTimes(2);
-    expect(fetchRequest.mock.calls[0]?.[1]).toMatchObject({
-      headers: {
-        "x-rvw-viewer-open-lease": "55555555-5555-4555-8555-555555555555",
-      },
-    });
-    const releaseRequest = fetchRequest.mock.calls[1]?.[1];
-    expect(releaseRequest?.method).toBe("POST");
-    expect(releaseRequest?.body).toEqual(expect.stringContaining("viewerId"));
   });
 });

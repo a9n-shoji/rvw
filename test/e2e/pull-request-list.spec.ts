@@ -9,10 +9,13 @@ test.afterEach(async ({ request }) => {
   ]);
 });
 
-test("lists saved Pull Requests and navigates through browser history", async ({
-  page,
-  request,
-}) => {
+test("lists saved Pull Requests and navigates through browser history", async ({ page }) => {
+  let pollCount = 0;
+  page.on("response", (response) => {
+    if (new URL(response.url()).pathname === "/api/meta/change-sequence" && response.ok()) {
+      pollCount += 1;
+    }
+  });
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Pull Requests" })).toBeVisible();
@@ -69,13 +72,7 @@ test("lists saved Pull Requests and navigates through browser history", async ({
   });
   expect(browserCloseGuard).toEqual({ dispatchAllowed: true, defaultPrevented: false });
 
-  await expect
-    .poll(async () => {
-      const response = await request.get("/api/test/viewers");
-      const body = (await response.json()) as { activeViewers: string[] };
-      return body.activeViewers.length;
-    })
-    .toBeGreaterThan(0);
+  await expect.poll(() => pollCount).toBeGreaterThan(1);
 
   await rows.first().click();
   await expect(page).toHaveURL(new RegExp(`pullRequestId=${pullRequestId}`));

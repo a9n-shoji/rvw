@@ -1,5 +1,4 @@
 import { fork } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -22,9 +21,6 @@ import {
   DEFAULT_WALKTHROUGH_LIST_LIMIT,
   DEFAULT_VIEWER_PORT,
   PROTOCOL_VERSION,
-  VIEWER_ID_HEADER,
-  VIEWER_OPEN_LEASE_HEADER,
-  VIEWER_OPEN_LEASE_QUERY,
 } from "../shared/constants.js";
 import {
   asRvwError,
@@ -37,12 +33,12 @@ import {
   startServer,
   type RunningServer,
 } from "../server/start-server.js";
-import { DEFAULT_VIEWER_STARTUP_TIMEOUT_MS } from "../server/viewer-lifecycle.js";
 import {
   type AgentSocketResult,
   inspectAgentTransport,
   MAX_CLI_STDIN_BYTES,
   startRuntimeAgentSocket,
+  stopRuntime,
   tryRuntimeViewerOpen,
   tryAgentSocketRequest,
   type AgentTransportStatus,
@@ -74,10 +70,7 @@ import { formatWalkthroughListOutput } from "./walkthrough-protocol.js";
 
 const MAX_STDIN_BYTES = MAX_CLI_STDIN_BYTES;
 const OPEN_WORKER_READY_TIMEOUT_MS = 120_000;
-const OPEN_WORKER_PARENT_TIMEOUT_PADDING_MS = 5_000;
 const RUNTIME_REUSE_RETRY_MS = 50;
-const RUNTIME_VIEWER_HEARTBEAT_INTERVAL_MS = 30_000;
-const RUNTIME_VIEWER_REQUEST_TIMEOUT_MS = 5_000;
 declare const __RVW_CLI_BUNDLE__: boolean | undefined;
 
 interface OutputOptions {
@@ -174,16 +167,13 @@ function parsePlatform(value: string): SkillPlatform {
   throw new InvalidArgumentError("platformはcodexまたはclaudeです。");
 }
 
-export type ServerShutdownReason = "signal" | "viewers-closed";
+export type ServerShutdownReason = "signal" | "stop-command";
 
 interface OpenWorkerError extends SerializedRvwError {
   status: number;
 }
 
-type OpenWorkerMessage =
-  | { type: "ready"; url: string }
-  | { type: "viewer-connected" }
-  | { type: "error"; error: OpenWorkerError };
+type OpenWorkerMessage = { type: "ready"; url: string } | { type: "error"; error: OpenWorkerError };
 
 export interface BackgroundOpenChild {
   connected: boolean;
@@ -196,7 +186,7 @@ export interface BackgroundOpenChild {
 
 interface BackgroundOpenOptions {
   readyTimeoutMs?: number;
-  viewerTimeoutMs?: number;
+  browserTimeoutMs?: number;
 }
 
 interface BackgroundOpenDependencies {
@@ -210,12 +200,6 @@ interface BackgroundOpenDependencies {
   tryRuntimeOpen?: (
     input: RuntimeViewerOpenInput,
   ) => Promise<AgentSocketResult<RuntimeViewerOpenResult>>;
-}
-
-interface RuntimeViewerLeaseDependencies {
-  fetch?: typeof fetch;
-  heartbeatIntervalMs?: number;
-  requestTimeoutMs?: number;
 }
 
 interface RuntimeStartupHandoffDependencies {
@@ -242,7 +226,6 @@ function openWorkerMessage(value: unknown): OpenWorkerMessage | null {
   if (candidate.type === "ready" && typeof candidate.url === "string") {
     return { type: "ready", url: candidate.url };
   }
-  if (candidate.type === "viewer-connected") return { type: "viewer-connected" };
   if (candidate.type !== "error" || !candidate.error || typeof candidate.error !== "object") {
     return null;
   }
@@ -288,15 +271,12 @@ export async function completeBackgroundOpen(
   options: BackgroundOpenOptions = {},
 ): Promise<string> {
   const readyTimeoutMs = options.readyTimeoutMs ?? OPEN_WORKER_READY_TIMEOUT_MS;
-  const viewerTimeoutMs =
-    options.viewerTimeoutMs ??
-    DEFAULT_VIEWER_STARTUP_TIMEOUT_MS + OPEN_WORKER_PARENT_TIMEOUT_PADDING_MS;
+  const browserTimeoutMs = options.browserTimeoutMs ?? 30_000;
   return await new Promise<string>((resolve, reject) => {
     let settled = false;
     let exited = false;
     let readyUrl: string | null = null;
     let browserOpened = false;
-    let viewerConnected = false;
     let timer: ReturnType<typeof setTimeout>;
 
     const cleanup = (): void => {
@@ -313,7 +293,7 @@ export async function completeBackgroundOpen(
       reject(asRvwError(error));
     };
     const finishIfReady = (): void => {
-      if (settled || !readyUrl || !browserOpened || !viewerConnected) return;
+      if (settled || !readyUrl || !browserOpened) return;
       settled = true;
       cleanup();
       if (child.connected) child.disconnect();
@@ -337,14 +317,9 @@ export async function completeBackgroundOpen(
         fail(errorFromOpenWorker(message.error));
         return;
       }
-      if (message.type === "viewer-connected") {
-        viewerConnected = true;
-        finishIfReady();
-        return;
-      }
       if (readyUrl !== null) return;
       readyUrl = message.url;
-      scheduleTimeout(viewerTimeoutMs, "ブラウザviewerの起動確認がタイムアウトしました。");
+      scheduleTimeout(browserTimeoutMs, "ブラウザの起動がタイムアウトしました。");
       void launchBrowser(readyUrl)
         .then(() => {
           browserOpened = true;
@@ -373,7 +348,7 @@ export async function completeBackgroundOpen(
 }
 
 export function waitForServerShutdown(
-  allViewersClosed: Promise<void> | null,
+  stopRequested: Promise<void> | null,
 ): Promise<ServerShutdownReason> {
   return new Promise<ServerShutdownReason>((resolve) => {
     let settled = false;
@@ -387,8 +362,8 @@ export function waitForServerShutdown(
     const onSignal = (): void => finish("signal");
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
-    if (allViewersClosed) {
-      void allViewersClosed.then(() => finish("viewers-closed"));
+    if (stopRequested) {
+      void stopRequested.then(() => finish("stop-command"));
     }
   });
 }
@@ -478,32 +453,6 @@ async function sendOpenWorkerMessage(message: OpenWorkerMessage): Promise<boolea
   });
 }
 
-type InitialViewerResult = "connected" | "aborted" | "timeout";
-
-async function waitForInitialViewer(
-  firstViewerConnected: Promise<void>,
-  timeoutMs = DEFAULT_VIEWER_STARTUP_TIMEOUT_MS,
-): Promise<InitialViewerResult> {
-  return await new Promise<InitialViewerResult>((resolve) => {
-    let settled = false;
-    const finish = (result: InitialViewerResult): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      process.removeListener("SIGINT", onAbort);
-      process.removeListener("SIGTERM", onAbort);
-      process.removeListener("disconnect", onAbort);
-      resolve(result);
-    };
-    const onAbort = (): void => finish("aborted");
-    const timer = setTimeout(() => finish("timeout"), timeoutMs);
-    process.once("SIGINT", onAbort);
-    process.once("SIGTERM", onAbort);
-    process.once("disconnect", onAbort);
-    void firstViewerConnected.then(() => finish("connected"));
-  });
-}
-
 function runtimeViewerOpenInput(
   reference: string | undefined,
   cwd: string,
@@ -537,99 +486,20 @@ export function createRuntimeAgentSocketHandler(
           },
         );
       }
-      const viewerLeaseId = running.reserveViewer();
-      try {
-        const opened = input.list
-          ? null
-          : await activeRuntime.service.openPullRequest(input.reference, input.cwd);
-        if (viewerLeaseId !== null) running.armViewerReservation(viewerLeaseId);
-        const url = new URL(running.origin);
-        if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
-        if (viewerLeaseId !== null) url.searchParams.set(VIEWER_OPEN_LEASE_QUERY, viewerLeaseId);
-        return {
-          url: url.toString(),
-          origin: running.origin,
-          port: running.port,
-          pullRequestId: opened?.pullRequest.id ?? null,
-          ownerPid: process.pid,
-          ...(viewerLeaseId === null ? {} : { viewerLeaseId }),
-        };
-      } catch (error) {
-        if (viewerLeaseId !== null) running.cancelViewerReservation(viewerLeaseId);
-        throw error;
-      }
+      const opened = input.list
+        ? null
+        : await activeRuntime.service.openPullRequest(input.reference, input.cwd);
+      const url = new URL(running.origin);
+      if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
+      return {
+        url: url.toString(),
+        origin: running.origin,
+        port: running.port,
+        pullRequestId: opened?.pullRequest.id ?? null,
+        ownerPid: process.pid,
+      };
     },
   };
-}
-
-export async function holdRuntimeViewerLease(
-  result: RuntimeViewerOpenResult,
-  dependencies: RuntimeViewerLeaseDependencies = {},
-): Promise<void> {
-  const viewerLeaseId = result.viewerLeaseId;
-  if (viewerLeaseId === undefined) return;
-  const fetchRequest = dependencies.fetch ?? fetch;
-  const viewerId = randomUUID();
-  const requestTimeoutMs = dependencies.requestTimeoutMs ?? RUNTIME_VIEWER_REQUEST_TIMEOUT_MS;
-  const heartbeatUrl = new URL("/api/meta/change-sequence", result.origin);
-  const releaseUrl = new URL("/api/meta/viewers/release", result.origin);
-  const heartbeat = async (): Promise<void> => {
-    const response = await fetchRequest(heartbeatUrl, {
-      signal: AbortSignal.timeout(requestTimeoutMs),
-      headers: {
-        [VIEWER_ID_HEADER]: viewerId,
-        [VIEWER_OPEN_LEASE_HEADER]: viewerLeaseId,
-      },
-    });
-    if (!response.ok) {
-      throw new RvwError("PROCESS_FAILED", "rvw runtimeのviewer leaseを更新できませんでした。", {
-        details: { status: response.status, origin: result.origin },
-      });
-    }
-  };
-
-  const stopped = Promise.withResolvers<"signal" | "heartbeat-failed">();
-  let heartbeatError: unknown;
-  let heartbeatInFlight = false;
-  const onSignal = (): void => stopped.resolve("signal");
-  process.once("SIGINT", onSignal);
-  process.once("SIGTERM", onSignal);
-  let interval: ReturnType<typeof setInterval> | undefined;
-  let registered = false;
-  try {
-    await heartbeat();
-    registered = true;
-    interval = setInterval(() => {
-      if (heartbeatInFlight) return;
-      heartbeatInFlight = true;
-      void heartbeat()
-        .catch((error: unknown) => {
-          heartbeatError = error;
-          stopped.resolve("heartbeat-failed");
-        })
-        .finally(() => {
-          heartbeatInFlight = false;
-        });
-    }, dependencies.heartbeatIntervalMs ?? RUNTIME_VIEWER_HEARTBEAT_INTERVAL_MS);
-    interval.unref();
-    const reason = await stopped.promise;
-    if (reason === "heartbeat-failed") throw heartbeatError;
-  } finally {
-    if (interval) clearInterval(interval);
-    process.removeListener("SIGINT", onSignal);
-    process.removeListener("SIGTERM", onSignal);
-    if (registered) {
-      await fetchRequest(releaseUrl, {
-        method: "POST",
-        signal: AbortSignal.timeout(requestTimeoutMs),
-        headers: {
-          origin: result.origin,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ viewerId }),
-      }).catch(() => undefined);
-    }
-  }
 }
 
 export async function closeOwnedRuntime(
@@ -712,6 +582,7 @@ async function runOpenServer(
   let activeRuntime: Runtime | undefined;
   let running: RunningServer | undefined;
   let agentSocket: RunningRuntimeAgentSocket | undefined;
+  const shutdownRequested = Promise.withResolvers<void>();
   try {
     if (useAgentSocket) {
       const databaseFilePath = databasePathConfiguration().filePath;
@@ -723,7 +594,6 @@ async function runOpenServer(
         if (startup.kind === "reused") {
           const result = startup.result;
           process.stdout.write(`rvw: ${result.url}\n`);
-          if (!openAutomatically) await holdRuntimeViewerLease(result);
           return;
         }
         agentSocket = startup.agentSocket;
@@ -749,18 +619,17 @@ async function runOpenServer(
     running = await startServer(activeRuntime.service, {
       port: startupPort,
       staticDirectory: staticDirectory(),
-      autoCloseWhenNoViewers: openAutomatically,
     });
     agentSocket?.setHandler(createRuntimeAgentSocketHandler(activeRuntime, running));
     const url = new URL(running.origin);
     if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
     process.stdout.write(`rvw: ${url.toString()}\n`);
+    void agentSocket?.stopRequested.then(shutdownRequested.resolve);
+    const shutdown = waitForServerShutdown(shutdownRequested.promise);
     if (openAutomatically) await openBrowser(url.toString());
-    const reason = await waitForServerShutdown(running.allViewersClosed);
-    if (reason === "viewers-closed") {
-      process.stdout.write("rvw: viewerを閉じたためserverを停止します。\n");
-    }
+    await shutdown;
   } finally {
+    shutdownRequested.resolve();
     await closeOwnedRuntime(agentSocket, running, activeRuntime);
   }
 }
@@ -775,6 +644,7 @@ async function runOpenWorker(
   let activeRuntime: Runtime | undefined;
   let running: RunningServer | undefined;
   let agentSocket: RunningRuntimeAgentSocket | undefined;
+  const shutdownRequested = Promise.withResolvers<void>();
   try {
     if (!process.send || !process.connected) {
       throw new RvwError("INVALID_INPUT", "内部viewer workerは親CLIから起動してください。");
@@ -787,7 +657,6 @@ async function runOpenWorker(
     if (startup.kind === "reused") {
       const result = startup.result;
       if (!(await sendOpenWorkerMessage({ type: "ready", url: result.url }))) return;
-      if (!(await sendOpenWorkerMessage({ type: "viewer-connected" }))) return;
       await waitForWorkerParentDisconnect();
       return;
     }
@@ -799,28 +668,18 @@ async function runOpenWorker(
     running = await startServer(activeRuntime.service, {
       port,
       staticDirectory: staticDirectory(),
-      autoCloseWhenNoViewers: true,
     });
     agentSocket.setHandler(createRuntimeAgentSocketHandler(activeRuntime, running));
     const url = new URL(running.origin);
     if (opened) url.searchParams.set("pullRequestId", opened.pullRequest.id);
-    if (!(await sendOpenWorkerMessage({ type: "ready", url: url.toString() }))) return;
-    const firstViewerConnected = running.firstViewerConnected;
-    if (!firstViewerConnected) {
-      throw new RvwError("INTERNAL_ERROR", "viewer lifecycleを初期化できませんでした。", {
-        status: 500,
-      });
+    void agentSocket.stopRequested.then(shutdownRequested.resolve);
+    const shutdown = waitForServerShutdown(shutdownRequested.promise);
+    if (!(await sendOpenWorkerMessage({ type: "ready", url: url.toString() }))) {
+      agentSocket.requestStop();
     }
-    const initialViewer = await waitForInitialViewer(firstViewerConnected);
-    if (initialViewer === "aborted") return;
-    if (initialViewer === "timeout") {
-      throw new RvwError("PROCESS_TIMEOUT", "ブラウザviewerの起動確認がタイムアウトしました。", {
-        details: { timeoutMs: DEFAULT_VIEWER_STARTUP_TIMEOUT_MS },
-      });
-    }
-    await sendOpenWorkerMessage({ type: "viewer-connected" });
-    await waitForServerShutdown(running.allViewersClosed);
+    await shutdown;
   } finally {
+    shutdownRequested.resolve();
     await closeOwnedRuntime(agentSocket, running, activeRuntime);
   }
 }
@@ -854,6 +713,19 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
     .version(APP_VERSION)
     .enablePositionalOptions()
     .showHelpAfterError();
+
+  program
+    .command("stop")
+    .description("現在のdatabaseのrvw serverを停止")
+    .option("--json", "JSONで出力")
+    .action(async (options: OutputOptions) => {
+      const result = await stopRuntime();
+      writeOutput(
+        options,
+        result,
+        result.stopped ? "rvw: serverを停止しました。" : "rvw: serverは起動していません。",
+      );
+    });
 
   program
     .command("doctor")
