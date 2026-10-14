@@ -812,21 +812,14 @@ export async function stopRuntime(
     }
   };
   const inspectOwnerIdentity = (): SocketOwnerIdentity | null => {
-    const identity = inspectIdentity(lockPath);
-    if (!identity) return null;
-    let record: unknown;
     try {
-      record = JSON.parse(readFileSync(lockPath, "utf8")) as unknown;
+      return socketOwnerIdentity(lockPath);
     } catch (error) {
-      if (error instanceof SyntaxError) return { ...identity, token: null };
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw unavailable("identity-unreadable", {
         path: lockPath,
         code: (error as NodeJS.ErrnoException).code,
       });
     }
-    const token = z.object({ token: z.uuid() }).safeParse(record);
-    return { ...identity, token: token.success ? token.data.token : null };
   };
 
   const removeStaleSocket = (identity: SocketIdentity | null): void => {
@@ -875,7 +868,7 @@ export async function stopRuntime(
         throw unavailable("invalid-stop-response");
       }
       // Ownership is released only after socket/HTTP drainage and Runtime/SQLite cleanup.
-      // A replacement owner has a different inode and must never be stopped by this request.
+      // A replacement owner has a different token, even when its inode is reused.
       while (sameOwnerIdentity(inspectOwnerIdentity(), parsed.data.ownerIdentity)) await wait();
       return { ok: true, stopped: true, databasePath };
     }
@@ -896,9 +889,9 @@ export async function stopRuntime(
         await wait();
         continue;
       }
-      // Dead owners are reclaimed by exact inode, as on startup. Do not touch arbitrary files.
+      // Recheck the dead owner token as well as its inode, as on startup.
       removeStaleSocket(observedSocket);
-      unlinkIfOwned(lockPath, observedOwner);
+      unlinkOwnerIfOwned(lockPath, observedOwner, ownerPid);
     } else {
       removeStaleSocket(observedSocket);
     }
@@ -1008,6 +1001,41 @@ function unlinkIfOwned(socketPath: string, identity: SocketIdentity | null): voi
   }
 }
 
+function socketOwnerIdentity(lockPath: string): SocketOwnerIdentity | null {
+  try {
+    const { dev, ino } = lstatSync(lockPath);
+    let record: unknown;
+    try {
+      record = JSON.parse(readFileSync(lockPath, "utf8")) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) return { dev, ino, token: null };
+      throw error;
+    }
+    const token = z.object({ token: z.uuid() }).safeParse(record);
+    return { dev, ino, token: token.success ? token.data.token : null };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function unlinkOwnerIfOwned(
+  lockPath: string,
+  identity: SocketOwnerIdentity | null,
+  ownerPid: number,
+): void {
+  if (
+    !identity ||
+    !sameOwnerIdentity(socketOwnerIdentity(lockPath), identity) ||
+    socketOwnerPid(lockPath) !== ownerPid
+  ) {
+    return;
+  }
+  // Recheck the inode after reading the token. This is a best-effort identity guard, not an atomic
+  // compare-and-unlink: a separate process can still replace the path between the check and unlink.
+  unlinkIfOwned(lockPath, identity);
+}
+
 function processIsAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -1046,11 +1074,17 @@ function tryAcquireSocketOwnerLock(socketPath: string): SocketOwnerLock | null {
         if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
       }
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const observedIdentity = socketIdentity(lockPath);
+      let observedIdentity: SocketOwnerIdentity | null;
+      try {
+        observedIdentity = socketOwnerIdentity(lockPath);
+      } catch {
+        // Preserve an owner whose identity cannot be read safely.
+        return null;
+      }
       const ownerPid = socketOwnerPid(lockPath);
       // An unreadable lock is kept rather than risking two live owners.
       if (ownerPid === null || processIsAlive(ownerPid)) return null;
-      unlinkIfOwned(lockPath, observedIdentity);
+      unlinkOwnerIfOwned(lockPath, observedIdentity, ownerPid);
       continue;
     }
     try {
@@ -1060,7 +1094,7 @@ function tryAcquireSocketOwnerLock(socketPath: string): SocketOwnerLock | null {
       return { identity, path: lockPath, token };
     } catch (error) {
       const identity = socketIdentity(stagingPath);
-      unlinkIfOwned(lockPath, identity);
+      unlinkOwnerIfOwned(lockPath, identity ? { ...identity, token } : null, process.pid);
       try {
         unlinkSync(stagingPath);
       } catch (unlinkError) {
@@ -1074,7 +1108,7 @@ function tryAcquireSocketOwnerLock(socketPath: string): SocketOwnerLock | null {
 
 function releaseSocketOwnerLock(lock: SocketOwnerLock | null): void {
   if (!lock) return;
-  unlinkIfOwned(lock.path, lock.identity);
+  unlinkOwnerIfOwned(lock.path, { ...lock.identity, token: lock.token }, process.pid);
 }
 
 type AgentSocketDispatcher = (request: AgentRequest) => Promise<unknown>;

@@ -1,5 +1,18 @@
 # Architecture decisions
 
+## 2026-10-14: Recheck owner tokens when releasing or reclaiming locks
+
+Owner request matching already uses a per-runtime UUID, but inode-only lock cleanup could remove a
+replacement owner after stale-lock reclamation reused the same inode. Use one owner-specific cleanup
+helper for stale stop, stale startup, acquisition rollback, and normal release. Re-read the token and
+observed PID as well as the device/inode before unlinking; keep socket-file cleanup separate. Matching
+dead legacy records without a token remain reclaimable, while a replacement token or PID is preserved.
+
+This narrows stale-observation/ABA races but does not provide atomic compare-and-unlink. Another
+process can still replace a path after its final check; filesystem-level serialization would be needed
+for that stronger guarantee. Deterministic tests cover replacement before the cleanup recheck, including
+concurrent stale-lock recovery and same-inode/different-token owners.
+
 ## 2026-10-14: Keep the runtime alive until explicit stop
 
 ### Problem
@@ -28,7 +41,7 @@ currently configured database, does not initialize SQLite or create a database, 
 recorded PID or kills a process by port. No runtime is an idempotent success, including an explicitly
 selected socket that is absent with no live owner. Permissions, database identity, malformed or
 incompatible protocol, and unresponsive live owners fail closed. Dead-owner artifacts may be reclaimed
-only with the existing exact-inode checks.
+only after exact-inode checks, plus token and PID rechecks for owner locks.
 
 Each owner lock carries a fresh UUID instance token alongside its PID. Stop pins both the token and
 file identity in its request, acknowledgement, and completion checks, so inode reuse cannot target a

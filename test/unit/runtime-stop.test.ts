@@ -90,6 +90,25 @@ function mockSocketResponse(response: unknown, beforeResponse?: () => void) {
   return requests;
 }
 
+function mockSocketListeners(): void {
+  vi.spyOn(net, "createServer").mockImplementation(() => {
+    const server = new net.Server();
+    server.listen = (...args: unknown[]) => {
+      const socketPath = args[0];
+      if (typeof socketPath !== "string") throw new Error("Expected a Unix socket path");
+      // Give ownership cleanup a real filesystem identity without requiring Unix socket access.
+      writeFileSync(socketPath, "mock socket", { flag: "wx", mode: 0o600 });
+      queueMicrotask(() => server.emit("listening"));
+      return server;
+    };
+    server.close = (callback) => {
+      queueMicrotask(() => callback?.());
+      return server;
+    };
+    return server;
+  });
+}
+
 function childExit(child: ChildProcess): Promise<{ code: number | null; signal: string | null }> {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve({ code: child.exitCode, signal: child.signalCode });
@@ -790,6 +809,137 @@ describe("explicit runtime stop", () => {
       token: replacementToken,
     });
     expect(net.createConnection).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { label: "UUID owners", token: ownerToken, nextToken: replacementToken },
+    { label: "legacy owners", token: undefined, nextToken: undefined },
+  ])(
+    "preserves a same-inode replacement after stop's dead-PID probe ($label)",
+    async ({ token, nextToken }) => {
+      const deadPid = process.pid + 1;
+      const nextPid = token === undefined ? process.pid : deadPid;
+      const lockPath = `${socketPath}.owner`;
+      writeFileSync(lockPath, JSON.stringify({ pid: deadPid, token }), { mode: 0o600 });
+      const { dev, ino } = statSync(lockPath);
+      mockConnectionFailure("ECONNREFUSED");
+      let probes = 0;
+      const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        expect(pid).toBe(deadPid);
+        expect(signal).toBe(0);
+        // Model inode reuse by another runtime after the observed owner's liveness check.
+        // Legacy owners also receive an earlier probe before the socket request.
+        probes += 1;
+        if (probes === (token === undefined ? 2 : 1)) {
+          writeFileSync(lockPath, JSON.stringify({ pid: nextPid, token: nextToken }));
+        }
+        throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+      });
+
+      await expect(stopRuntime(databasePath, stopOptions)).resolves.toEqual({
+        ok: true,
+        stopped: false,
+        databasePath,
+      });
+      expect(statSync(lockPath)).toMatchObject({ dev, ino });
+      expect(readFileSync(lockPath, "utf8")).toBe(
+        JSON.stringify({ pid: nextPid, token: nextToken }),
+      );
+      expect(kill).toHaveBeenCalledTimes(token === undefined ? 2 : 1);
+      expect(net.createConnection).toHaveBeenCalledOnce();
+      expect(existsSync(databasePath)).toBe(false);
+    },
+  );
+
+  it("preserves a same-inode live replacement during startup's dead-owner recovery", async () => {
+    const deadPid = process.pid + 1;
+    const lockPath = `${socketPath}.owner`;
+    writeFileSync(lockPath, JSON.stringify({ pid: deadPid, token: ownerToken }), { mode: 0o600 });
+    const { dev, ino } = statSync(lockPath);
+    mockSocketListeners();
+    let replacementPublished = false;
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      expect(signal).toBe(0);
+      expect(pid).toBe(deadPid);
+      if (replacementPublished) return true;
+      replacementPublished = true;
+      // Reuse the PID as well as the inode, requiring the UUID to distinguish this owner.
+      writeFileSync(lockPath, JSON.stringify({ pid: deadPid, token: replacementToken }));
+      throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    });
+
+    const contender = await startRuntimeAgentSocket(databasePath);
+    cleanups.push(() => contender.close());
+    expect(contender.owned).toBe(false);
+    expect(statSync(lockPath)).toMatchObject({ dev, ino });
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual({
+      pid: deadPid,
+      token: replacementToken,
+    });
+    expect(kill).toHaveBeenCalledWith(deadPid, 0);
+    expect(net.createServer).not.toHaveBeenCalled();
+    expect(existsSync(socketPath)).toBe(false);
+    expect(existsSync(databasePath)).toBe(false);
+  });
+
+  it("preserves a same-inode replacement owner when the previous runtime releases ownership", async () => {
+    mockSocketListeners();
+    const runtime = await startRuntimeAgentSocket(databasePath);
+    cleanups.push(() => runtime.close());
+    expect(runtime.owned).toBe(true);
+    const lockPath = `${socketPath}.owner`;
+    const { dev, ino } = statSync(lockPath);
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: replacementToken }));
+
+    await runtime.releaseOwnership();
+
+    expect(runtime.owned).toBe(false);
+    expect(statSync(lockPath)).toMatchObject({ dev, ino });
+    expect(JSON.parse(readFileSync(lockPath, "utf8"))).toEqual({
+      pid: process.pid,
+      token: replacementToken,
+    });
+    expect(existsSync(databasePath)).toBe(false);
+  });
+
+  it("lets only one concurrent startup reclaim the same stale owner", async () => {
+    const deadPid = process.pid + 1;
+    const lockPath = `${socketPath}.owner`;
+    writeFileSync(lockPath, JSON.stringify({ pid: deadPid, token: ownerToken }), { mode: 0o600 });
+    mockSocketListeners();
+    let competingStartup: ReturnType<typeof startRuntimeAgentSocket> | undefined;
+    let startingCompetitor = false;
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      expect(signal).toBe(0);
+      if (pid === process.pid) return true;
+      expect(pid).toBe(deadPid);
+      if (!startingCompetitor) {
+        startingCompetitor = true;
+        // Both contenders have observed the dead PID before either can finish reclamation.
+        competingStartup = startRuntimeAgentSocket(databasePath);
+      }
+      throw Object.assign(new Error("No such process"), { code: "ESRCH" });
+    });
+
+    const first = await startRuntimeAgentSocket(databasePath);
+    cleanups.push(() => first.close());
+    expect(competingStartup).toBeDefined();
+    const second = await competingStartup!;
+    cleanups.push(() => second.close());
+    expect(kill.mock.calls.filter(([pid]) => pid === deadPid)).toHaveLength(2);
+    expect(first.owned).toBe(false);
+    expect(second.owned).toBe(true);
+    expect(net.createServer).toHaveBeenCalledOnce();
+    const winningRecord = readFileSync(lockPath, "utf8");
+    expect(JSON.parse(winningRecord)).toMatchObject({ pid: process.pid });
+    expect(JSON.parse(winningRecord)).not.toMatchObject({ token: ownerToken });
+
+    await first.close();
+    expect(readFileSync(lockPath, "utf8")).toBe(winningRecord);
+    await second.close();
+    expect(existsSync(lockPath)).toBe(false);
+    expect(existsSync(socketPath)).toBe(false);
+    expect(existsSync(databasePath)).toBe(false);
   });
 
   it("rejects an acknowledgement with the correct inode but a different token", async () => {

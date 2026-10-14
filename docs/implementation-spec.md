@@ -1667,7 +1667,8 @@ ownership取得を再試行する。複数workerが再試行してもlockのwinn
 Runtime / SQLiteのclose、socket cleanup、owner lock解放の順に処理する。受付を止めた後もlockを解放するまでは
 同じdatabaseの新しいRuntimeを作らない。
 lockのowner PIDが生存中またはlockが安全に読めない間はtakeoverせず、owner終了後の起動またはstopだけがexact
-inodeを確認してstale lock/socketを除去する。`doctor --json`はDBの
+inodeを確認してstale socketを除去する。owner lockは削除直前にinode・UUID token・観測したPIDを再照合する。
+この確認とunlinkはatomicではなく、照合後に別processがpathを置換するTOCTOUを完全に排除するものではない。`doctor --json`はDBの
 mode/ownerに加えてrollbackするwrite transactionとAgent疎通を実行・報告する。
 
 ```sql
@@ -2107,7 +2108,7 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
   JSON成功値は`{ ok: true, stopped: boolean, databasePath: string }`とし、停止確認済みは`stopped: true`、
   active runtimeがない場合は`false`にする
 - socketがなくlive ownerもない場合のstopは冪等な成功とし、明示`RVW_AGENT_SOCKET_PATH`でもDBへfallbackしない。
-  dead-PIDのstale lock/socketはexact inodeを確認して回収できるが、権限error、DB不一致、non-rvw / malformed /
+  dead-PIDのstale socketはexact inode、owner lockはinode・token・PIDを再照合して回収できるが、権限error、DB不一致、non-rvw / malformed /
   incompatible protocol、valid tokenがないlive owner、応答しないlive ownerはfail closedする。
   無関係なlive PIDを停止しない
 - 更新前のbrowser管理runtimeは旧lifecycleで停止してから新runtimeを起動する。新CLIのstopはincompatibleな
