@@ -46,8 +46,6 @@ export const pullRequestArchiveSchema = z.object({ archived: z.boolean() }).stri
 export const resetSchema = z.object({ yes: z.boolean() });
 export const structureDeleteSchema = z.object({ expectedUpdatedAt: z.string().min(1).max(100) });
 
-export const viewerIdSchema = z.uuid();
-export const viewerReleaseSchema = z.object({ viewerId: viewerIdSchema });
 export const themePreferenceSchema = z.object({ themePreference: z.enum(themePreferences) });
 export const pullRequestListQuerySchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),

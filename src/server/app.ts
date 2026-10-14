@@ -6,12 +6,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import type { RvwService } from "../application/rvw-service.js";
 import type { DiffDocumentRef, DocumentRef, StructureSourceLocator } from "../domain/models.js";
-import {
-  CONTENT_FINGERPRINT_PATTERN,
-  GIT_OBJECT_ID_PATTERN,
-  VIEWER_ID_HEADER,
-  VIEWER_OPEN_LEASE_HEADER,
-} from "../shared/constants.js";
+import { CONTENT_FINGERPRINT_PATTERN, GIT_OBJECT_ID_PATTERN } from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import {
   detectImageContentType,
@@ -31,10 +26,7 @@ import {
   resetSchema,
   structureDeleteSchema,
   themePreferenceSchema,
-  viewerIdSchema,
-  viewerReleaseSchema,
 } from "./schemas.js";
-import type { ViewerLifecycle } from "./viewer-lifecycle.js";
 
 export interface ServerSecurityContext {
   expectedHost: string | null;
@@ -44,7 +36,6 @@ export interface ServerSecurityContext {
 export interface CreateAppOptions {
   security: ServerSecurityContext;
   staticDirectory?: string;
-  viewerLifecycle?: ViewerLifecycle;
 }
 
 const oidSchema = z.string().regex(GIT_OBJECT_ID_PATTERN);
@@ -190,23 +181,9 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     );
   });
 
-  app.get("/api/meta/change-sequence", (context) => {
-    const rawViewerId = context.req.header(VIEWER_ID_HEADER);
-    if (rawViewerId !== undefined) {
-      const rawViewerLease = context.req.header(VIEWER_OPEN_LEASE_HEADER);
-      options.viewerLifecycle?.heartbeat(
-        viewerIdSchema.parse(rawViewerId),
-        rawViewerLease === undefined ? undefined : viewerIdSchema.parse(rawViewerLease),
-      );
-    }
-    return context.json({ ok: true, ...service.database.getRevisionSnapshot() });
-  });
-
-  app.post("/api/meta/viewers/release", async (context) => {
-    const input = viewerReleaseSchema.parse(await context.req.json());
-    options.viewerLifecycle?.release(input.viewerId);
-    return context.json({ ok: true });
-  });
+  app.get("/api/meta/change-sequence", (context) =>
+    context.json({ ok: true, ...service.database.getRevisionSnapshot() }),
+  );
 
   app.get("/api/preferences/theme", (context) =>
     context.json({ ok: true, themePreference: service.database.getThemePreference() }),

@@ -92,7 +92,7 @@ an rvw ref, validates every reply reference against that exact synchronized head
 comment updates in one SQLite transaction. Created replies and their references are linked to the
 synchronized head commit. A successful response includes the current pull request, comparison
 base, head OID, commit summaries, and `commentUpdatesApplied`.
-An open viewer detects the update through its local heartbeat without a reload. Latest-head selections
+An open viewer detects the update through local change-sequence polling without a reload. Latest-head selections
 follow the new head, historical selections remain fixed, and open document tabs remain in place.
 For post-push completion, Skills first sync without comment updates and require
 `git merge-base --is-ancestor <pushedOid> <returnedHeadOid>` to exit 0 in the same repository. A sync
@@ -770,7 +770,7 @@ ref is not removed because other review state may share it; `rvw pr reset` remai
 
 ## Local transport and database path
 
-When a normally launched rvw viewer is running, its database-scoped runtime exposes a Unix socket
+While an rvw runtime is running, even with no browser tabs open, it exposes a database-scoped Unix socket
 with mode `0600` inside a per-user `0700` temporary directory. Agent CLI commands try that socket
 first, so writes such as comment creation, reply, resolve, Walkthrough update, Structure update,
 and repository attachment execute through the already-authorized rvw process instead of requiring the
@@ -786,18 +786,23 @@ status --json` reports the transport that normal commands would select and exits
 explicit socket makes the transport unavailable. Both expose `socketPath`, `socketPathSource`,
 `connectionResult`, `expectedDatabasePath`, `socketDatabasePath`, `socketOwnerPid`,
 `selectedTransport`, `selectedDatabasePath`, `fallbackReason`, and any OS-level `connectionDetails`.
-The non-JSON output shows the same diagnostic fields. The same socket also carries the private
-`viewer.open` lifecycle request used by `rvw open`; it is not an Agent command or advertised capability.
+The non-JSON output shows the same diagnostic fields. The same socket also carries private
+`viewer.open` and `runtime.stop` lifecycle requests for `rvw` / `rvw open` and `rvw stop`.
+They are not advertised Agent capabilities. Internal socket protocol 8 rejects older, browser-owned
+runtimes; public Agent protocol 6 and its capabilities are unchanged.
 An atomic owner lock is acquired before Runtime, SQLite, or HTTP initialization. Exactly one runtime may
 serve a database path, while different database paths may have independent owners. A concurrent loser
-delegates its requested Pull Request to the owner and exits; if the owner is stopping, it retries ownership
-after the old lock is released rather than waiting only for a disappearing socket. A successful `viewer.open`
-holds an operation reservation while resolving the Pull Request, then starts a bounded viewer reservation
-until the returned URL sends its first heartbeat;
-`--no-open` consumes that reservation itself and heartbeats until Ctrl+C. Shutdown stops socket request
-acceptance, drains HTTP, closes Runtime/SQLite, and only then removes the socket and releases ownership.
-A later invocation may remove an exact stale lock/socket whose recorded owner PID is dead. CLI stdin and
-socket request/response frames are capped at 40 MiB.
+delegates its requested target to the owner and exits; if the owner is stopping, it retries ownership
+after the old lock is released rather than waiting only for a disappearing socket. `viewer.open` returns
+a URL without creating a viewer lease or startup reservation. The default background launch returns
+after runtime readiness and successful OS browser launch, without waiting for a browser request.
+`--no-open` reuses an active runtime, prints its URL, and returns; only a newly started runtime remains
+terminal-attached. `--foreground` requires a new terminal-attached owner and rejects an existing one.
+Browser change-sequence polling updates the UI but does not own runtime lifetime.
+Shutdown stops socket request acceptance, drains accepted requests and HTTP, closes Runtime/SQLite,
+and only then removes the socket and releases ownership. A later invocation may remove an exact stale
+lock/socket whose recorded owner PID is dead. CLI stdin and socket request/response frames are capped
+at 40 MiB.
 
 The default database directory and file are created with modes `0700` and `0600`. Existing paths are
 checked with `stat`; rvw does not chmod them when owner and mode are already safe. A failed chmod on a
@@ -808,6 +813,46 @@ expected path and is dispatched only when the viewer uses the same database. `rv
 reports the active path, its source, whether rvw manages its permissions, actual/expected permission
 metadata and warnings, a real write-transaction probe, Agent transport connectivity, and installed
 Skill status.
+
+## Explicit runtime stop
+
+```bash
+rvw stop
+rvw stop --json
+```
+
+This command stops only the runtime for the currently configured database. `RVW_DATABASE_PATH`
+selects that database just as it does for startup; `RVW_AGENT_SOCKET_PATH`, when set, selects the
+private socket to inspect. Stop never starts a runtime, opens or initializes SQLite, or creates a
+missing database. It sends the private `runtime.stop` request to the verified owner rather than
+signaling a recorded PID or killing a process on the HTTP port.
+
+Successful JSON output is:
+
+```json
+{
+  "ok": true,
+  "stopped": true,
+  "databasePath": "/absolute/path/to/reviews.sqlite"
+}
+```
+
+`stopped: true` means the owner acknowledged shutdown and its original ownership lock has been
+released after request, HTTP, and database cleanup. If there is no active runtime, stop succeeds with
+`stopped: false`; repeated calls are idempotent. An absent socket with no live owner is also a success
+when `RVW_AGENT_SOCKET_PATH` is explicit, because stop never falls back to direct database execution.
+A dead-owner stale lock/socket may be reclaimed only after exact-inode validation. Stop pins the
+owner record's per-instance UUID as well as its file identity through request, acknowledgement, and
+completion polling; a replacement runtime cannot be stopped even if the filesystem reuses its inode.
+A live owner without a valid instance token fails closed. Accepted HTTP/socket application operations
+finish before Runtime closes even if the client has already disconnected.
+
+Permission errors, database mismatch, non-rvw or malformed responses, incompatible protocol, an
+unresponsive live owner, and shutdown timeout fail closed with the normal error envelope. Stop never
+signals an unrelated live PID or treats a received acknowledgement alone as completed cleanup.
+An older browser-owned runtime must first be ended using its prior tab-closing or Ctrl+C behavior;
+the new CLI does not force-stop an incompatible runtime. Closing tabs, missing polls, and browser
+crashes do not stop a new runtime. SIGINT/SIGTERM and process exit remain supported shutdown paths.
 
 ## Bundled Skills
 

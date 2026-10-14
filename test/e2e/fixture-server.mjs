@@ -60,8 +60,6 @@ const activeStructures = repositoryFixture
   ? structuredClone(repositoryFixture.structures ?? [])
   : createContractStructures({ pullRequestId, baseOid, firstHead });
 const longStressDocument = createLongStressDocument();
-const activeViewers = new Set();
-const releasedViewers = new Set();
 const archivedPullRequests = new Map();
 let changeSequence = 0;
 const revisions = {
@@ -101,8 +99,7 @@ const findUniqueQuotedLineRange = (quotedText, destinationText) => {
   }
   return match;
 };
-const viewerIdPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const commit = (oid, parentOid, subject, hour) => ({
   oid,
@@ -492,7 +489,7 @@ app.use("/api/pull-requests/*", async (context, next) => {
     return;
   }
   const requestedId = context.req.path.match(/^\/api\/pull-requests\/([^/]+)/)?.[1] ?? "";
-  if (!viewerIdPattern.test(requestedId)) {
+  if (!uuidPattern.test(requestedId)) {
     return context.json(
       { ok: false, error: { code: "INVALID_INPUT", message: "invalid pull request ID" } },
       400,
@@ -507,31 +504,9 @@ app.use("/api/pull-requests/*", async (context, next) => {
   await next();
 });
 
-app.get("/api/meta/change-sequence", (context) => {
-  const viewerId = context.req.header("x-rvw-viewer-id");
-  if (!viewerIdPattern.test(viewerId ?? "")) {
-    return context.json(
-      { ok: false, error: { code: "INVALID_INPUT", message: "invalid viewer ID" } },
-      400,
-    );
-  }
-  activeViewers.add(viewerId);
-  releasedViewers.delete(viewerId);
-  return context.json({ ok: true, changeSequence, revisions });
-});
-
-app.post("/api/meta/viewers/release", async (context) => {
-  const { viewerId } = await context.req.json();
-  if (!viewerIdPattern.test(viewerId ?? "")) {
-    return context.json(
-      { ok: false, error: { code: "INVALID_INPUT", message: "invalid viewer ID" } },
-      400,
-    );
-  }
-  activeViewers.delete(viewerId);
-  releasedViewers.add(viewerId);
-  return context.json({ ok: true });
-});
+app.get("/api/meta/change-sequence", (context) =>
+  context.json({ ok: true, changeSequence, revisions }),
+);
 
 app.get("/api/preferences/theme", (context) => context.json({ ok: true, themePreference }));
 
@@ -546,14 +521,6 @@ app.post("/api/preferences/theme", async (context) => {
   themePreference = input.themePreference;
   return context.json({ ok: true, themePreference });
 });
-
-app.get("/api/test/viewers", (context) =>
-  context.json({
-    ok: true,
-    activeViewers: [...activeViewers],
-    releasedViewers: [...releasedViewers],
-  }),
-);
 
 app.get("/api/test/external-image", (context) => {
   blockedImageRequestCount += 1;

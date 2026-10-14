@@ -10,9 +10,6 @@ import {
   storeThemePreference,
   type ThemePreference,
 } from "./theme.js";
-import { installViewerReleaseHandler } from "./viewer-session.js";
-
-installViewerReleaseHandler();
 
 const queryClient = new QueryClient({
   defaultOptions: {

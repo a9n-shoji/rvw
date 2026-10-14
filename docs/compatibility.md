@@ -39,3 +39,11 @@ protocol 5の`presentation.regions`を公開入出力から削除します。旧
 Node／Edgeのtombstoneとpublish冪等性台帳も保持します。台帳はhashとStructure IDのみを持ち、旧responseは保存していません。
 以前のpublish keyを異なるprotocol payloadで再送しても成功へ読み替えず、既存URIを取得して更新してください。
 内部socket contractも6へ進め、旧viewerとの混在は再起動を求める既存エラーで拒否します。
+
+## Runtime lifecycle: private socket protocol 8
+
+`rvw` / `rvw open`は、tabをすべて閉じても動き続けるruntimeを起動し、停止には`rvw stop`を使います。
+このlifecycle変更では公開Agent protocol 6とcapabilityを維持し、内部socket contractだけを7から8へ進めます。
+新CLIは旧browser管理runtimeを再利用せず、protocol不一致として拒否します。更新前に起動していたruntimeは、
+従来どおり全tabを閉じるか、起動端末でCtrl+Cを使って停止してから新しいrvwを起動してください。
+新しい`rvw stop`は旧runtimeのPIDを強制終了しません。DBの手動削除やresetは不要です。

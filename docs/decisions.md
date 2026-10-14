@@ -1,5 +1,89 @@
 # Architecture decisions
 
+## 2026-10-14: Recheck owner tokens when releasing or reclaiming locks
+
+Owner request matching already uses a per-runtime UUID, but inode-only lock cleanup could remove a
+replacement owner after stale-lock reclamation reused the same inode. Use one owner-specific cleanup
+helper for stale stop, stale startup, acquisition rollback, and normal release. Re-read the token and
+observed PID as well as the device/inode before unlinking; keep socket-file cleanup separate. Matching
+dead legacy records without a token remain reclaimable, while a replacement token or PID is preserved.
+
+This narrows stale-observation/ABA races but does not provide atomic compare-and-unlink. Another
+process can still replace a path after its final check; filesystem-level serialization would be needed
+for that stronger guarantee. Deterministic tests cover replacement before the cleanup recheck, including
+concurrent stale-lock recovery and same-inode/different-token owners.
+
+## 2026-10-14: Keep the runtime alive until explicit stop
+
+### Problem
+
+Browser-tab lifetime is an unreliable boundary for a local review server. Closing the last tab,
+missing polls, or a suspended browser must not discard an otherwise usable runtime. Waiting for an
+initial browser heartbeat also makes a successful server and OS browser launch depend on page loading.
+Users need a direct, database-scoped way to stop the server when they are finished.
+
+### Alternatives
+
+- Keep tab leases and lengthen the last-tab grace or missing-heartbeat timeout.
+- Keep every launch terminal-attached and require Ctrl+C.
+- Keep the database-scoped runtime alive independently of browser tabs and add explicit stop.
+
+### Choice
+
+Choose explicit runtime ownership. Ordinary `rvw` and `rvw open` start a background worker only when
+no owner exists, then return after readiness and successful OS browser launch. Browser connection is
+not part of that handshake. Subsequent opens reuse the same runtime and HTTP origin. Remove viewer
+IDs, leases, startup reservations, close notifications, and browser-liveness shutdown timers. Keep
+change-sequence polling solely for UI data updates.
+
+Add `rvw stop [--json]` through the existing private socket as internal `runtime.stop`. It targets the
+currently configured database, does not initialize SQLite or create a database, and never signals a
+recorded PID or kills a process by port. No runtime is an idempotent success, including an explicitly
+selected socket that is absent with no live owner. Permissions, database identity, malformed or
+incompatible protocol, and unresponsive live owners fail closed. Dead-owner artifacts may be reclaimed
+only after exact-inode checks, plus token and PID rechecks for owner locks.
+
+Each owner lock carries a fresh UUID instance token alongside its PID. Stop pins both the token and
+file identity in its request, acknowledgement, and completion checks, so inode reuse cannot target a
+replacement runtime. Live legacy or malformed owners without a valid token fail closed; dead legacy
+locks remain recoverable.
+
+The stop command waits for acknowledgement and release of the original owner lock. Shutdown stops
+request acceptance, drains accepted socket requests and HTTP application work even after client
+disconnects, closes Runtime/SQLite, and then removes
+the socket and lock. A timeout is an error, not a claim that shutdown completed. The JSON result is
+`{ ok: true, stopped: boolean, databasePath: string }`; `stopped: false` denotes no active runtime.
+SIGINT/SIGTERM and process exit remain shutdown paths.
+
+Keep `--foreground` terminal-attached and reject an existing owner. `--no-open` starts a
+terminal-attached, signal-managed runtime only when none exists; reuse prints the URL and exits without
+a lease. Preserve default port 43117, explicit-port conflicts, custom database isolation, and single-owner
+startup. A new worker is cleaned up on initial startup or browser-launch failure; failure to launch a
+browser for an existing owner leaves that runtime running.
+
+Advance the private socket protocol from 7 to 8 so a new CLI cannot silently reuse the old
+browser-owned lifecycle. Old runtimes must first stop using their previous tab-close or Ctrl+C behavior.
+Public Agent protocol 6 and its advertised capabilities do not change. Stop is an explicit CLI lifecycle
+operation, not an Agent-session or browser-control capability.
+
+This supersedes the lifecycle choices in “Stop an automatically opened server with its last viewer
+tab” (2026-08-08), “Return the terminal after the first viewer connects” (2026-08-13), and the retained
+viewer-release cleanup in “Let browser navigation leave rvw without confirmation” (2026-09-01).
+It also replaces the lease-based lifetime in “Own one browser-managed runtime per database” and
+the index heartbeat ownership in “Use a SQLite-only workspace index for saved Pull Requests”
+(both 2026-08-28), while preserving single-owner and index-data behavior.
+The browser-lease reference in “Launch the saved PR list with bare rvw” (2026-10-10) is historical;
+list and PR targets now share the persistent lifecycle described here.
+
+### Trade-offs
+
+- Browser close, reload, crashes, and missing polls cannot terminate a usable server.
+- The background process and SQLite connection remain until explicitly stopped or the process exits;
+  users must use `rvw stop` when they want to release them.
+- Successful OS browser launch does not prove that the page loaded. The printed URL remains available
+  for manual use, and startup errors still fail explicitly.
+- No OS service manager, automatic login startup, or persistent Agent session is introduced.
+
 ## 2026-10-10: Launch the saved PR list with bare rvw
 
 The root CLI action opens the existing user-global PR list without resolving a repository or PR.
