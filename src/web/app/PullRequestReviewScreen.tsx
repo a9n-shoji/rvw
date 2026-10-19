@@ -72,7 +72,6 @@ import type { DisplayMode, ViewerNavigationTarget } from "../components/Document
 import { SearchPanel } from "../components/SearchPanel.js";
 import { QuickOpenPalette } from "../components/QuickOpenPalette.js";
 import { applyThemePreference, storeThemePreference, type ThemePreference } from "../theme.js";
-import { viewerHeartbeatRequest } from "../viewer-session.js";
 import { ReviewTreeItems } from "../components/WalkthroughPanel.js";
 import type { MermaidReferencePeekResolution } from "../components/MermaidExpandedView.js";
 import {
@@ -1259,8 +1258,7 @@ export function PullRequestReviewScreen({
   };
   const changeSequence = useQuery({
     queryKey: ["change-sequence"],
-    queryFn: async () =>
-      await api<ChangeSequenceResponse>("/api/meta/change-sequence", viewerHeartbeatRequest()),
+    queryFn: async () => await api<ChangeSequenceResponse>("/api/meta/change-sequence"),
     refetchInterval: 1000,
     refetchIntervalInBackground: true,
     networkMode: "always",

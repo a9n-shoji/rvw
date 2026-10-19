@@ -1798,7 +1798,7 @@ describe("CLI viewer runtime options", () => {
         expect(new URL(url).searchParams.get("pullRequestId")).toBe(pullRequest.id);
         expect(startServer).toHaveBeenCalledExactlyOnceWith(
           runtime.service,
-          expect.objectContaining({ port: 0, autoCloseWhenNoViewers: false }),
+          expect.objectContaining({ port: 0 }),
         );
         const response = await fetch(new URL("/api/pull-requests", url));
         expect(response.status).toBe(200);

@@ -25,8 +25,9 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-export const AGENT_SOCKET_PROTOCOL_VERSION = 7;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 8;
 export const RUNTIME_VIEWER_OPEN_OPERATION = "viewer.open";
+export const RUNTIME_STOP_OPERATION = "runtime.stop";
 const AGENT_SOCKET_RESTART_SUGGESTION =
   "起動中のrvw viewerを停止し、更新後のrvw openで再起動してください。";
 const DEFAULT_CONNECT_TIMEOUT_MS = 2_000;
@@ -101,7 +102,6 @@ export interface RuntimeViewerOpenResult {
   port: number;
   pullRequestId: string | null;
   ownerPid: number;
-  viewerLeaseId?: string;
 }
 
 export interface RuntimeAgentSocketHandler {
@@ -110,6 +110,8 @@ export interface RuntimeAgentSocketHandler {
 }
 
 export interface RunningRuntimeAgentSocket extends RunningAgentSocket {
+  readonly stopRequested: Promise<void>;
+  requestStop(): void;
   setHandler(handler: RuntimeAgentSocketHandler): void;
   stopAccepting(): Promise<void>;
   releaseOwnership(): Promise<void>;
@@ -132,6 +134,7 @@ interface AgentSocketListenerOptions extends AgentSocketServerOptions {
 }
 
 interface RunningAgentSocketListener extends RunningAgentSocket {
+  readonly ownerIdentity: SocketOwnerIdentity | null;
   stopAccepting(): Promise<void>;
   releaseOwnership(): Promise<void>;
 }
@@ -141,9 +144,14 @@ interface SocketIdentity {
   ino: number;
 }
 
+interface SocketOwnerIdentity extends SocketIdentity {
+  token: string | null;
+}
+
 interface SocketOwnerLock {
   identity: SocketIdentity;
   path: string;
+  token: string;
 }
 
 const agentRequestEnvelopeSchema = z
@@ -174,7 +182,6 @@ const runtimeViewerOpenResultSchema = z
     port: z.number().int().min(1).max(65_535),
     pullRequestId: z.string().min(1).nullable(),
     ownerPid: z.number().int().positive(),
-    viewerLeaseId: z.uuid().optional(),
   })
   .strict();
 
@@ -728,11 +735,168 @@ export async function tryRuntimeViewerOpen(
       port: parsedResult.data.port,
       pullRequestId: parsedResult.data.pullRequestId,
       ownerPid: parsedResult.data.ownerPid,
-      ...(parsedResult.data.viewerLeaseId === undefined
-        ? {}
-        : { viewerLeaseId: parsedResult.data.viewerLeaseId }),
     },
   };
+}
+
+export interface RuntimeStopResult {
+  ok: true;
+  stopped: boolean;
+  databasePath: string;
+}
+
+const socketIdentitySchema = z
+  .object({
+    dev: z.number().int(),
+    ino: z.number().int(),
+    token: z.uuid().nullable(),
+  })
+  .strict();
+const runtimeStopInputSchema = z
+  .object({ ownerIdentity: socketIdentitySchema.nullable() })
+  .strict();
+const runtimeStopAcceptedSchema = z
+  .object({
+    databasePath: z.string(),
+    ownerPid: z.number().int().positive(),
+    ownerIdentity: socketIdentitySchema.extend({ token: z.uuid() }),
+  })
+  .strict();
+
+function sameIdentity(left: SocketIdentity | null, right: SocketIdentity | null): boolean {
+  return left !== null && right !== null && left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameOwnerIdentity(
+  left: SocketOwnerIdentity | null,
+  right: SocketOwnerIdentity | null,
+): boolean {
+  return sameIdentity(left, right) && left?.token === right?.token;
+}
+
+/** Stop only the database-matched owner over its private socket. Never signal a recorded PID. */
+export async function stopRuntime(
+  databaseFilePath = databasePathConfiguration().filePath,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<RuntimeStopResult> {
+  const databasePath = resolveDatabaseIdentity(databaseFilePath);
+  const socketPath = agentSocketPath(databaseFilePath);
+  const lockPath = `${socketPath}${OWNER_LOCK_SUFFIX}`;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_OPERATION_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const wait = async (): Promise<void> => {
+    if (Date.now() >= deadline) {
+      throw new RvwError("PROCESS_TIMEOUT", "rvw serverの停止完了を確認できませんでした。", {
+        details: { databasePath, socketPath, timeoutMs },
+        suggestions: ["rvw agent status --jsonで状態を確認してください。強制終了はしていません。"],
+      });
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, options.pollIntervalMs ?? 50));
+  };
+  const unavailable = (reason: string, details?: unknown): RvwError =>
+    new RvwError("AGENT_SOCKET_UNAVAILABLE", "対象のrvw serverを安全に停止できませんでした。", {
+      details: { databasePath, socketPath, reason, causeDetails: details },
+      suggestions: ["rvw agent status --jsonで接続先とdatabaseを確認してください。"],
+    });
+
+  const inspectIdentity = (targetPath: string): SocketIdentity | null => {
+    try {
+      const stat = lstatSync(targetPath);
+      return { dev: stat.dev, ino: stat.ino };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw unavailable("identity-unreadable", {
+        path: targetPath,
+        code: (error as NodeJS.ErrnoException).code,
+      });
+    }
+  };
+  const inspectOwnerIdentity = (): SocketOwnerIdentity | null => {
+    try {
+      return socketOwnerIdentity(lockPath);
+    } catch (error) {
+      throw unavailable("identity-unreadable", {
+        path: lockPath,
+        code: (error as NodeJS.ErrnoException).code,
+      });
+    }
+  };
+
+  const removeStaleSocket = (identity: SocketIdentity | null): void => {
+    if (!identity || !sameIdentity(inspectIdentity(socketPath), identity)) return;
+    try {
+      if (!lstatSync(socketPath).isSocket()) throw unavailable("not-a-socket");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    unlinkIfOwned(socketPath, identity);
+  };
+
+  // Pin the selected owner across startup/shutdown retries. Never stop a replacement owner.
+  let targetOwner = inspectOwnerIdentity();
+  while (true) {
+    const observedSocket = inspectIdentity(socketPath);
+    const observedOwner = inspectOwnerIdentity();
+    if (targetOwner && !sameOwnerIdentity(targetOwner, observedOwner)) {
+      if (observedOwner) throw unavailable("owner-changed");
+      return { ok: true, stopped: false, databasePath };
+    }
+    targetOwner ??= observedOwner;
+    if (targetOwner?.token === null) {
+      const pid = socketOwnerPid(lockPath);
+      if (pid !== null && processIsAlive(pid)) throw unavailable("missing-owner-token");
+    }
+    const response = await tryAgentSocketRequest<unknown>(
+      RUNTIME_STOP_OPERATION,
+      { ownerIdentity: targetOwner },
+      {
+        expectedDatabasePath: databasePath,
+        socketPath,
+        requireSocket: false,
+        connectTimeoutMs: Math.min(DEFAULT_CONNECT_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
+        operationTimeoutMs: Math.max(1, deadline - Date.now()),
+      },
+    );
+    if (response.available) {
+      const parsed = runtimeStopAcceptedSchema.safeParse(response.result);
+      if (
+        !parsed.success ||
+        parsed.data.databasePath !== databasePath ||
+        !sameOwnerIdentity(targetOwner, parsed.data.ownerIdentity)
+      ) {
+        throw unavailable("invalid-stop-response");
+      }
+      // Ownership is released only after socket/HTTP drainage and Runtime/SQLite cleanup.
+      // A replacement owner has a different token, even when its inode is reused.
+      while (sameOwnerIdentity(inspectOwnerIdentity(), parsed.data.ownerIdentity)) await wait();
+      return { ok: true, stopped: true, databasePath };
+    }
+    if (!["socket-not-found", "connection-refused"].includes(response.reason)) {
+      throw unavailable(response.reason, response.details);
+    }
+    const currentOwner = inspectOwnerIdentity();
+    if (observedOwner && currentOwner === null) {
+      return { ok: true, stopped: false, databasePath };
+    }
+    if (currentOwner && !sameOwnerIdentity(currentOwner, observedOwner)) {
+      throw unavailable("owner-changed");
+    }
+    if (observedOwner) {
+      const ownerPid = socketOwnerPid(lockPath);
+      if (ownerPid === null) throw unavailable("unreadable-owner");
+      if (processIsAlive(ownerPid)) {
+        await wait();
+        continue;
+      }
+      // Recheck the dead owner token as well as its inode, as on startup.
+      removeStaleSocket(observedSocket);
+      unlinkOwnerIfOwned(lockPath, observedOwner, ownerPid);
+    } else {
+      removeStaleSocket(observedSocket);
+    }
+    return { ok: true, stopped: false, databasePath };
+  }
 }
 
 export async function inspectAgentTransport(
@@ -837,6 +1001,41 @@ function unlinkIfOwned(socketPath: string, identity: SocketIdentity | null): voi
   }
 }
 
+function socketOwnerIdentity(lockPath: string): SocketOwnerIdentity | null {
+  try {
+    const { dev, ino } = lstatSync(lockPath);
+    let record: unknown;
+    try {
+      record = JSON.parse(readFileSync(lockPath, "utf8")) as unknown;
+    } catch (error) {
+      if (error instanceof SyntaxError) return { dev, ino, token: null };
+      throw error;
+    }
+    const token = z.object({ token: z.uuid() }).safeParse(record);
+    return { dev, ino, token: token.success ? token.data.token : null };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function unlinkOwnerIfOwned(
+  lockPath: string,
+  identity: SocketOwnerIdentity | null,
+  ownerPid: number,
+): void {
+  if (
+    !identity ||
+    !sameOwnerIdentity(socketOwnerIdentity(lockPath), identity) ||
+    socketOwnerPid(lockPath) !== ownerPid
+  ) {
+    return;
+  }
+  // Recheck the inode after reading the token. This is a best-effort identity guard, not an atomic
+  // compare-and-unlink: a separate process can still replace the path between the check and unlink.
+  unlinkIfOwned(lockPath, identity);
+}
+
 function processIsAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
@@ -859,9 +1058,10 @@ function socketOwnerPid(lockPath: string): number | null {
 function tryAcquireSocketOwnerLock(socketPath: string): SocketOwnerLock | null {
   const lockPath = `${socketPath}${OWNER_LOCK_SUFFIX}`;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const stagingPath = `${lockPath}.${process.pid}.${randomUUID()}.tmp`;
+    const token = randomUUID();
+    const stagingPath = `${lockPath}.${process.pid}.${token}.tmp`;
     try {
-      writeFileSync(stagingPath, `${JSON.stringify({ pid: process.pid })}\n`, {
+      writeFileSync(stagingPath, `${JSON.stringify({ pid: process.pid, token })}\n`, {
         flag: "wx",
         mode: 0o600,
       });
@@ -874,21 +1074,27 @@ function tryAcquireSocketOwnerLock(socketPath: string): SocketOwnerLock | null {
         if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
       }
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const observedIdentity = socketIdentity(lockPath);
+      let observedIdentity: SocketOwnerIdentity | null;
+      try {
+        observedIdentity = socketOwnerIdentity(lockPath);
+      } catch {
+        // Preserve an owner whose identity cannot be read safely.
+        return null;
+      }
       const ownerPid = socketOwnerPid(lockPath);
       // An unreadable lock is kept rather than risking two live owners.
       if (ownerPid === null || processIsAlive(ownerPid)) return null;
-      unlinkIfOwned(lockPath, observedIdentity);
+      unlinkOwnerIfOwned(lockPath, observedIdentity, ownerPid);
       continue;
     }
     try {
       const identity = socketIdentity(lockPath);
       if (!identity) throw new Error("Agent socket owner lockを確認できませんでした。");
       unlinkSync(stagingPath);
-      return { identity, path: lockPath };
+      return { identity, path: lockPath, token };
     } catch (error) {
       const identity = socketIdentity(stagingPath);
-      unlinkIfOwned(lockPath, identity);
+      unlinkOwnerIfOwned(lockPath, identity ? { ...identity, token } : null, process.pid);
       try {
         unlinkSync(stagingPath);
       } catch (unlinkError) {
@@ -902,12 +1108,15 @@ function tryAcquireSocketOwnerLock(socketPath: string): SocketOwnerLock | null {
 
 function releaseSocketOwnerLock(lock: SocketOwnerLock | null): void {
   if (!lock) return;
-  unlinkIfOwned(lock.path, lock.identity);
+  unlinkOwnerIfOwned(lock.path, { ...lock.identity, token: lock.token }, process.pid);
 }
 
 type AgentSocketDispatcher = (request: AgentRequest) => Promise<unknown>;
 
-function createAgentServer(dispatch: AgentSocketDispatcher): net.Server {
+type AgentServer = net.Server & { drainRequests(): Promise<void> };
+
+function createAgentServer(dispatch: AgentSocketDispatcher): AgentServer {
+  const pendingRequests = new Set<Promise<void>>();
   const server = net.createServer((socket) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -928,7 +1137,7 @@ function createAgentServer(dispatch: AgentSocketDispatcher): net.Server {
       if (!chunk.includes(10)) return;
       handled = true;
       socket.setTimeout(0);
-      void (async () => {
+      const pending = (async () => {
         let response: AgentResponse;
         try {
           const request = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
@@ -941,10 +1150,21 @@ function createAgentServer(dispatch: AgentSocketDispatcher): net.Server {
         }
         socket.end(`${JSON.stringify(response)}\n`);
       })();
+      pendingRequests.add(pending);
+      const completed = (): void => {
+        pendingRequests.delete(pending);
+      };
+      void pending.then(completed, completed);
     });
   });
   server.maxConnections = 16;
-  return server;
+  return Object.assign(server, {
+    async drainRequests(): Promise<void> {
+      // A client can disconnect while its accepted operation is still using Runtime/SQLite.
+      // net.Server.close alone waits for connections, not these dispatch promises.
+      while (pendingRequests.size > 0) await Promise.allSettled(pendingRequests);
+    },
+  });
 }
 
 async function listen(server: net.Server, socketPath: string): Promise<void> {
@@ -971,7 +1191,7 @@ async function startAgentSocketListener(
   const socketPath = agentSocketPath(databaseFilePath);
   ensurePrivateSocketDirectory(socketPath);
   const retryDelay = options.takeoverRetryMs ?? DEFAULT_TAKEOVER_RETRY_MS;
-  let server: net.Server | null = null;
+  let server: AgentServer | null = null;
   let identity: SocketIdentity | null = null;
   let ownerLock: SocketOwnerLock | null = null;
   let retryTimer: NodeJS.Timeout | undefined;
@@ -1027,6 +1247,7 @@ async function startAgentSocketListener(
       if (closed) {
         const candidateIdentity = socketIdentity(socketPath);
         await new Promise<void>((resolve) => candidate.close(() => resolve()));
+        await candidate.drainRequests();
         unlinkIfOwned(socketPath, candidateIdentity);
         releaseSocketOwnerLock(candidateLock);
         return;
@@ -1036,6 +1257,7 @@ async function startAgentSocketListener(
       } catch (error) {
         const candidateIdentity = socketIdentity(socketPath);
         await new Promise<void>((resolve) => candidate.close(() => resolve()));
+        await candidate.drainRequests();
         unlinkIfOwned(socketPath, candidateIdentity);
         releaseSocketOwnerLock(candidateLock);
         throw error;
@@ -1046,7 +1268,9 @@ async function startAgentSocketListener(
       candidate.on("error", () => {
         if (server !== candidate) return;
         server = null;
-        listenerDrain = new Promise<void>((resolve) => candidate.close(() => resolve()));
+        listenerDrain = new Promise<void>((resolve) => candidate.close(() => resolve())).then(
+          async () => await candidate.drainRequests(),
+        );
         if (!options.retryOwnership) {
           // Keep the live-PID owner lock until the runtime shuts down. Releasing it while HTTP is
           // still alive would allow a second runtime for the same database after a socket failure.
@@ -1084,6 +1308,7 @@ async function startAgentSocketListener(
         ownedServer.close((error) => (error ? reject(error) : resolve())),
       );
       await listenerDrain;
+      await ownedServer.drainRequests();
     })());
   };
   const releaseOwnership = async (): Promise<void> => {
@@ -1107,6 +1332,9 @@ async function startAgentSocketListener(
     path: socketPath,
     get owned() {
       return ownerLock !== null;
+    },
+    get ownerIdentity() {
+      return ownerLock ? { ...ownerLock.identity, token: ownerLock.token } : null;
     },
     stopAccepting,
     releaseOwnership,
@@ -1139,6 +1367,11 @@ export async function startRuntimeAgentSocket(
     // Closing an owner before Runtime initialization must also release waiting requests.
   });
   let accepting = true;
+  const stopped = Promise.withResolvers<void>();
+  const requestStop = (): void => {
+    accepting = false;
+    stopped.resolve();
+  };
 
   const rejectUninitializedHandler = (): void => {
     if (handler) return;
@@ -1151,6 +1384,30 @@ export async function startRuntimeAgentSocket(
     databaseFilePath,
     async (rawRequest) => {
       const request = validateAgentRequest(rawRequest, databaseFilePath);
+      if (request.operation === RUNTIME_STOP_OPERATION) {
+        const parsed = runtimeStopInputSchema.safeParse(request.input);
+        if (!parsed.success) throw invalidSocketInput(parsed.error);
+        if (request.expectedDatabasePath === undefined) {
+          throw new RvwError("INVALID_INPUT", "runtime停止にはdatabase identityが必要です。");
+        }
+        const ownerIdentity = running.ownerIdentity;
+        if (!ownerIdentity || !sameOwnerIdentity(ownerIdentity, parsed.data.ownerIdentity)) {
+          throw new RvwError("PROCESS_FAILED", "rvw runtimeのownerが変わったため停止しません。", {
+            details: { reason: "owner-changed" },
+          });
+        }
+        requestStop();
+        return {
+          databasePath: resolveDatabaseIdentity(databaseFilePath),
+          ownerPid: process.pid,
+          ownerIdentity,
+        };
+      }
+      if (!accepting) {
+        throw new RvwError("PROCESS_FAILED", "rvw runtimeは停止処理中です。", {
+          details: { reason: "runtime-stopping" },
+        });
+      }
       if (request.operation === "ping") {
         const ping = z.object({}).strict().safeParse(request.input);
         if (!ping.success) throw invalidSocketInput(ping.error);
@@ -1178,6 +1435,8 @@ export async function startRuntimeAgentSocket(
     get owned() {
       return running.owned;
     },
+    stopRequested: stopped.promise,
+    requestStop,
     setHandler(value) {
       if (!running.owned || !accepting) {
         throw new RvwError("PROCESS_FAILED", "所有していないruntime socketは初期化できません。");

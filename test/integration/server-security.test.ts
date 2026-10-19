@@ -4,8 +4,7 @@ import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import { createApp } from "../../src/server/app.js";
-import { ViewerLifecycle } from "../../src/server/viewer-lifecycle.js";
-import { VIEWER_ID_HEADER, VIEWER_OPEN_LEASE_HEADER } from "../../src/shared/constants.js";
+import { startServer } from "../../src/server/start-server.js";
 import { RvwError } from "../../src/shared/errors.js";
 import { createGitRepository, git } from "../fixtures/git-repository.js";
 
@@ -647,47 +646,58 @@ describe("local HTTP security", () => {
     database.close();
   });
 
-  it("registers and releases validated viewer leases through the local API", async () => {
+  it("returns the revision snapshot without viewer registration or lease headers", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
-    const lifecycle = new ViewerLifecycle({ onAllViewersClosed() {} });
     const app = createApp(new RvwService(database, new GitClient(), github), {
       security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
-      viewerLifecycle: lifecycle,
     });
-    const viewerId = "44444444-4444-4444-8444-444444444444";
-    const viewerLeaseId = "55555555-5555-4555-8555-555555555555";
-    lifecycle.reserveViewer(viewerLeaseId);
+    try {
+      const expected = { ok: true, ...database.getRevisionSnapshot() };
+      const response = await app.request("http://127.0.0.1:4321/api/meta/change-sequence", {
+        headers: { host: "127.0.0.1:4321" },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(expected);
 
-    const heartbeat = await app.request("http://127.0.0.1:4321/api/meta/change-sequence", {
-      headers: {
-        host: "127.0.0.1:4321",
-        [VIEWER_ID_HEADER]: viewerId,
-        [VIEWER_OPEN_LEASE_HEADER]: viewerLeaseId,
-      },
-    });
-    expect(heartbeat.status).toBe(200);
-    expect(lifecycle.activeViewerCount).toBe(1);
-    expect(lifecycle.pendingViewerCount).toBe(0);
+      const legacyHeaders = await app.request("http://127.0.0.1:4321/api/meta/change-sequence", {
+        headers: {
+          host: "127.0.0.1:4321",
+          "x-rvw-viewer-id": "ignored",
+          "x-rvw-viewer-open-lease": "ignored",
+        },
+      });
+      expect(legacyHeaders.status).toBe(200);
+      expect(await legacyHeaders.json()).toEqual(expected);
+    } finally {
+      database.close();
+    }
+  });
 
-    const invalidHeartbeat = await app.request("http://127.0.0.1:4321/api/meta/change-sequence", {
-      headers: { host: "127.0.0.1:4321", [VIEWER_ID_HEADER]: "invalid" },
-    });
-    expect(invalidHeartbeat.status).toBe(400);
+  it("does not expose viewer release or runtime stop over HTTP", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const running = await startServer(new RvwService(database, new GitClient(), github));
+    try {
+      for (const route of [
+        "/api/meta/viewers/release",
+        "/api/runtime/stop",
+        "/api/meta/runtime/stop",
+      ]) {
+        const response = await fetch(`${running.origin}${route}`, {
+          method: "POST",
+          headers: { origin: running.origin, "content-type": "application/json" },
+          body: JSON.stringify({ viewerId: "44444444-4444-4444-8444-444444444444" }),
+        });
+        expect(response.status).toBe(404);
+        expect(await response.json()).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
 
-    const release = await app.request("http://127.0.0.1:4321/api/meta/viewers/release", {
-      method: "POST",
-      headers: {
-        host: "127.0.0.1:4321",
-        origin: "http://127.0.0.1:4321",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ viewerId }),
-    });
-    expect(release.status).toBe(200);
-    expect(lifecycle.activeViewerCount).toBe(0);
-
-    lifecycle.close();
-    database.close();
+        const poll = await fetch(`${running.origin}/api/meta/change-sequence`);
+        expect(poll.status).toBe(200);
+        expect(await poll.json()).toEqual({ ok: true, ...database.getRevisionSnapshot() });
+      }
+    } finally {
+      await running.close();
+      database.close();
+    }
   });
 });
 

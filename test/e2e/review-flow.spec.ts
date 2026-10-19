@@ -1,4 +1,4 @@
-import { expect, test, type Route } from "@playwright/test";
+import { expect, test, type Request, type Route } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 
@@ -1592,40 +1592,45 @@ test("opens a fuzzy-matched file from Cmd/Ctrl+P in the left pane", async ({ pag
   );
 });
 
-test("registers the browser document and releases it when the tab closes", async ({
+test("polls without viewer leases across reloads and tab closure", async ({
+  context,
   page,
   request,
 }) => {
-  const before = (await (await request.get("/api/test/viewers")).json()) as {
-    activeViewers: string[];
-  };
-  const existingViewers = new Set(before.activeViewers);
-  let viewerId = "";
+  const polls: Request[] = [];
+  const lifetimeRequests: string[] = [];
+  context.on("request", (outgoing) => {
+    const pathname = new URL(outgoing.url()).pathname;
+    if (pathname === "/api/meta/change-sequence") polls.push(outgoing);
+    if (pathname === "/api/meta/viewers/release" || pathname.endsWith("/runtime/stop")) {
+      lifetimeRequests.push(pathname);
+    }
+  });
 
   await page.goto(`/?pullRequestId=${pullRequestId}`);
-  await expect
-    .poll(async () => {
-      const response = (await (await request.get("/api/test/viewers")).json()) as {
-        activeViewers: string[];
-      };
-      viewerId = response.activeViewers.find((id) => !existingViewers.has(id)) ?? "";
-      return viewerId;
-    })
-    .toMatch(/^[0-9a-f-]{36}$/i);
+  await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");
+  await expect.poll(() => polls.length).toBeGreaterThan(1);
+
+  const beforeReload = polls.length;
+  await page.reload();
+  await expect(page.locator(".pr-heading h1")).toContainText("Fixture review");
+  await expect.poll(() => polls.length).toBeGreaterThan(beforeReload);
+  for (const poll of polls) {
+    expect(poll.method()).toBe("GET");
+    expect(poll.headers()).not.toHaveProperty("x-rvw-viewer-id");
+    expect(poll.headers()).not.toHaveProperty("x-rvw-viewer-open-lease");
+    expect(new URL(poll.url()).search).toBe("");
+  }
 
   await page.close();
-  await expect
-    .poll(async () => {
-      const response = (await (await request.get("/api/test/viewers")).json()) as {
-        activeViewers: string[];
-        releasedViewers: string[];
-      };
-      return {
-        active: response.activeViewers.includes(viewerId),
-        released: response.releasedViewers.includes(viewerId),
-      };
-    })
-    .toEqual({ active: false, released: true });
+  const response = await request.get("/api/meta/change-sequence");
+  expect(response.ok()).toBe(true);
+  expect(await response.json()).toMatchObject({ ok: true, changeSequence: expect.any(Number) });
+  expect(lifetimeRequests).toEqual([]);
+
+  const reopened = await context.newPage();
+  await reopened.goto(`/?pullRequestId=${pullRequestId}`);
+  await expect(reopened.locator(".pr-heading h1")).toContainText("Fixture review");
 });
 
 test("closes other or all tabs within the selected pane", async ({ page }) => {

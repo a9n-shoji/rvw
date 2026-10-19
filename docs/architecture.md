@@ -13,10 +13,11 @@ rvw is a local Node.js application with four boundaries:
 - `server`, `cli`, and `web`: transport and presentation only.
 
 The SQLite database is user-global by default. Observed PR heads are retained by `refs/rvw/...` in the base
-repository's common Git directory. The browser polls `app_meta.change_sequence`; there is no
-persistent daemon or agent session coupling. While a database-scoped viewer runtime is running, it exposes a
-user/database-specific Unix socket inside a `0700` temporary directory as an alternate transport for
-the same application service and for the internal `viewer.open` lifecycle request. A later `rvw open`
+repository's common Git directory. The browser polls `app_meta.change_sequence` for data updates,
+independently of the database-scoped runtime's lifetime. The runtime persists until explicitly stopped
+and has no agent session coupling. It exposes a user/database-specific Unix socket inside a `0700`
+temporary directory as an alternate transport for the same application service and for the internal
+`viewer.open` and `runtime.stop` lifecycle requests. A later `rvw open`
 resolves its requested Pull Request through that owner and opens another URL on the same HTTP origin;
 it does not construct another Runtime, SQLite connection, or HTTP server. Different explicitly selected
 database paths have separate socket identities and may run independently. Agent
@@ -178,24 +179,37 @@ Skill roots. Platform selection is a packaging concern only and does not fork th
 workflow instructions. Installer metadata records the bundled digest so update availability and local
 customization are reported separately.
 
-Each browser document attaches an ephemeral viewer ID to that poll. The database runtime uses those IDs
-only to stop its HTTP listener after the final tab closes; they are never persisted and are not part of
-review state or the public Agent CLI protocol. By default, the first parent `rvw open` process starts the
-runtime worker in the background, opens the browser after readiness, waits for the first viewer heartbeat,
-and then returns control to the terminal. Later opens use the runtime socket and same HTTP origin, holding an
-operation reservation while resolving the Pull Request and then a bounded startup reservation until the
-returned URL sends its first heartbeat. This prevents a prior
-final-tab grace timer from invalidating the new URL. The process remains a browser-owned runtime rather than
-a persistent daemon. `--foreground` explicitly owns a terminal-attached runtime and conflicts with an
-existing owner. `--no-open` disables only browser launch: it reuses an active runtime or starts a
-signal-managed one when none exists. When reusing a browser-managed runtime, the CLI holds a viewer lease
-until Ctrl+C. A new runtime uses the stable default port 43117 for a stable URL across normal restarts; explicit `--port 0` opts into an ephemeral port. An omitted port reuses any active runtime,
-while an explicit nonzero port must match it; otherwise the command reports a conflict instead of starting a
-second server.
+Browser polling carries only change-sequence and domain-revision data; it does not renew a viewer
+lease or control shutdown. Closing the last tab, reloading, browser crashes, missing polls, and machine
+suspend do not stop the runtime. By default, `rvw` and `rvw open` start a background runtime when none
+exists, open the browser after readiness, and return control to the terminal after the OS browser-launch
+request succeeds. They do not wait for the browser's first request. A failed initial startup or browser
+launch cleans up the new worker; a browser-launch failure when reusing an existing runtime leaves that
+runtime running. Later opens use the runtime socket and same HTTP origin without viewer reservations.
+
+`rvw stop` asks the current database's owner to shut down through the private `runtime.stop` socket
+operation. It does not initialize Runtime or SQLite, send a signal to a recorded PID, or target a
+process merely because it occupies the HTTP port. A missing runtime is an idempotent success,
+including an explicitly selected socket that is absent with no live owner. Unsafe socket permissions, a database mismatch, a non-rvw or incompatible endpoint,
+and an unresponsive live owner fail closed. The command waits for acknowledgement and the original
+owner lock's release after cleanup; timeout is an error. A fresh UUID in each owner record is checked
+alongside file identity in the stop request, acknowledgement, and completion poll, preventing a
+replacement runtime from being targeted even if an inode is reused. Accepted application work drains
+even after its HTTP or socket client disconnects. `RVW_DATABASE_PATH` scopes
+both startup and stop. Private socket protocol 8 prevents reuse of older browser-owned runtimes; the
+public Agent protocol remains 6, and stop is not an advertised Agent capability. Explicit stop,
+SIGINT/SIGTERM, and process exit end the runtime; there is no browser-tab idle timeout.
+
+`--foreground` explicitly owns a terminal-attached runtime and conflicts with an existing owner.
+`--no-open` disables browser launch: it reuses an active runtime, prints the URL, and returns, or starts
+a terminal-attached, signal-managed runtime when none exists. Neither form holds a browser lease.
+A new runtime uses the stable default port 43117 for a stable URL across normal restarts; explicit
+`--port 0` opts into an ephemeral port. An omitted port reuses any active runtime, while an explicit
+nonzero port must match it; otherwise the command reports a conflict instead of starting a second server.
 
 The React root treats a URL without `pullRequestId` as a lightweight workspace index over the
 user-global database. Its paginated summary query first bounds the Pull Request rows and then aggregates
 their comment and Walkthrough counts in SQLite, without reading Git objects or contacting GitHub. Selecting a saved Pull Request mounts the existing
-commit-backed review screen; the index and review screen share the same ephemeral viewer heartbeat and
+commit-backed review screen; the index and review screen share change-sequence polling and
 use the browser History API for transitions. A history traversal back into a review also restores that
 entry's focused reading destination; a fresh row selection starts a fresh ephemeral review workspace.
