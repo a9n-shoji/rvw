@@ -4,6 +4,15 @@
 
 公開後は、最新の0.x releaseをbest effortで扱います。古いreleaseへの修正や応答期限は保証しません。
 
+## Repository checks
+
+CIとnpm release stagingでは、`pnpm audit`で全severityの依存関係アドバイザリを検査します。
+CLIとWebへbundleするpackageも`devDependencies`に含まれるため、production依存だけに絞りません。
+bundle済み依存関係の修正を利用者へ届けるには、新しいrvw releaseが必要です。
+
+GitHubのrepository設定で、CodeQL default setup（Actions、JavaScript/TypeScript、Python）、
+Dependabot Malware alerts、Secret scanning、push protectionを有効にしています。
+
 ## Reporting a vulnerability
 
 脆弱性の詳細、exploit、credential、private repositoryの情報をpublic Issueへ投稿しないでください。
