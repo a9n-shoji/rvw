@@ -90,6 +90,25 @@ function mockSocketResponse(response: unknown, beforeResponse?: () => void) {
   return requests;
 }
 
+function mockSocketDisconnection(code: string | null, beforeClose?: () => void) {
+  const requests: unknown[] = [];
+  vi.spyOn(net, "createConnection").mockImplementation(() => {
+    const socket = new net.Socket();
+    vi.spyOn(socket, "write").mockImplementation((chunk) => {
+      requests.push(JSON.parse(String(chunk)) as unknown);
+      queueMicrotask(() => {
+        beforeClose?.();
+        if (code) socket.emit("error", Object.assign(new Error(code), { code }));
+        else socket.emit("close", false);
+      });
+      return true;
+    });
+    queueMicrotask(() => socket.emit("connect"));
+    return socket;
+  });
+  return requests;
+}
+
 function mockSocketListeners(): void {
   vi.spyOn(net, "createServer").mockImplementation(() => {
     const server = new net.Server();
@@ -593,6 +612,7 @@ describe("explicit runtime stop", () => {
   });
 
   it.skipIf(!unixSocketsAvailable).each([
+    ["empty response without a known owner", "", "PROCESS_FAILED"],
     ["malformed response", "not JSON\n", "PROCESS_FAILED"],
     ["invalid stop acknowledgement", '{"ok":true,"result":{}}\n', "AGENT_SOCKET_UNAVAILABLE"],
     [
@@ -653,6 +673,86 @@ describe("explicit runtime stop", () => {
       databasePath,
     });
     expect(existsSync(databasePath)).toBe(false);
+  });
+
+  it.each([null, "ECONNRESET", "EPIPE"])(
+    "waits for the pinned owner to disappear after a response-less disconnect (%s)",
+    async (code) => {
+      writeFileSync(
+        `${socketPath}.owner`,
+        JSON.stringify({ pid: process.pid, token: ownerToken }),
+        {
+          mode: 0o600,
+        },
+      );
+      const requests = mockSocketDisconnection(code);
+      let settled = false;
+      const stopping = stopRuntime(databasePath, stopOptions).then((result) => {
+        settled = true;
+        return result;
+      });
+      await vi.waitFor(() => expect(requests).toHaveLength(1));
+      expect(settled).toBe(false);
+      rmSync(`${socketPath}.owner`);
+      await expect(stopping).resolves.toEqual({ ok: true, stopped: false, databasePath });
+      expect(requests).toHaveLength(1);
+      expect(existsSync(databasePath)).toBe(false);
+    },
+  );
+
+  it("times out rather than claiming success when a disconnected owner remains live", async () => {
+    writeFileSync(`${socketPath}.owner`, JSON.stringify({ pid: process.pid, token: ownerToken }), {
+      mode: 0o600,
+    });
+    const requests = mockSocketDisconnection(null);
+    await expect(
+      stopRuntime(databasePath, { timeoutMs: 40, pollIntervalMs: 5 }),
+    ).rejects.toMatchObject({ code: "PROCESS_TIMEOUT" });
+    expect(requests).toHaveLength(1);
+    expect(existsSync(`${socketPath}.owner`)).toBe(true);
+  });
+
+  it("rejects a replacement owner after a response-less disconnect without resending stop", async () => {
+    writeFileSync(`${socketPath}.owner`, JSON.stringify({ pid: process.pid, token: ownerToken }), {
+      mode: 0o600,
+    });
+    const requests = mockSocketDisconnection(null, () => {
+      writeFileSync(
+        `${socketPath}.owner`,
+        JSON.stringify({ pid: process.pid, token: replacementToken }),
+      );
+    });
+    await expect(stopRuntime(databasePath, stopOptions)).rejects.toMatchObject({
+      code: "AGENT_SOCKET_UNAVAILABLE",
+      details: { reason: "owner-changed" },
+    });
+    expect(requests).toHaveLength(1);
+    expect(JSON.parse(readFileSync(`${socketPath}.owner`, "utf8"))).toEqual({
+      pid: process.pid,
+      token: replacementToken,
+    });
+  });
+
+  it("rejects a response-less disconnect when a socket remains after its owner disappears", async () => {
+    writeFileSync(`${socketPath}.owner`, JSON.stringify({ pid: process.pid, token: ownerToken }));
+    writeFileSync(socketPath, "remaining socket path");
+    const requests = mockSocketDisconnection(null, () => rmSync(`${socketPath}.owner`));
+    await expect(stopRuntime(databasePath, stopOptions)).rejects.toMatchObject({
+      code: "PROCESS_FAILED",
+      details: { agentSocketOutcomeUncertain: true },
+    });
+    expect(requests).toHaveLength(1);
+    expect(readFileSync(socketPath, "utf8")).toBe("remaining socket path");
+  });
+
+  it("still rejects malformed responses from a known owner", async () => {
+    writeFileSync(`${socketPath}.owner`, JSON.stringify({ pid: process.pid, token: ownerToken }));
+    mockSocketResponse("malformed");
+    await expect(stopRuntime(databasePath, stopOptions)).rejects.toMatchObject({
+      code: "PROCESS_FAILED",
+      details: { agentSocketOutcomeUncertain: true },
+    });
+    expect(existsSync(`${socketPath}.owner`)).toBe(true);
   });
 
   it("pins the owner in the stop request and waits for its exact lock to be released", async () => {

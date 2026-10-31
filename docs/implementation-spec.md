@@ -2107,6 +2107,8 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
   解放を確認してから成功を返し、待機timeoutは明示errorにする。
   JSON成功値は`{ ok: true, stopped: boolean, databasePath: string }`とし、停止確認済みは`stopped: true`、
   active runtimeがない場合は`false`にする
+- 並行stopでack前に応答なしのsocket切断が起きた場合、要求を再送せず、元ownerの解放とsocket pathの消失を
+  確認した場合だけ`stopped: false`で成功する。元ownerが残ればtimeout、replacement ownerや不正な応答はerrorにする
 - socketがなくlive ownerもない場合のstopは冪等な成功とし、明示`RVW_AGENT_SOCKET_PATH`でもDBへfallbackしない。
   dead-PIDのstale socketはexact inode、owner lockはinode・token・PIDを再照合して回収できるが、権限error、DB不一致、non-rvw / malformed /
   incompatible protocol、valid tokenがないlive owner、応答しないlive ownerはfail closedする。
