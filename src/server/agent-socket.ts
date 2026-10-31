@@ -488,6 +488,12 @@ function parseResponse(value: string): AgentResponse {
   return parsed;
 }
 
+class AgentSocketResponseMissingError extends Error {
+  constructor(cause?: unknown) {
+    super("Agent socket closed without a response.", { cause });
+  }
+}
+
 function uncertainOutcome(operation: string, cause: unknown, timedOut = false): RvwError {
   return new RvwError(
     timedOut ? "PROCESS_TIMEOUT" : "PROCESS_FAILED",
@@ -643,8 +649,13 @@ export async function tryAgentSocketRequest<T>(
         });
         return;
       }
-      if (requestSent || connected) rejectUncertain(error);
-      else if (!settled) {
+      if (requestSent || connected) {
+        rejectUncertain(
+          bytes === 0 && ["ECONNRESET", "EPIPE"].includes(error.code ?? "")
+            ? new AgentSocketResponseMissingError(error)
+            : error,
+        );
+      } else if (!settled) {
         settled = true;
         clearTimers();
         reject(error);
@@ -655,6 +666,10 @@ export async function tryAgentSocketRequest<T>(
       clearTimers();
       if (!connected || !requestSent) {
         finishUnavailable("connection-closed");
+        return;
+      }
+      if (bytes === 0) {
+        rejectUncertain(new AgentSocketResponseMissingError());
         return;
       }
       try {
@@ -847,17 +862,43 @@ export async function stopRuntime(
       const pid = socketOwnerPid(lockPath);
       if (pid !== null && processIsAlive(pid)) throw unavailable("missing-owner-token");
     }
-    const response = await tryAgentSocketRequest<unknown>(
-      RUNTIME_STOP_OPERATION,
-      { ownerIdentity: targetOwner },
-      {
-        expectedDatabasePath: databasePath,
-        socketPath,
-        requireSocket: false,
-        connectTimeoutMs: Math.min(DEFAULT_CONNECT_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
-        operationTimeoutMs: Math.max(1, deadline - Date.now()),
-      },
-    );
+    let response: AgentSocketResult<unknown>;
+    try {
+      response = await tryAgentSocketRequest<unknown>(
+        RUNTIME_STOP_OPERATION,
+        { ownerIdentity: targetOwner },
+        {
+          expectedDatabasePath: databasePath,
+          socketPath,
+          requireSocket: false,
+          connectTimeoutMs: Math.min(
+            DEFAULT_CONNECT_TIMEOUT_MS,
+            Math.max(1, deadline - Date.now()),
+          ),
+          operationTimeoutMs: Math.max(1, deadline - Date.now()),
+        },
+      );
+    } catch (error) {
+      if (
+        !targetOwner?.token ||
+        !(error instanceof RvwError) ||
+        !(error.cause instanceof AgentSocketResponseMissingError)
+      ) {
+        throw error;
+      }
+      // Another stop can close a connection still in the listener's backlog. Do not resend the
+      // request or claim an acknowledgement: only report no active runtime after both resources
+      // disappear. A live or replacement owner must never turn an uncertain result into success.
+      while (true) {
+        const currentOwner = inspectOwnerIdentity();
+        if (currentOwner === null) {
+          if (inspectIdentity(socketPath) !== null) throw error;
+          return { ok: true, stopped: false, databasePath };
+        }
+        if (!sameOwnerIdentity(targetOwner, currentOwner)) throw unavailable("owner-changed");
+        await wait();
+      }
+    }
     if (response.available) {
       const parsed = runtimeStopAcceptedSchema.safeParse(response.result);
       if (
