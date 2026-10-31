@@ -3885,3 +3885,42 @@ no new comment state, GitHub synchronization, agent runtime, or persistent works
 Initial comment links are consumed once per mounted route, with a separate attempt for an explicit retry after failure. Background query recovery must not reopen the link or replace the user's reading history. History replacement is an argument to that navigation, not shared mutable state. Feed code targets open their exact source commit; ordinary sidebar target mapping retains its existing behavior.
 
 Reply drafts remain in the existing store after external thread deletion. An app-level recovery panel observes complete comment lists for PRs with nonempty reply drafts, independent of feed filters and mounted groups. It offers readable text, clipboard copy, and explicit per-draft discard. This adds polling only for PRs with unsent replies and avoids silently discarding text or leaving inaccessible drafts behind the unload guard.
+
+## 2026-10-31: Clear dependency advisories with bounded compatibility overrides
+
+### Problem
+
+The default branch had nine open Dependabot alerts. A full `pnpm audit` also found advisories absent
+from that open-alert list, for fourteen total across DOMPurify, KaTeX, Vitest's mocker,
+brace-expansion, Zod, the Hono Node adapter, and minimatch. Bundled runtime dependencies make a source
+update and a rebuilt rvw release necessary for consumers to receive runtime fixes.
+
+### Choice
+
+Update DOMPurify to 3.4.17, Vitest to 4.1.12, brace-expansion to 5.0.12, Zod to 4.6.7, and
+`@hono/node-server` to 2.1.5. Keep Mermaid 11's renderer and binding contracts, but override only its
+KaTeX dependency to 0.18.2: Mermaid 11 still requests the vulnerable 0.16 line, while the
+[KaTeX advisory](https://github.com/advisories/GHSA-238p-pmpm-9mq7) requires at least 0.18.2. Exercise
+fraction rendering in both inline and expanded Mermaid diagrams in the browser suite. Remove this
+override when a separately validated Mermaid upgrade requests a fixed KaTeX version itself.
+
+Override minimatch versions below 11.0.1 to exactly 11.0.1 because ESLint and typescript-eslint still
+request 10.x, and the [globparts advisory](https://github.com/advisories/GHSA-g3hv-75wg-m249) has no
+patched 10.x release. The repository's full lint and test gates validate those consumers. Remove the
+override once their dependency ranges select a fixed minimatch without it.
+
+Retain the 72-hour release wait, provenance downgrade checks, lockfile revalidation, and exact build
+approvals. The selected versions meet these policies without new exclusions. Run `pnpm audit` for all
+severities in the main CI test job and before release staging so advisories fail explicitly rather
+than relying only on GitHub's open-alert list.
+
+Enable GitHub-managed CodeQL default setup for Actions, JavaScript/TypeScript, and Python, and enable
+Dependabot Malware alerts in repository settings. Keep those scans managed by GitHub rather than
+adding a second CodeQL workflow. Secret scanning and push protection are already enabled.
+
+### Trade-offs
+
+The two overrides deliberately cross upstream dependency ranges and need compatibility checks when
+their consumers change. Audit gates require the npm advisory service and may block an otherwise
+unrelated change when a new advisory is published or the service is unavailable. Existing published
+rvw bundles remain affected until a new release is built and approved through the release workflow.

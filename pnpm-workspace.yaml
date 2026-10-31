@@ -9,6 +9,10 @@ blockExoticSubdeps: true
 strictDepBuilds: true
 verifyDepsBeforeRun: error
 
+overrides:
+  "mermaid@11>katex": 0.18.2
+  "minimatch@<11.0.1": 11.0.1
+
 allowBuilds:
   esbuild@0.28.1: true
   tree-sitter-ruby@0.23.1: false

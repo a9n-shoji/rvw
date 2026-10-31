@@ -8,6 +8,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   request,
 }) => {
   test.setTimeout(60_000);
+  // This scenario starts before the first sync, even when another spec refreshed the shared fixture.
+  const resetResponse = await request.post("/api/test/reset-sync-stage", { data: {} });
+  expect(resetResponse.ok()).toBe(true);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.goto(`/?pullRequestId=${pullRequestId}`);
   const pullRequestHeading = page

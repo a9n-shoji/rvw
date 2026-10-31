@@ -26,7 +26,7 @@ test("reviews the deterministic resilient-order PR across artifacts", async ({ p
   await expect(statusBadges).toHaveText(["Open", "Draft", "Closed", "Merged"]);
   await rows.nth(3).click();
   await expect(
-    page.getByRole("heading", {
+    page.locator(".pr-heading").getByRole("heading", {
       name: "Implement resilient order placement with idempotent retries, transactional outbox, and payment recovery",
     }),
   ).toBeVisible();

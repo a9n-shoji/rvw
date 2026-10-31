@@ -10,6 +10,43 @@ async function openCommentsSidebar(page: Page): Promise<void> {
   await expect(toggle).toHaveAttribute("aria-expanded", "true");
 }
 
+test("renders Mermaid math labels with the patched KaTeX dependency", async ({ page }) => {
+  const text = mermaidMarkdown("Math diagram", 'Formula["$$\\frac{1}{2}$$"] --> Result');
+  await page.route(`**/api/pull-requests/${pullRequestId}/document?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("kind") !== "pull-request-markdown") {
+      await route.continue();
+      return;
+    }
+    await route.fulfill({
+      json: {
+        ok: true,
+        pullRequestContentFingerprint: url.searchParams.get(
+          "expectedPullRequestContentFingerprint",
+        ),
+        document: {
+          ref: { kind: "pull-request-markdown", pullRequestId },
+          availability: "available",
+          text,
+          byteLength: Buffer.byteLength(text),
+          entryKind: "virtual",
+          normalizedLineEndings: false,
+          oid: null,
+        },
+      },
+    });
+  });
+
+  await page.goto(`/?pullRequestId=${pullRequestId}`);
+  const diagram = page.locator(".markdown-preview .markdown-mermaid-shell");
+  await expect(diagram.locator("svg .katex")).toBeVisible();
+  await expect(diagram.locator(".katex math mfrac")).toBeVisible();
+  await expect(diagram).toContainText("Result");
+  await diagram.getByRole("button", { name: "Mermaid diagramを拡大" }).click();
+  const expanded = page.getByRole("dialog", { name: "Mermaid diagram" });
+  await expect(expanded.locator("svg .katex math mfrac")).toBeVisible();
+});
+
 test("renders Mermaid diagrams and navigates from a comment reference to an internal source line", async ({
   page,
   request,

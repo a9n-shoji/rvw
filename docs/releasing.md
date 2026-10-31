@@ -43,6 +43,7 @@ versionへ`-beta.<number>`を付け、同じstable version内でnumberを単調�
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm audit
 pnpm check
 pnpm test
 pnpm exec playwright install --with-deps chromium
@@ -68,6 +69,7 @@ npmは未作成packageへTrusted Publisherを設定できず、未作成package�
 ```bash
 git switch --detach v0.1.0
 pnpm install --frozen-lockfile
+pnpm audit
 RVW_RELEASE_TAG=v0.1.0 RVW_RELEASE_NPM_TAG=latest pnpm release:verify
 pnpm check
 pnpm test
