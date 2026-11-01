@@ -202,6 +202,12 @@ Keep HTML visuals static and self-contained:
   Walkthrough `sourceOid`; resolve the path from the repository root, not from a Markdown file.
 - Use theme variables such as `--rvw-bg`, `--rvw-fg`, `--rvw-muted`, `--rvw-border`, and `--rvw-accent`
   when practical, while allowing an intentional self-contained theme when the subject needs it.
+- HTML code links use `<a href="rvw-ref:<referenceId>">meaningful label</a>` with a matching
+  entry in `references`. rvw automatically applies the same code-reference chip styling as
+  Markdown walkthroughs, including the file-type icon, line range (or File), and path tooltip.
+  Do not hand-author icons, line badges, special classes, or custom code-link CSS. Keep the label
+  focused on the behavior or symbol; the reference supplies the location. Ordinary external links
+  remain ordinary links. Cmd/Ctrl-click opens the code in the other pane.
 - Put `rvw-ref:<referenceId>` on important code claims inside `<a href="...">` elements. HTML links
   participate in the same declared/used reference validation as Markdown links.
 - Add `data-rvw-commentable` to cards, flow nodes, comparison panes, or other visual groups that a

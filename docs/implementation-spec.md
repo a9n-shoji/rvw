@@ -613,6 +613,7 @@ interface Walkthrough {
   source line情報を付けてからsame-origin sandbox iframeへ`srcdoc`として渡す。Agent authored script、event
   handler、frame、form送信、network、font、media、worker、外部resourceは実行・取得させず、sandboxへ
   `allow-scripts`を付けない。CSPを最終防衛線としてscriptと全networkを拒否する。
+- HTML visual内の`rvw-ref:<referenceId>`はMarkdownと共有するcode-reference CSS、file icon、行範囲badge、path tooltipを自動適用する。装飾は属性と疑似要素のみでDOM path / text offsetを変えない。
 - HTML visual内の`rvw-ref:<referenceId>`はMarkdown linkと同じreference lifecycleへ統合し、人間が選んだ
   時だけ同じlatest/fallback解決でcodeを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
   許可された画像data URLへ変換してiframeへ渡す。外部画像、stylesheet、その他の外部resourceは拒否する。

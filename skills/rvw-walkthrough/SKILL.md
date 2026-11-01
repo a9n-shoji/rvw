@@ -117,6 +117,12 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
    These are internal checks, not fixed headings or a requirement to narrate every subject as a flow.
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
 7. Link important code claims with `rvw-ref:<referenceId>`; use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews.
+   HTML code links use `<a href="rvw-ref:<referenceId>">meaningful label</a>` with a matching
+   entry in `references`. rvw automatically applies the same code-reference chip styling as
+   Markdown walkthroughs, including the file-type icon, line range (or File), and path tooltip.
+   Do not hand-author icons, line badges, special classes, or custom code-link CSS. Keep the label
+   focused on the behavior or symbol; the reference supplies the location. Ordinary external links
+   remain ordinary links. Cmd/Ctrl-click opens the code in the other pane.
 8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.
 9. For new HTML Walkthroughs, render diagrams as inline SVG or semantic HTML/CSS, with nearby `rvw-ref:` links. Do not place Mermaid fences inside an HTML preview. When maintaining an existing Markdown Walkthrough, use Mermaid as a standard explanatory tool when multiple relationships, actors, states, conditions,
    branches, ordering constraints, or lifecycle transitions would otherwise have to be reconstructed

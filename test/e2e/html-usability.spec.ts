@@ -29,6 +29,23 @@ for (const width of [1440, 900, 640]) {
       const shell = page.locator(".walkthrough-html-preview-shell");
       const frame = shell.frameLocator("iframe");
       await expect(frame.getByRole("heading", { name: "注文はいつ確定する？" })).toBeVisible();
+      const codeLink = frame.getByRole("link");
+      await expect(codeLink).toHaveClass(/code-inline-reference/);
+      await expect(codeLink).toHaveAttribute("title", /create-order\.ts/);
+      await expect(codeLink).toHaveCSS("text-decoration-line", "none");
+      await expect(codeLink).toHaveCSS("border-radius", "5px");
+      expect(
+        await codeLink.evaluate((element) => {
+          const view = element.ownerDocument.defaultView!;
+          return {
+            badge: view.getComputedStyle(element, "::after").content,
+            icon: view.getComputedStyle(element, "::before").backgroundImage,
+          };
+        }),
+      ).toMatchObject({
+        badge: expect.stringMatching(/L\d+/),
+        icon: expect.stringContaining("data:image/svg+xml"),
+      });
       await page.screenshot({ path: testInfo.outputPath("reading.png") });
       await frame.getByRole("cell", { name: "通知だけを再試行", exact: true }).hover();
       const option = shell.getByRole("button", { name: "この要素へコメント", exact: true });

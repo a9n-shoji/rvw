@@ -1,3 +1,6 @@
+import codeReferenceCss from "../styles/code-reference.css?inline";
+import { codeReferenceLineLabel, codeReferenceLocation } from "./CodeReferenceLink.js";
+import { fileIconDataUrl } from "./FileIcon.js";
 import { htmlNodePath, resolveHtmlAnchor } from "../html-comment-anchor.js";
 import {
   useCallback,
@@ -118,7 +121,10 @@ function srcdoc(html: string, themePreference: ThemePreference): string {
 <meta name="color-scheme" content="light dark">
 <style>${previewBaseCss(themePreference)}</style>
 <div class="rvw-preview-root" data-pane-find-text>${html}</div>
-<style>${previewCommentCss}</style>`;
+<style>
+:root { --accent: var(--rvw-accent); --line: var(--rvw-border); --panel: var(--rvw-bg); --muted: var(--rvw-muted); --mono: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); --accent-soft: color-mix(in srgb, var(--rvw-accent) 12%, var(--rvw-bg)); }
+${codeReferenceCss}
+${previewCommentCss}</style>`;
 }
 
 function rangeFromElement(element: Element | null): MarkdownSourceRange | null {
@@ -367,6 +373,18 @@ export function WalkthroughHtmlPreview({
       detachDocument();
       const document = iframe.contentDocument;
       if (!document) return;
+      // Decorate attributes only: saved DOM paths and text offsets must remain unchanged.
+      for (const link of document.querySelectorAll<HTMLAnchorElement>('a[href^="rvw-ref:"]')) {
+        const reference = references.get(link.getAttribute("href")!.slice("rvw-ref:".length));
+        if (!reference) continue;
+        link.classList.add("code-inline-reference");
+        link.title = codeReferenceLocation(reference);
+        link.dataset.rvwRefLocation = codeReferenceLineLabel(reference) ?? "File";
+        link.style.setProperty(
+          "--rvw-ref-icon",
+          `url("${fileIconDataUrl(reference.path, document.defaultView!.getComputedStyle(document.documentElement).colorScheme === "dark")}")`,
+        );
+      }
       const textRanges = new WeakMap<Text, MarkdownSourceRange>();
       const commentWalker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
       let comment = commentWalker.nextNode();

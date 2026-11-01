@@ -1,0 +1,58 @@
+.code-inline-reference {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  margin: 0 2px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  color: var(--accent);
+  line-height: 1.35;
+  user-select: text;
+  vertical-align: baseline;
+}
+.code-inline-reference:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.code-inline-reference svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.code-inline-reference > span {
+  overflow: hidden;
+  font: 650 12px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.code-inline-reference small {
+  color: var(--muted);
+  font: 9px var(--mono);
+  white-space: nowrap;
+}
+
+a.code-inline-reference {
+  font: 650 12px var(--mono);
+  text-decoration: none;
+  cursor: pointer;
+}
+a.code-inline-reference::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  background: var(--rvw-ref-icon) center / contain no-repeat;
+}
+a.code-inline-reference::after {
+  content: attr(data-rvw-ref-location);
+  color: var(--muted);
+  font: 9px var(--mono);
+  white-space: nowrap;
+}
+.code-inline-reference:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
