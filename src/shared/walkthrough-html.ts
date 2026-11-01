@@ -117,6 +117,14 @@ const forbiddenTags = new Set([
 ]);
 
 const automaticCommentSurfaceTags = new Set([
+  "p",
+  "li",
+  "blockquote",
+  "pre",
+  "div",
+  "td",
+  "th",
+  "tr",
   "article",
   "aside",
   "details",

@@ -1,3 +1,4 @@
+import { htmlNodePath, resolveHtmlAnchor } from "../html-comment-anchor.js";
 import {
   useCallback,
   useEffect,
@@ -85,6 +86,7 @@ function previewBaseCss(themePreference: ThemePreference): string {
     a { color: var(--rvw-accent); cursor: pointer; }
     button, input, select, textarea { color: inherit; }
     .rvw-preview-root { min-width: 0; padding: 16px; }
+    @media (max-width: 480px) { .rvw-preview-root { padding: 8px; } }
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
     [data-rvw-comment-surface="true"] { cursor: default; }
     ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
@@ -93,6 +95,8 @@ function previewBaseCss(themePreference: ThemePreference): string {
 }
 
 const previewCommentCss = `
+  ::highlight(rvw-comment) { background: var(--rvw-highlight); }
+  .rvw-html-comment-target,
   .rvw-html-active-comment {
     outline: 3px solid var(--rvw-highlight) !important;
     outline-offset: 3px !important;
@@ -307,7 +311,12 @@ export function WalkthroughHtmlPreview({
     setMarkers(
       placedComments.flatMap(({ comment, placement }) => {
         if (placement.outdated || !placement.range) return [];
-        const element = bestElementForRange(document, placement.range);
+        const anchor =
+          comment.target.kind === "walkthrough" ? comment.target.htmlAnchor : undefined;
+        if (anchor && anchor.fenceStartLine !== fenceRange.startLine) return [];
+        const element = anchor
+          ? resolveHtmlAnchor(document, anchor)
+          : bestElementForRange(document, placement.range);
         if (!element) return [];
         const rect = element.getBoundingClientRect();
         return [
@@ -321,7 +330,7 @@ export function WalkthroughHtmlPreview({
         ];
       }),
     );
-  }, [activeCommentId, placedComments]);
+  }, [activeCommentId, placedComments, fenceRange.startLine]);
 
   useLayoutEffect(() => {
     updateLayout();
@@ -354,7 +363,7 @@ export function WalkthroughHtmlPreview({
       textRangesRef.current = textRanges;
 
       const actionLeft = (desired: number): number =>
-        Math.max(48, Math.min(frameShell.clientWidth - 48, desired));
+        Math.max(96, Math.min(frameShell.clientWidth - 96, desired));
 
       const selectionRange = (): { range: MarkdownSourceRange; rect: DOMRect } | null => {
         const selection = document.getSelection();
@@ -367,6 +376,10 @@ export function WalkthroughHtmlPreview({
           return null;
         }
         const domRange = selection.getRangeAt(0);
+        const root = document.querySelector(".rvw-preview-root");
+        const path = root && htmlNodePath(root, domRange.startContainer);
+        const endPath = root && htmlNodePath(root, domRange.endContainer);
+        if (!path || !endPath) return null;
         const textWalker = document.createTreeWalker(document, NodeFilter.SHOW_TEXT);
         const ranges: MarkdownSourceRange[] = [];
         let text = textWalker.nextNode();
@@ -388,6 +401,13 @@ export function WalkthroughHtmlPreview({
         if (ranges.length === 0) return null;
         return {
           range: {
+            htmlAnchor: {
+              fenceStartLine: fenceRange.startLine,
+              path,
+              startOffset: domRange.startOffset,
+              endPath,
+              endOffset: domRange.endOffset,
+            },
             startLine: Math.min(...ranges.map((range) => range.startLine)),
             endLine: Math.max(...ranges.map((range) => range.endLine)),
           },
@@ -413,11 +433,29 @@ export function WalkthroughHtmlPreview({
         });
       };
 
+      const elementRange = (element: Element | null): MarkdownSourceRange | null => {
+        const mapped = rangeFromElement(element);
+        const root = document.querySelector(".rvw-preview-root");
+        const path = element && root && htmlNodePath(root, element);
+        return mapped && path
+          ? { ...mapped, htmlAnchor: { fenceStartLine: fenceRange.startLine, path } }
+          : null;
+      };
+      const clearPreview = (): void => {
+        for (const element of document.querySelectorAll(".rvw-html-comment-target")) {
+          element.classList.remove("rvw-html-comment-target");
+        }
+      };
+      const preview = (element: Element): void => {
+        clearPreview();
+        element.classList.add("rvw-html-comment-target");
+      };
       const onPointerMove = (event: PointerEvent): void => {
+        clearPreview();
         if (document.getSelection()?.toString().trim()) return;
         const target = eventElement(event.target);
         const surface = target?.closest("[data-rvw-comment-surface='true']") ?? null;
-        const range = rangeFromElement(surface);
+        const range = elementRange(surface);
         if (!surface || !range) {
           setOverlayAction(null);
           return;
@@ -428,8 +466,33 @@ export function WalkthroughHtmlPreview({
         setOverlayAction({
           range,
           left: actionLeft(iframeRect.left - frameShellRect.left + rect.right),
-          top: iframeRect.top - frameShellRect.top + rect.top,
-          label: "このvisualへコメント",
+          top: iframeRect.top - frameShellRect.top + rect.bottom + 4,
+          label: "この要素へコメント",
+          composerTop: iframeRect.top - frameShellRect.top + rect.bottom,
+          onPreview: () => preview(surface),
+          onPreviewEnd: clearPreview,
+          alternatives: surface.closest("table")
+            ? [
+                { label: "セル", element: surface.closest("td, th") },
+                { label: "行", element: surface.closest("tr") },
+                { label: "表全体", element: surface.closest("table") },
+              ].flatMap(({ label, element }) => {
+                const mapped = elementRange(element);
+                return element && mapped
+                  ? [
+                      {
+                        label,
+                        range: mapped,
+                        composerTop:
+                          iframeRect.top -
+                          frameShellRect.top +
+                          element.getBoundingClientRect().bottom,
+                        onPreview: () => preview(element),
+                      },
+                    ]
+                  : [];
+              })
+            : undefined,
         });
       };
 
@@ -529,11 +592,21 @@ export function WalkthroughHtmlPreview({
       iframe.removeEventListener("load", onLoad);
       detachDocument();
     };
-  }, [onOpenReference, onOpenRepositoryLink, references, rendered.value, sourceOid, updateLayout]);
+  }, [
+    onOpenReference,
+    onOpenRepositoryLink,
+    references,
+    rendered.value,
+    sourceOid,
+    updateLayout,
+    fenceRange.startLine,
+  ]);
 
   useEffect(() => {
     const document = iframeRef.current?.contentDocument;
     if (!document) return;
+    const frameWindow = document.defaultView;
+    frameWindow?.CSS?.highlights?.delete("rvw-comment");
     for (const element of document.querySelectorAll(".rvw-html-active-comment")) {
       element.classList.remove("rvw-html-active-comment");
     }
@@ -542,13 +615,27 @@ export function WalkthroughHtmlPreview({
         comment.id === activeCommentId && !placement.outdated && placement.range,
     )?.placement;
     if (!activePlacement?.range) return;
-    const element = bestElementForRange(document, activePlacement.range);
+    const activeComment = placedComments.find(
+      ({ comment }) => comment.id === activeCommentId,
+    )?.comment;
+    const anchor =
+      activeComment?.target.kind === "walkthrough" ? activeComment.target.htmlAnchor : undefined;
+    if (anchor && anchor.fenceStartLine !== fenceRange.startLine) return;
+    const element = anchor
+      ? resolveHtmlAnchor(document, anchor)
+      : bestElementForRange(document, activePlacement.range);
     if (!element) return;
+    if ("startContainer" in element) {
+      if (frameWindow?.Highlight)
+        frameWindow.CSS.highlights.set("rvw-comment", new frameWindow.Highlight(element));
+      element.startContainer.parentElement?.scrollIntoView({ block: "nearest" });
+      return;
+    }
     element.classList.add("rvw-html-active-comment");
     hostRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     element.scrollIntoView({ block: "center", inline: "nearest" });
     updateLayout();
-  }, [activeCommentId, placedComments, updateLayout]);
+  }, [activeCommentId, placedComments, updateLayout, fenceRange.startLine]);
 
   useEffect(() => {
     if (navigationLine === null) return;
@@ -579,8 +666,7 @@ export function WalkthroughHtmlPreview({
       data-rvw-navigation-end-line={fenceRange.endLine}
     >
       <div className="walkthrough-html-preview-toolbar" data-pane-find-ignore>
-        <span>HTML preview</span>
-        <span>textまたはvisualを選択してコメント</span>
+        <span>文字を選択、または要素にカーソルを合わせてコメント</span>
       </div>
       <div
         className="walkthrough-html-preview-frame-shell"
@@ -601,6 +687,7 @@ export function WalkthroughHtmlPreview({
           composer={composerAnchor ? commentComposer(composerAnchor.label) : null}
           composerAnchor={composerAnchor}
           onComment={(action) => {
+            action.onPreviewEnd?.();
             iframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
             setOverlayAction(null);
             const hostWidth = hostRef.current?.clientWidth ?? 0;
@@ -610,7 +697,7 @@ export function WalkthroughHtmlPreview({
               hostWidth > 0
                 ? Math.max(12 + halfWidth, Math.min(hostWidth - 12 - halfWidth, action.left))
                 : action.left;
-            setComposerAnchor({ ...action, left });
+            setComposerAnchor({ ...action, left, top: action.composerTop ?? action.top });
             onCommentRange(action.range);
           }}
           onActivateComment={onActivateComment}

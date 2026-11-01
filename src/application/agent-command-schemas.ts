@@ -1,3 +1,4 @@
+import { htmlCommentAnchorSchema } from "../shared/html-comment-anchor.js";
 import { z } from "zod";
 import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import {
@@ -60,6 +61,11 @@ export const commentTargetInputSchema = z
       .object({
         kind: z.literal("walkthrough"),
         walkthroughId: z.uuid(),
+        htmlAnchor: htmlCommentAnchorSchema.optional(),
+        expectedDocumentHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
         startLine: nullableCommentLine,
         endLine: nullableCommentLine,
       })

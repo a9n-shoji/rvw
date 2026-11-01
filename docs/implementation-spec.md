@@ -616,11 +616,14 @@ interface Walkthrough {
 - HTML visual内の`rvw-ref:<referenceId>`はMarkdown linkと同じreference lifecycleへ統合し、人間が選んだ
   時だけ同じlatest/fallback解決でcodeを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
   許可された画像data URLへ変換してiframeへ渡す。外部画像、stylesheet、その他の外部resourceは拒否する。
-- HTML要素とtext selectionは生成DOM identityを保存せず、parser由来のWalkthrough source line rangeへ戻す。
+- 新規Walkthroughは本文全体を一つのstatic `html-preview`として作成する。既存Markdown / Mermaid表示を維持する。
+- HTML要素とtext selectionはparser由来のsource lineに加え、fence開始行、DOM child path、文字選択の両端offsetを保存する。
+  保存時に本文hashを照合してstaleな選択を拒否する。本文変更後は精密anchorをOutdatedとし、旧行commentの再配置は従来どおりとする。
+  hover / text selectionでcomment actionを表示し、tableではcell / row / tableを選択できる。comment modeは設けない。
   新規comment composerは選択したtextまたはvisualの近くへparent overlayとして表示し、既存commentはvisual
   markerからcanonicalなComments sidebar threadをactivateする。HTML内部rangeのthreadを外側Markdown blockの
   inline threadとして重複表示しない。overlay actionはiframeからparent overlayへpointerを移動しても維持し、
-  markerはiframe内部scrollにも追従する。本文更新後のmappingとOutdatedは通常のWalkthrough line comment規則に従う。
+  markerはiframe内部scrollにも追従する。本文更新後はHTML精密anchorをOutdatedとし、既存のline-only commentのmappingは通常のWalkthrough規則に従う。
 - same-origin iframe documentはPane Findの検索・highlight対象へ登録し、iframe内にfocusがある時の
   Cmd/Ctrl+F、Cmd/Ctrl+P、Cmd/Ctrl+Shift+Fをparentの同じglobal shortcutへrelayする。
 - 人間がreferenceを選んだ時だけ、`sourceOid + path + line range`を最新`latestHeadOid`へ一度だけ直接

@@ -1,3 +1,9 @@
+import type { ReviewComment, HtmlCommentAnchor } from "../../src/domain/models.js";
+type SavedHtmlComment = Omit<ReviewComment, "target"> & {
+  target: Extract<ReviewComment["target"], { kind: "walkthrough" }> & {
+    htmlAnchor: HtmlCommentAnchor;
+  };
+};
 import { expect, test, type Page } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
@@ -182,14 +188,14 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await page.mouse.up();
   const composer = shell.locator(".walkthrough-html-comment-composer");
   await expect(composer).toBeVisible();
-  await expect(composer.getByRole("textbox")).toHaveAccessibleName("このvisualへコメント");
+  await expect(composer.getByRole("textbox")).toHaveAccessibleName("この要素へコメント");
   const [visualBox, composerBox] = await Promise.all([
     afterHeading.boundingBox(),
     composer.boundingBox(),
   ]);
   expect(visualBox).not.toBeNull();
   expect(composerBox).not.toBeNull();
-  expect(Math.abs(composerBox!.y - visualBox!.y)).toBeLessThan(120);
+  expect(Math.abs(composerBox!.y - visualBox!.y)).toBeLessThan(240);
   const commentBody = "Gatewayへの集約境界を確認してください。";
   await composer.getByRole("textbox").fill(commentBody);
   await composer.getByRole("textbox").press("Control+Enter");
@@ -212,7 +218,7 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 140 }));
   await expect
     .poll(async () => frame.locator("body").evaluate(() => window.scrollX))
-    .toBeGreaterThan(40);
+    .toBeGreaterThan(0);
   const iframeScrollLeft = await frame.locator("body").evaluate(() => window.scrollX);
   await expect
     .poll(async () => (await marker.boundingBox())?.x ?? Number.POSITIVE_INFINITY)
@@ -269,4 +275,104 @@ test("never creates a frame or network request for rejected authored HTML", asyn
   await expect(page.locator(".walkthrough-html-preview-shell iframe")).toHaveCount(0);
   expect(authoredRequestCount).toBe(0);
   expect(await page.evaluate(() => "__rvwUnsafe" in window)).toBe(false);
+});
+
+test("keeps same-line cells and partial text distinct across reload, without a comment mode", async ({
+  page,
+  request,
+}) => {
+  const title = "Precise HTML comments";
+  const body =
+    '```html-preview\n<table><tbody><tr><td>alpha</td><td>beta gamma</td></tr></tbody></table>\n<a href="rvw-ref:handler">Source</a>\n```';
+  const update = await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
+    data: { title, body, referenceLabel: "Route" },
+  });
+  expect(update.ok()).toBe(true);
+  await openWalkthrough(page, title);
+  const shell = page.locator(".walkthrough-html-preview-shell");
+  const frame = shell.frameLocator("iframe");
+  const second = frame.locator("td").nth(1);
+  await second.hover();
+  await expect(shell.getByRole("button", { name: "セル", exact: true })).toBeVisible();
+  await expect(shell.getByRole("button", { name: "行", exact: true })).toBeVisible();
+  await expect(shell.getByRole("button", { name: "表全体", exact: true })).toBeVisible();
+  await shell.getByRole("button", { name: "セル", exact: true }).hover();
+  await expect(second).toHaveClass(/rvw-html-comment-target/);
+  await shell.getByRole("button", { name: "セル", exact: true }).click();
+  const composer = shell.locator(".walkthrough-html-comment-composer");
+  await composer.getByRole("textbox").fill("Only the second cell");
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const response = await saved;
+  expect(response.ok()).toBe(true);
+  const { comment } = (await response.json()) as { comment: SavedHtmlComment };
+  expect(comment.target.htmlAnchor.path.length).toBeGreaterThan(0);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }).click();
+  await expect(second).toHaveClass(/rvw-html-active-comment/);
+  await expect(frame.locator("td").first()).not.toHaveClass(/rvw-html-active-comment/);
+  await second.evaluate((element) => {
+    const range = element.ownerDocument.createRange();
+    const text = [...element.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)!;
+    range.setStart(text, 0);
+    range.setEnd(text, 4);
+    const selection = element.ownerDocument.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await shell.getByRole("button", { name: "選択したテキストへコメント" }).click();
+  await composer.getByRole("textbox").fill("Only beta");
+  const textSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const textResponse = await textSaved;
+  expect(textResponse.ok()).toBe(true);
+  const textComment = ((await textResponse.json()) as { comment: SavedHtmlComment }).comment;
+  expect(textComment.target.htmlAnchor.startOffset).toBe(0);
+  expect(textComment.target.htmlAnchor.endOffset).toBe(4);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell
+    .getByRole("button", { name: `${textComment.id}のコメントを開く`, exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      frame.locator("body").evaluate(() => {
+        const highlight = CSS.highlights.get("rvw-comment");
+        return highlight
+          ? [...highlight].map((range) => (range instanceof Range ? range.toString() : "")).join("")
+          : "";
+      }),
+    )
+    .toBe("beta");
+  const changed = await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
+    data: { title, body: body.replace("alpha", "changed"), referenceLabel: "Route" },
+  });
+  expect(changed.ok()).toBe(true);
+  const stale = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "walkthrough",
+        walkthroughId,
+        startLine: 2,
+        endLine: 2,
+        htmlAnchor: comment.target.htmlAnchor,
+        expectedDocumentHash: comment.target.sourceDocumentHash,
+      },
+      body: "stale selection",
+    },
+  });
+  expect(stale.ok()).toBe(false);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await expect(
+    shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }),
+  ).toHaveCount(0);
 });

@@ -1,3 +1,4 @@
+import type { HtmlCommentAnchor } from "../domain/models.js";
 import { GitCodeNavigation } from "../infrastructure/navigation/git-code-navigation.js";
 import type { DefinitionResult } from "../domain/code-navigation.js";
 import { createHash } from "node:crypto";
@@ -121,6 +122,7 @@ import {
 } from "../shared/image-assets.js";
 import {
   analyzeWalkthroughHtmlPreview,
+  walkthroughHtmlPreviewSourceRanges,
   MAX_WALKTHROUGH_HTML_IMAGES,
   type HtmlPreviewAnalysis,
 } from "../shared/walkthrough-html.js";
@@ -342,6 +344,8 @@ export type CommentTargetRequest =
   | {
       kind: "walkthrough";
       walkthroughId: string;
+      htmlAnchor?: HtmlCommentAnchor | undefined;
+      expectedDocumentHash?: string | undefined;
       startLine?: number | null;
       endLine?: number | null;
     }
@@ -1615,6 +1619,30 @@ export class RvwService {
       if (!walkthrough || walkthrough.pullRequestId !== pullRequest.id) {
         throw new RvwError("INVALID_INPUT", "このPRのWalkthroughが見つかりません。");
       }
+      if (
+        target.htmlAnchor &&
+        (target.expectedDocumentHash !== hashDocument(walkthrough.body) ||
+          target.startLine == null ||
+          target.endLine == null)
+      ) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          "Walkthroughが更新されています。表示を更新して選択し直してください。",
+        );
+      }
+      if (
+        target.htmlAnchor &&
+        !walkthroughHtmlPreviewSourceRanges(walkthrough.body).some(
+          (range) =>
+            range.startLine - 1 === target.htmlAnchor?.fenceStartLine &&
+            target.startLine != null &&
+            target.endLine != null &&
+            target.startLine >= range.startLine &&
+            target.endLine <= range.endLine,
+        )
+      ) {
+        throw new RvwError("INVALID_INPUT", "HTMLコメントの対象範囲が不正です。");
+      }
       const startLine = target.startLine ?? null;
       const endLine = target.endLine ?? null;
       assertLinePair(startLine, endLine);
@@ -1630,6 +1658,7 @@ export class RvwService {
         kind: target.kind,
         walkthroughId: target.walkthroughId,
         walkthroughTitle: walkthrough.title,
+        ...(target.htmlAnchor ? { htmlAnchor: target.htmlAnchor } : {}),
         sourceDocumentHash: quotedText === null ? null : hashDocument(walkthrough.body),
         quotedText,
         startLine,
@@ -3036,6 +3065,12 @@ export class RvwService {
     }
     const walkthrough = this.database.getWalkthrough(comment.target.walkthroughId);
     if (!walkthrough || walkthrough.pullRequestId !== comment.pullRequestId) {
+      return { outdated: true, range: null, path: null };
+    }
+    if (
+      comment.target.htmlAnchor &&
+      comment.target.sourceDocumentHash !== hashDocument(walkthrough.body)
+    ) {
       return { outdated: true, range: null, path: null };
     }
     return { ...placeMutableDocumentComment(comment.target, walkthrough.body), path: null };

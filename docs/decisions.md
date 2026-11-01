@@ -3924,3 +3924,7 @@ The two overrides deliberately cross upstream dependency ranges and need compati
 their consumers change. Audit gates require the npm advisory service and may block an otherwise
 unrelated change when a new advisory is published or the service is unavailable. Existing published
 rvw bundles remain affected until a new release is built and approved through the release workflow.
+
+## HTML Walkthrough authoring and precise comments
+
+New Walkthroughs use one static `html-preview` fence; the existing body and reference protocol stays compatible. No comment mode is added. HTML comments store DOM paths and optional text endpoints in a nullable target field, plus the existing document hash. Paths are only resolved against the unchanged document. Any body change makes these anchors Outdated; we do not guess a new target or retain historical bodies. Legacy line comments keep their existing mapping. This supersedes the line-only HTML anchor rule in section 5.4.

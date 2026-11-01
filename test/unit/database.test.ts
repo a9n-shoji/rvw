@@ -185,9 +185,20 @@ describe("RvwDatabase", () => {
     saved.forEach((structure) => expect(upgraded.getStructure(structure.id)).toEqual(structure));
     upgraded.close();
     const verified = new DatabaseSync(filePath);
-    expect(tableNames.map((name) => verified.prepare(`SELECT * FROM "${name}"`).all())).toEqual(
-      before,
-    );
+    expect(
+      tableNames.map((name) =>
+        verified
+          .prepare(`SELECT * FROM "${name}"`)
+          .all()
+          .map((row) => {
+            if (name !== "comment_targets") return row;
+            expect(row.html_anchor).toBeNull();
+            const legacyRow = { ...row };
+            delete legacyRow.html_anchor;
+            return legacyRow;
+          }),
+      ),
+    ).toEqual(before);
     expect(
       verified
         .prepare("SELECT name FROM sqlite_master WHERE name = 'structure_retired_region_ids'")

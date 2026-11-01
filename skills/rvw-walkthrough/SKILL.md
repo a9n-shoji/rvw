@@ -1,6 +1,6 @@
 ---
 name: rvw-walkthrough
-description: Read, publish, improve in place, or explicitly delete one source-anchored Markdown explanation with code references and optional Mermaid bindings through the local rvw CLI. Use when the user asks for one implementation, surrounding-code, flow, or architecture walkthrough. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Do not use this Skill for rvw comment handling or PR synchronization.
+description: Read, publish, improve in place, or explicitly delete one source-anchored HTML walkthrough with code references, while preserving existing Markdown and Mermaid explanations through the local rvw CLI. Use when the user asks for one implementation, surrounding-code, flow, or architecture walkthrough. Use rvw-review-compose when the user asks which Walkthroughs or Structures a whole review subject needs. Do not use this Skill for rvw comment handling or PR synchronization.
 ---
 
 # rvw Walkthrough management
@@ -63,7 +63,7 @@ Use only the `rvw` CLI protocol. Never access the SQLite database directly or co
    `walkthrough.publish`, `walkthrough.update`, or `walkthrough.delete` capability for each requested
    mutation. An update or delete also needs `walkthrough.read` because the current Artifact must be
    read first; a new publication does not.
-3. Require `walkthrough.htmlPreview` before publishing or updating any `html-preview` fence. If it is absent, use Markdown or Mermaid instead; never send unsupported HTML preview syntax.
+3. Require `walkthrough.htmlPreview` before publishing or updating any `html-preview` fence. If it is absent, report that HTML authoring requires an rvw upgrade; never silently substitute Markdown for a requested HTML Walkthrough. Existing Markdown Walkthroughs remain readable.
 4. Run `rvw agent status --json`. Read `socketPath`, `connectionResult`, `selectedDatabasePath`, `selectedTransport`, and `fallbackReason`. If `selectedTransport` is `unavailable`, stop and report the diagnostic; an explicitly configured `RVW_AGENT_SOCKET_PATH` never falls back to direct database access. Otherwise use the reported transport without overriding it.
 5. Require local access to the saved repository. When a normally launched rvw viewer is running, the
    CLI can route database reads and writes through its user-only Unix socket; otherwise direct rvw data
@@ -118,7 +118,7 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
 6. Generate the completed Walkthrough in one pass unless the user explicitly requests an interactive process. Do not ask for approval of an intermediate review plan.
 7. Link important code claims with `rvw-ref:<referenceId>`; use Markdown links in prose and `<a href="rvw-ref:<referenceId>">` links inside HTML previews.
 8. Define every reference with a repository-relative path and, when useful, an inclusive line range at the chosen `sourceOid`. Prefer the smallest meaningful multi-line range that lets the reader verify a code block or flow; include the signature and relevant body instead of pointing only at its first line. Use a single-line range only for a genuinely line-local claim such as one constant or declaration. Omit both `startLine` and `endLine` when the claim concerns the file as a whole. Keep IDs unique and stable within the publication.
-9. Use Mermaid as a standard explanatory tool when multiple relationships, actors, states, conditions,
+9. For new HTML Walkthroughs, render diagrams as inline SVG or semantic HTML/CSS, with nearby `rvw-ref:` links. Do not place Mermaid fences inside an HTML preview. When maintaining an existing Markdown Walkthrough, use Mermaid as a standard explanatory tool when multiple relationships, actors, states, conditions,
    branches, ordering constraints, or lifecycle transitions would otherwise have to be reconstructed
    from prose. Use a flowchart for control decisions or transformations, `stateDiagram-v2` for real or
    explicitly identified explanatory state and its transitions, and `sequenceDiagram` for actor
@@ -127,7 +127,7 @@ Read the complete current body, source OID, diagram bindings, references, and Pu
    question. Do not add a cosmetic diagram or force a local fact into one. Treat every participant,
    state, arrow, order, guard, branch, and endpoint as a source claim to verify, not as permission to
    simplify the implementation into a tidier model.
-10. Use `html-preview` only when spatial layout, an ELI5 visual, a UI mock, or a visual comparison materially lowers comprehension cost. Follow the HTML visual rules in the authoring guide; do not generate JavaScript or network resources.
+10. Create new Walkthroughs as one full-document `html-preview` fence containing static HTML and CSS. Use readable prose, tables, cards, and inline SVG as appropriate; keep existing Markdown and Mermaid documents readable and preserve their format on updates unless conversion is requested. Follow the HTML visual rules in the authoring guide; do not generate JavaScript or network resources.
 11. Ensure every supplied reference is used by at least one Markdown or HTML `rvw-ref:` link or a
     Mermaid binding whose key is an actual supported node-like element in the body: a flowchart node,
     classDiagram class, sequenceDiagram participant/actor, stateDiagram-v2 state, erDiagram entity, or
@@ -149,14 +149,14 @@ Every `--stdin` command reads until EOF before parsing JSON. Supply the complete
 
 Pass exactly one JSON object and close stdin. This shell form closes it at the heredoc delimiter:
 
-```bash
+````bash
 rvw walkthrough publish --stdin --json <<'RVW_JSON'
 {
   "pullRequest": "https://github.com/owner/repo/pull/123",
   "sourceOid": "0123456789abcdef0123456789abcdef01234567",
   "title": "Request flow",
-  "body": "Start at [the handler](rvw-ref:handler), then inspect the [composition root](rvw-ref:composition).",
-  "diagramBindings": { "Handler": "handler" },
+  "body": "```html-preview\n<article>\n<p>Start at <a href=\"rvw-ref:handler\">the handler</a>.</p>\n<p>Then inspect the <a href=\"rvw-ref:composition\">composition root</a>.</p>\n</article>\n```",
+  "diagramBindings": {},
   "references": [
     {
       "id": "handler",
@@ -175,7 +175,7 @@ rvw walkthrough publish --stdin --json <<'RVW_JSON'
   ]
 }
 RVW_JSON
-```
+````
 
 Set the optional `authorLabel` to an accurate current Agent name when known; otherwise omit it.
 

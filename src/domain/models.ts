@@ -348,12 +348,21 @@ export interface DeletedWalkthrough {
   counts: WalkthroughDeleteCounts;
 }
 
+export interface HtmlCommentAnchor {
+  fenceStartLine: number;
+  path: number[];
+  startOffset?: number | undefined;
+  endPath?: number[] | undefined;
+  endOffset?: number | undefined;
+}
+
 export type CommentTarget =
   | { kind: "pull-request" }
   | {
       kind: "walkthrough";
       walkthroughId: string;
       walkthroughTitle: string;
+      htmlAnchor?: HtmlCommentAnchor;
       sourceDocumentHash: string | null;
       quotedText: string | null;
       startLine: number | null;

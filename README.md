@@ -182,3 +182,11 @@ PRの閲覧やコメントは引き続き利用できます。[操作と独自Sk
 - [アーキテクチャ設計・実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)
 - [コントリビューション](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)
 - [ライセンス (MIT)](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/LICENSE)
+
+### HTMLのウォークスルー
+
+新規作成用の`rvw-walkthrough` Skillは本文全体を静的HTML/CSSで作成します。既存のMarkdown・Mermaidの閲覧も引き続き利用できます。コードリンクは通常クリック、Cmd/Ctrl＋クリックで右ペインに開けます。
+
+文章をドラッグ選択するとコメントボタンが現れます。要素はホバーでコメントボタンを表示し、表ではセル・行・表全体を選べます。コメントボタンへのホバーまたはフォーカスで対象を枠表示します。モード切り替えは不要です。
+
+HTMLコメントは選択した文字範囲・要素を保存します。本文更新後は誤った位置への再配置を避けるためOutdatedとして残ります。既存の行コメントは従来の再配置規則を維持します。

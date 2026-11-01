@@ -174,12 +174,21 @@ Bindings apply across the whole Walkthrough: if multiple Mermaid fences reuse on
 match opens the same reference. Reuse an ID only when sharing that reference is intentional. Use
 distinct IDs such as `orderDb` and `analyticsDb` when similar elements should open different references.
 
-Use an `html-preview` fence only when spatial layout, an ELI5 visual hierarchy or metaphor, a UI mock,
-or a Before / After comparison materially lowers the reader's comprehension cost. The Walkthrough may
-consist mostly or entirely of one HTML preview when that is the clearest requested format; it remains a
-Markdown document.
+Use one full-document `html-preview` fence by default for new Walkthroughs. Write static HTML/CSS,
+with prose, tables, cards, and inline SVG where they help explain the subject. For new HTML documents,
+apply the diagram guidance as semantic HTML/CSS or inline SVG with nearby code links; Mermaid
+fences and diagram bindings remain available for existing Markdown documents. The fence is the
+compatible storage envelope; the reader sees the rendered HTML. Existing Markdown and Mermaid
+Walkthroughs remain supported. Preserve their format on updates unless conversion is requested.
 
 Keep HTML visuals static and self-contained:
+
+- Design for a narrow reading pane as well as a full-width view. Use readable body text (normally
+  14px or larger), responsive widths, modest padding, and the rvw theme variables for foregrounds,
+  backgrounds, borders, and links. Do not assume a white background.
+- Keep short table labels readable rather than breaking each character onto a separate line.
+  For genuinely wide tables, use a horizontally scrollable wrapper instead of shrinking the text.
+  Avoid fixed-width page layouts that force the entire explanation to scroll horizontally.
 
 - Author an HTML fragment only: do not include `<!doctype>`, `<html>`, `<head>`, or `<body>`.
   Put `<style>` directly inside the `html-preview` fence before the visual markup.
@@ -321,5 +330,5 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] At the endpoint, changing one condition lets the reader identify a likely divergence and code
       to inspect; a generic instruction to explore more does not suffice.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
-- [ ] Any HTML preview is static, network-free, readable in both themes, pretty-printed, and used only where it improves comprehension.
+- [ ] Any HTML preview is static, network-free, readable in both themes, pretty-printed, and presents the complete new Walkthrough.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

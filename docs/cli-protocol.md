@@ -1009,3 +1009,17 @@ Archive state belongs to the local database, is shared by its users and Agents, 
 sync, refresh, and reset. It only filters the list; content, comments, and direct access remain usable.
 New commits or comments never unarchive automatically. Bundled Skills do not make archive decisions;
 custom user Skills may inspect GitHub reviews and invoke these commands with the user's own rules.
+
+### HTML Walkthrough comment targets
+
+Walkthrough comment targets optionally accept `htmlAnchor` with `fenceStartLine` (the opening fence's
+1-based source line) and `path` (child-node indexes from the rendered `.rvw-preview-root`). Text
+selections additionally include `startOffset`, `endPath`, and `endOffset`, using DOM Range UTF-16
+coordinates. These paths describe rvw's sanitized and instrumented rendering, not the authored HTML
+source tree. Producers should normally create these comments through the viewer.
+
+Creation also requires `expectedDocumentHash`, the SHA-256 hex digest of the LF-normalized complete
+Walkthrough body. A stale hash or a source range outside the named HTML fence is rejected. The saved
+target includes `htmlAnchor` alongside its existing source lines, quoted source and document hash;
+`expectedDocumentHash` is only a write precondition. A body update makes precise HTML targets
+Outdated, keeping their threads. Legacy line-only targets retain quoted-line remapping.

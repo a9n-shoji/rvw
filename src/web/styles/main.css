@@ -2770,6 +2770,9 @@ diffs-container > [slot="header-metadata"] {
   font-size: 14px;
   line-height: 1.7;
 }
+.walkthrough-markdown:has(> .walkthrough-html-preview-shell:only-child) {
+  padding: 24px clamp(8px, 2vw, 24px) 100px;
+}
 .walkthrough-markdown > :first-child {
   margin-top: 0;
 }
@@ -2998,7 +3001,7 @@ diffs-container > [slot="header-metadata"] {
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.03em;
 }
@@ -3033,7 +3036,7 @@ diffs-container > [slot="header-metadata"] {
 }
 .walkthrough-html-comment-action {
   display: inline-flex;
-  min-height: 28px;
+  min-height: 32px;
   align-items: center;
   gap: 5px;
   padding: 4px 8px;
@@ -3041,7 +3044,37 @@ diffs-container > [slot="header-metadata"] {
   border-color: var(--accent);
   background: var(--panel);
   color: var(--accent);
-  font-size: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  width: max-content;
+}
+.walkthrough-html-target-options {
+  position: absolute;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  box-shadow: 0 3px 10px var(--shadow-medium);
+  white-space: nowrap;
+}
+.walkthrough-html-target-options button {
+  min-height: 28px;
+  min-width: 36px;
+  padding: 3px 7px;
+  font-size: 12px;
+  background: var(--panel);
+  color: var(--text);
+  border-color: transparent;
+}
+.walkthrough-html-target-options button:hover,
+.walkthrough-html-target-options button:focus-visible {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 .walkthrough-html-comment-action:hover {
   background: var(--accent-soft);

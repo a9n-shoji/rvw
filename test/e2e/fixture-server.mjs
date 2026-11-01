@@ -1817,6 +1817,12 @@ function fixtureCommentPlacement(comment, destination) {
     if (comment.target.startLine === null) {
       return { outdated: false, range: null, path: null };
     }
+    if (
+      comment.target.htmlAnchor &&
+      comment.target.sourceDocumentHash !== hashDocument(walkthrough.body)
+    ) {
+      return { outdated: true, range: null, path: null };
+    }
     const range =
       comment.target.sourceDocumentHash === hashDocument(walkthrough.body)
         ? { startLine: comment.target.startLine, endLine: comment.target.endLine }
@@ -2003,6 +2009,15 @@ app.get("/api/comments/:id/placement", (context) => {
 
 app.post("/api/comments", async (context) => {
   const input = await context.req.json();
+  if (input.target.kind === "walkthrough" && input.target.htmlAnchor) {
+    const current = activeWalkthroughs.find((item) => item.id === input.target.walkthroughId);
+    if (!current || input.target.expectedDocumentHash !== hashDocument(current.body)) {
+      return context.json(
+        { ok: false, error: { code: "INVALID_INPUT", message: "stale HTML selection" } },
+        400,
+      );
+    }
+  }
   const now = new Date().toISOString();
   const id = randomUUID();
   const target =

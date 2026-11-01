@@ -942,6 +942,23 @@ export function WalkthroughViewer({
           target: {
             kind: "walkthrough",
             walkthroughId: walkthrough.id,
+            ...(range?.htmlAnchor
+              ? {
+                  htmlAnchor: range.htmlAnchor,
+                  expectedDocumentHash: Array.from(
+                    new Uint8Array(
+                      await crypto.subtle.digest(
+                        "SHA-256",
+                        new TextEncoder().encode(
+                          (range.htmlSourceBody ?? walkthrough.body).replace(/\r\n?/g, "\n"),
+                        ),
+                      ),
+                    ),
+                  )
+                    .map((byte) => byte.toString(16).padStart(2, "0"))
+                    .join(""),
+                }
+              : {}),
             startLine: range?.startLine ?? null,
             endLine: range?.endLine ?? null,
           },
@@ -1008,14 +1025,17 @@ export function WalkthroughViewer({
     setDiagramRange(null);
     setLineComposerPlacement(null);
   }, []);
-  const openDiagramComposer = useCallback((range: MarkdownSourceRange): void => {
-    createCommentRef.current.reset();
-    setCommentBody("");
-    setComposerOpen(false);
-    setSelectedRange(null);
-    setDiagramRange(range);
-    setLineComposerPlacement("diagram");
-  }, []);
+  const openDiagramComposer = useCallback(
+    (range: MarkdownSourceRange): void => {
+      createCommentRef.current.reset();
+      setCommentBody("");
+      setComposerOpen(false);
+      setSelectedRange(null);
+      setDiagramRange(range.htmlAnchor ? { ...range, htmlSourceBody: walkthrough.body } : range);
+      setLineComposerPlacement("diagram");
+    },
+    [walkthrough.body],
+  );
   const submitDiagramComment = useCallback((range: MarkdownSourceRange, body: string): void => {
     createCommentRef.current.mutate({ range, body });
   }, []);

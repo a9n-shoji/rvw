@@ -1,3 +1,4 @@
+import { hashDocument } from "../../src/domain/pr-markdown.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -1214,6 +1215,79 @@ describe("RvwService commit workflow", () => {
     });
     expect(secondPage.comments.map(({ comment }) => comment.ref)).toEqual([unresolvedComment.ref]);
     expect(secondPage.page.hasMore).toBe(false);
+  });
+
+  it("persists exact HTML targets and rejects stale selections without remapping changed bodies", async () => {
+    const { repository, firstHead, service, database, dbFile } = setup("rvw-html-anchor-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const body =
+      '```html-preview\n<table><tr><td>alpha</td><td>beta</td></tr></table>\n<a href="rvw-ref:source">Source</a>\n```';
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "HTML",
+      body,
+      diagramBindings: {},
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    const target = {
+      kind: "walkthrough" as const,
+      walkthroughId: walkthrough.id,
+      startLine: 2,
+      endLine: 2,
+      expectedDocumentHash: hashDocument(body),
+      htmlAnchor: { fenceStartLine: 1, path: [0, 0, 0, 1] },
+    };
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target,
+      body: "second cell",
+    });
+    expect(database.getComment(comment.id)?.target).toMatchObject({
+      htmlAnchor: target.htmlAnchor,
+    });
+    const reopened = new RvwDatabase({ filePath: dbFile, migrationsDirectory: "./migrations" });
+    try {
+      expect(reopened.getComment(comment.id)?.target).toEqual(comment.target);
+    } finally {
+      reopened.close();
+    }
+    expect(service.placeWalkthroughComment(comment)).toMatchObject({
+      outdated: false,
+      range: { startLine: 2, endLine: 2 },
+    });
+    await expect(
+      service.createComment({
+        pullRequestId: opened.pullRequest.id,
+        target: { ...target, htmlAnchor: { ...target.htmlAnchor, fenceStartLine: 99 } },
+        body: "invalid fence",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await service.updateWalkthrough(walkthrough.ref, {
+      sourceOid: firstHead,
+      title: "HTML",
+      body: body.replace("alpha", "changed"),
+      diagramBindings: {},
+      references: walkthrough.references,
+    });
+    expect(service.placeWalkthroughComment(comment)).toEqual({
+      outdated: true,
+      range: null,
+      path: null,
+    });
+    await expect(
+      service.createComment({ pullRequestId: opened.pullRequest.id, target, body: "stale" }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(database.getComment(comment.id)?.posts[0]?.body).toBe("second cell");
   });
 
   it("publishes and replaces commit-fixed walkthroughs in place while preserving whole-document comments", async () => {
