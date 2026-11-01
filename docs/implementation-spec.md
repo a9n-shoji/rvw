@@ -1247,7 +1247,7 @@ rvw comment resolve <COMMENT_URI> --json
 rvw comment reopen <COMMENT_URI> --json
 ```
 
-current protocol versionは6とし、最初のpublic compatibility contractはversion 1である。公開前に
+current protocol versionは7とし、最初のpublic compatibility contractはversion 1である。公開前に
 使用した内部version番号は互換性保証の対象外とする。public release後は番号を再利用せず、breaking
 changeのたびに単調増加させる。capabilityは次を含む。
 
@@ -1257,6 +1257,7 @@ comment.create
 comment.list
 comment.watch
 comment.watchOwnership
+comment.changePermission
 comment.read
 comment.reply
 comment.edit
@@ -1420,11 +1421,18 @@ stateのcursorを自動解決してRFC 7464 frameをatomicにingestする。driv
 LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthread contextを一行JSONで通知する。
 親taskは起動前にsubagent slot数を予約する。`max-in-flight`は8を目標とし、runtimeが8枠を保証できれば8、
 それ未満なら保証できる最大の正数、複数枠を保証できなければ1を指定し、予約数を超えない。driverはlimit
-未満だけauto-ackし、task stateを短周期で再確認する。investigate-and-replyだけを許可したtaskでは、同一PRの
-active lease中に到着したeventも別batchとしてcapacity内でauto-ackし、同じPRまたはrepositoryをread-onlyで
-並列調査できる。batchごとのstatus postを使うため最終reply editは衝突しない。fix-and-pushを許可したtaskでは
-同一PRの後続eventを先行lease解放後まで待たせ、repository write reservationにより異なるPR間のwriterも直列化
-する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
+未満だけauto-ackし、task stateを短周期で再確認する。投稿・返信ごとの`allowChanges`（既定false）で
+`investigate`と`change`のlaneに分ける。これは変更の許可であり、変更指示ではない。具体的な行動は本文の依頼から
+判断し、チェック済みでも回答だけで満たせる依頼には変更しない。uncheckedな投稿は確認・結果返信以外のコード、
+GitHub、Artifact更新を許可しない。rootの許可を返信へ継承しない。UIだけが許可を設定・変更でき、Agent CLIは
+許可を付与できない。permission変更は同じpost IDの新規event（kind=`permission-changed`）として記録する。
+オンは本文の再評価をqueueし、オフは未着手の変更を止める。各write phase直前に対象postを再取得し、取り消し後の
+変更を止める。完了済み変更は自動で巻き戻さない。comment stateは引き続きunresolved/resolvedだけとする。
+調査は同一PRのchange leaseを待たず、immutable commitを読み別workerへ渡す。2枠以上なら調査用に1枠を確保する。
+1枠のruntimeでは並行調査できないことを明示する。changeはPRごとに1 active leaseとし、後続依頼を同じPR担当へ
+lease境界で渡す。専用worktreeをPRごとに使い、別PRは並行できる。shared writer keyはhead repository + encoded
+head branchとし、同じbranchを共有するPRは直列化する。旧repository単位のreservationとも競合させる。
+retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。task-private stateとは別に、
 rvw databaseはlogical watch task IDと単調増加generationをshared authorityとして保持する。new taskの明示的
 activationだけがprevious generationをsupersedeし、resumeは保存済みgenerationをverifyするだけで再取得しない。
@@ -1432,15 +1440,15 @@ activationは同じtask IDに冪等で、generation導入前のlegacy stateはfa
 pending claim前にauthorityを検証する。repository write reservationはrvw database側でactive task/generationの
 検証とshared write key取得を同じSQLite transactionにまとめ、task-private DBの`write_key`はrecovery用mirrorとする。
 旧generationが取得済みのreservationはactivationで削除せず、exact task/generation/leaseによるcomplete、fail、recover
-まで新generationも同じrepositoryを取得できない。ack reply/editも同じSQLite transaction内でfenceと
+まで新generationも同じwrite keyを取得できない。ack reply/editも同じSQLite transaction内でfenceと
 unresolved状態を確認する。all-skipped batchはdispatch対象のacknowledged batchを出さない。rvwはAgentや
 subagentを起動せず、task-private queue、lease、retry stateも保持しない。supersessionは新規claim、
 acknowledgement、delegation、write reservationを停止するが、activation前にdelegate済みでwrite reservationも
 取得済みのleaseに対するdistributed cancellationではない。そのworkはsafe boundaryまで進められる。
-task起動時に明示された場合だけ、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
-OIDとpush先が一致するPRをfix-and-push候補にできる。他人、不明、不一致はinvestigate-and-replyとする。
+対象postの変更許可があり、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
+OIDとpush先が一致する場合だけコード/GitHubを変更できる。他人・不明なPRでは、明示許可されたlocal Artifact更新と調査・返信のみを扱う。
 親taskはacknowledge済みleaseをbatchの大きさ、mode、変更有無にかかわらず同じscheduling turn内で一つの
-fresh subagentへ必ず委譲し、直接調査・実装しない。subagentを速やかに起動できない場合はleaseをretryable
+subagentへ必ず委譲し、直接調査・実装しない。changeは同じPR担当を再利用し、investigateは独立workerへ渡す。subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagent結果は、最終bodyに加えて`relatedCommitOid`、完全な
 `references`配列、`pushStatus`を持つ。
 code変更がない調査結果でも、具体的なcode上の結論を支える利用可能なPR commitとtyped referenceを返せる。
@@ -1652,7 +1660,7 @@ runtimeを持てる。通常の`rvw`と`rvw open`はこのsocketの内部`viewer
 `runtime.stop`操作で現在のdatabaseのruntimeだけを停止する。これらの内部操作は公開Agent capabilityにしない。
 内部socket protocolは8とし、旧browser管理runtimeとの混在を拒否する。一覧targetでは`list: true`を送り、
 responseの`pullRequestId`は`null`にする。PR targetでは従来どおりreferenceを解決する。
-`viewer.open`はviewer leaseやstartup reservationを作らない。公開CLI protocolは6のまま変更しない。
+`viewer.open`はviewer leaseやstartup reservationを作らない。現在は投稿ごとの変更許可に合わせて公開CLI protocol 7、内部socket protocol 9を要求する。
 Agent CLIはDBを直接開く前に
 socketへ同じapplication service操作を依頼する。`RVW_AGENT_SOCKET_PATH`未指定時はrequest送信前の接続失敗
 だけ従来のdirect CLIへfallbackできる。明示時はそのsocketを必須とし、接続失敗またはDB不一致を
@@ -2492,21 +2500,18 @@ watcher起動時に実行中Agentを正確に識別できる場合は、その�
 `authorLabel`へ保存し、最終結果への編集後も維持する。識別できない場合だけ省略を許す。
 同じthreadへの後続replyは新しいbatchで新しいstatus postを作り、以前の最終回答を保持する。
 親taskはintake、dispatch、task state、最終replyだけを所有し、batchの大きさ、mode、変更有無にかかわらず、
-acknowledge済みleaseを同じscheduling turn内で一つのfresh subagentへ必ず委譲する。親taskによる直接調査・
+acknowledge済みleaseを同じscheduling turn内で一つのsubagentへ必ず委譲する。changeはPRごとの担当を再利用し、investigateは独立workerを使う。親taskによる直接調査・
 実装と、複数leaseの後回しの一括委譲を認めない。親taskは起動前にsubagent slot数を予約し、driverの
 `max-in-flight`は8を目標に、8枠を保証できれば8、それ未満なら保証できる最大の正数、複数枠を保証できなければ
 1を指定する。予約数を超えてはならない。driverはlimit未満だけauto-ackし、task stateを短周期で再確認する。
-investigate-and-replyだけを許可したtaskでは同一PRのactive lease中に到着したeventも別leaseとして並列委譲し、
-fix-and-pushを許可したtaskでは同一PRの後続eventを先行lease解放後まで待たせ、repository writerもwrite
-reservationで直列化する。retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たず
-auto-ackする。subagentを速やかに起動できない場合はleaseをretryable
+投稿ごとの変更許可でlaneを分け、未許可の調査はchange leaseに影響されず並列委譲する。changeはPRごとに
+直列化し、別PRの独立worktreeでは並行する。実際のhead branchが同じ場合と旧repository-wide reservationが
+残る場合にはshared reservationで排他する。詳細は7.3を正本とする。retryable failureは`nextAttemptAt`到達後にauto-ackする。subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagentごとに一leaseだけを割り当て、絶対pathのatomic JSON fileを
 唯一の最終結果回収経路にする。subagentの最終結果はbody、
 `relatedCommitOid`、完全なtyped reference配列、push状態を持ち、具体的なcode上の結論、実装、testには
-navigation価値のあるexact rangeを既定で付ける。task起動時の
-明示許可がある場合だけ、live authorが起動時
-GitHub loginと一致し、head repository/branch/OIDとpush先も一致するPRをfix-and-pushにできる。他人または
-不明なPRはinvestigate-and-replyとする。rvw自身はAgent sessionやtask stateを管理しない。
+navigation価値のあるexact rangeを既定で付ける。対象postの変更許可とlive author、起動時GitHub login、
+head repository/branch/OID、push先の一致がある場合だけコード/GitHubを変更できる。rvw自身はAgent sessionやtask stateを管理しない。
 
 Phase 2ではnpm account、scope、2FA、LICENSE、README、CHANGELOG、SECURITY、dependency license、
 macOS/Linux/Windows smokeを確認してから公開する。通常CIはregistryへ書き込まない。release workflowは

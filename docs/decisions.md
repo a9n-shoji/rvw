@@ -3986,3 +3986,27 @@ with bundled file icons, source location labels and focus affordances. Ordinary 
 layout remain authored. Decorate attributes and pseudo-elements only in the parent-controlled load path so
 selection comments and Pane Find keep their source mapping. No authored scripts or extra network
 resources are enabled.
+
+## 2026-11-01: Per-post change permission and PR-associated watch workers
+
+Replace task-wide mode selection with a human-controlled `allowChanges` attribute on each post,
+including replies. The checkbox grants scope; it never expresses edit intent. Agent commands cannot
+set it. Keep comment resolution binary and independent. Record permission changes in the durable
+post event log (preserving old sequences), re-read live permission before writes, and never roll back
+already completed work merely because permission was revoked.
+
+Split task-local batching into investigation and change-permitted lanes. Serialize the latter by PR
+and retain the same PR worker across completed leases. Independent investigations read immutable
+commits and reserve one runtime slot whenever at least two slots exist. Different PRs use separate
+worktrees; shared head branches still share a writer reservation. Branch key normalization preserves
+branch case and URL-encodes slash-containing names. Older repository-wide reservations block all
+branches until released, including across watcher generations. Legacy task states remain readable for recovery and releasing reservations but cannot claim new work.
+New watcher startup uses per-post permission; the removed mode option is rejected.
+
+This supersedes the former task-wide same-PR blocking, repository-wide writer serialization, and
+fresh-worker requirement for every change lease. rvw still never launches or manages an Agent.
+
+Advance the public protocol to 7 and the private socket protocol to 9. Every bundled Skill requires
+7 so an older watcher cannot silently interpret task-wide authorization as per-post permission.
+Forward migration defaults old posts to false and preserves event sequences; install the updated
+Skills and restart an old runtime before using the new workflow.

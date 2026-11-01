@@ -237,8 +237,9 @@ function releaseDriverLock(lock) {
   unlinkIfOwned(lock.path, lock.identity);
 }
 
-async function dispatchAutoAck(state, pullRequest, authorLabel) {
+async function dispatchAutoAck(state, pullRequest, authorLabel, lane) {
   const args = ["--state", state, "--pull-request", pullRequest];
+  if (lane) args.push("--lane", lane);
   if (authorLabel !== null) args.push("--author-label", authorLabel);
   const result = await runNodeScript(autoAckScript, args);
   if (result.code !== 0 || !result.json?.ok) {
@@ -267,10 +268,18 @@ async function dispatchPendingAutoAcks(state, maxInFlight, authorLabel) {
     throw new DriverError("watch-state list returned invalid work capacity", EXIT_INGEST, work);
   }
   let available = Math.max(0, maxInFlight - inFlight);
-  for (const batch of work.pending) {
+  let changes = Number(work.changeInFlight ?? 0);
+  // Keep one guaranteed slot for investigation whenever there is parallel capacity.
+  const changeLimit = Math.max(1, maxInFlight - 1);
+  const pending = [...work.pending].sort(
+    (a, b) => Number(a.lane === "change") - Number(b.lane === "change"),
+  );
+  for (const batch of pending) {
     if (available === 0) break;
-    await dispatchAutoAck(state, batch.pullRequest, authorLabel);
+    if (batch.lane === "change" && changes >= changeLimit) continue;
+    await dispatchAutoAck(state, batch.pullRequest, authorLabel, batch.lane);
     available -= 1;
+    if (batch.lane === "change") changes += 1;
   }
 }
 

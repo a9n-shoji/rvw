@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -75,7 +76,145 @@ const github = {
   approvalCount: 2,
 };
 
+// Build pre-permission rows with the historical schema, not today's create API.
+function legacyComment(
+  filePath: string,
+  input: {
+    pullRequestId: string;
+    createdHeadOid: string;
+    body: string;
+    target: { kind: string; walkthroughId?: string; [key: string]: unknown };
+  },
+) {
+  const raw = new DatabaseSync(filePath);
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  raw
+    .prepare(
+      "INSERT INTO comments(id, pull_request_id, created_head_oid, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(id, input.pullRequestId, input.createdHeadOid, now, now);
+  raw
+    .prepare(
+      "INSERT INTO comment_targets(comment_id, target_kind, walkthrough_id) VALUES (?, ?, ?)",
+    )
+    .run(
+      id,
+      input.target.kind === "walkthrough" ? "walkthrough" : "pull_request",
+      input.target.walkthroughId ?? null,
+    );
+  raw
+    .prepare(
+      "INSERT INTO comment_posts(id, comment_id, body, is_root, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)",
+    )
+    .run(randomUUID(), id, input.body, now, now);
+  raw.close();
+  return { id };
+}
+
 describe("RvwDatabase", () => {
+  it("migrates old posts without granting permission and preserves durable event positions", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-permission-migration-"));
+    const filePath = path.join(directory, "rvw.db");
+    const migrationsDirectory = path.join(directory, "migrations");
+    mkdirSync(migrationsDirectory);
+    for (const file of readdirSync("migrations").filter(
+      (name) => name.endsWith(".sql") && name < "027",
+    )) {
+      writeFileSync(
+        path.join(migrationsDirectory, file),
+        readFileSync(path.join("migrations", file)),
+      );
+    }
+    const old = new RvwDatabase({ filePath, migrationsDirectory });
+    const pr = old.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const comment = legacyComment(filePath, {
+      pullRequestId: pr.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Existing request",
+    });
+    old.close();
+    const raw = new DatabaseSync(filePath);
+    const post = raw
+      .prepare("SELECT id FROM comment_posts WHERE comment_id = ?")
+      .get(comment.id) as { id: string };
+    raw
+      .prepare(
+        "INSERT INTO comment_post_events(sequence, post_id, comment_ref, pull_request_url, created_at) VALUES (42, ?, ?, ?, ?)",
+      )
+      .run(post.id, `rvw://comment/${comment.id}`, pr.url, new Date().toISOString());
+    raw.close();
+    const upgraded = new RvwDatabase({ filePath, migrationsDirectory: "./migrations" });
+    expect(upgraded.getComment(comment.id)?.posts[0]?.allowChanges).toBe(false);
+    expect(upgraded.getLatestCommentPostEventSequence()).toBe(42);
+    expect(upgraded.listCommentPostEvents(41, 100)).toMatchObject([
+      { sequence: 42, allowChanges: false, kind: "posted" },
+    ]);
+    upgraded.setCommentPostPermission(comment.id, post.id, true);
+    expect(upgraded.listCommentPostEvents(42, 100)).toMatchObject([
+      { sequence: 43, postId: post.id, kind: "permission-changed", allowChanges: true },
+    ]);
+    upgraded.close();
+  });
+
+  it("persists per-post permission changes as cursor events without changing resolution", () => {
+    const db = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pr = db.upsertPullRequest(
+      github,
+      { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
+      "c".repeat(40),
+    );
+    const comment = db.createComment({
+      pullRequestId: pr.id,
+      createdHeadOid: github.headOid,
+      target: { kind: "pull-request" },
+      body: "Why is this needed?",
+      allowChanges: true,
+    });
+    const root = comment.posts[0]!;
+    expect(root.allowChanges).toBe(true);
+    const reply = db.insertReply(comment.id, { body: "Explain this too" });
+    expect(reply.allowChanges).toBe(false);
+    const cursor = db.getLatestCommentPostEventSequence();
+    db.setCommentPostPermission(comment.id, root.id, false);
+    db.setCommentPostPermission(comment.id, root.id, false);
+    db.setCommentPostPermission(comment.id, reply.id, true);
+    expect(db.listCommentPostEvents(cursor, 100)).toMatchObject([
+      { postId: root.id, kind: "permission-changed", allowChanges: false },
+      { postId: reply.id, kind: "permission-changed", allowChanges: true },
+    ]);
+    expect(db.getComment(comment.id)).toMatchObject({
+      resolvedAt: null,
+      posts: [{ allowChanges: false, body: "Why is this needed?" }, { allowChanges: true }],
+    });
+    db.close();
+  });
+
+  it("allows independent head branches while fencing shared branches and legacy repository leases", () => {
+    const db = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const task = randomUUID();
+    db.activateCommentWatchTask(task);
+    const first = randomUUID();
+    db.reserveCommentWatchWriter(task, 1, first, "Acme/Repo#Feature%2FA");
+    db.reserveCommentWatchWriter(task, 1, randomUUID(), "acme/repo#feature%2Fa");
+    expect(() =>
+      db.reserveCommentWatchWriter(task, 1, randomUUID(), "acme/repo#Feature%2fA"),
+    ).toThrow("別のwatch worker");
+    expect(() => db.reserveCommentWatchWriter(task, 1, randomUUID(), "acme/repo")).toThrow(
+      "別のwatch worker",
+    );
+    db.reserveCommentWatchWriter(task, 1, randomUUID(), "acme/other");
+    expect(() => db.reserveCommentWatchWriter(task, 1, randomUUID(), "acme/other#feature")).toThrow(
+      "別のwatch worker",
+    );
+    db.close();
+  });
+
   it("upgrades saved v5 Regions without changing graph identity or other review tables", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-remove-regions-"));
     const filePath = path.join(directory, "rvw.db");
@@ -92,7 +231,7 @@ describe("RvwDatabase", () => {
       { localRepositoryPath: "/repo", gitCommonDir: "/repo/.git" },
       "c".repeat(40),
     );
-    old.createComment({
+    legacyComment(filePath, {
       pullRequestId: pr.id,
       createdHeadOid: github.headOid,
       target: { kind: "pull-request" },
@@ -177,7 +316,12 @@ describe("RvwDatabase", () => {
       .map(({ name }) => name)
       .filter(
         (name) =>
-          !["schema_migrations", "structures", "structure_retired_region_ids"].includes(name),
+          ![
+            "schema_migrations",
+            "sqlite_sequence",
+            "structures",
+            "structure_retired_region_ids",
+          ].includes(name),
       );
     const before = tableNames.map((name) => raw.prepare(`SELECT * FROM "${name}"`).all());
     raw.close();
@@ -191,6 +335,12 @@ describe("RvwDatabase", () => {
           .prepare(`SELECT * FROM "${name}"`)
           .all()
           .map((row) => {
+            if (name === "comment_posts") {
+              expect(row.allow_changes).toBe(0);
+              const { allow_changes: _permission, ...legacyRow } = row;
+              void _permission;
+              return legacyRow;
+            }
             if (name !== "comment_targets") return row;
             expect(row.html_anchor).toBeNull();
             const legacyRow = { ...row };
@@ -1265,7 +1415,7 @@ describe("RvwDatabase", () => {
         },
       ],
     });
-    const wholeComment = legacy.createComment({
+    const wholeComment = legacyComment(filePath, {
       pullRequestId: pullRequest.id,
       createdHeadOid: github.headOid,
       target: {

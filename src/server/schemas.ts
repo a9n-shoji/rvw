@@ -73,6 +73,7 @@ export const pullRequestListQuerySchema = z.object({
 
 export const createCommentSchema = z
   .object({
+    allowChanges: z.boolean().optional(),
     pullRequestId: z.uuid(),
     target: commentTargetSchema,
     body: z
@@ -95,6 +96,7 @@ export const createCommentSchema = z
 
 export const replySchema = z
   .object({
+    allowChanges: z.boolean().optional(),
     body: z
       .string()
       .min(1)

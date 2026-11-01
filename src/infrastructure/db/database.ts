@@ -414,6 +414,7 @@ function mapCodeReference(row: DbRow): CodeReference {
 
 function mapCommentPost(row: DbRow, references: CodeReference[] = []): CommentPost {
   return {
+    allowChanges: numberValue(row, "allow_changes") === 1,
     id: stringValue(row, "id"),
     commentId: stringValue(row, "comment_id"),
     body: stringValue(row, "body"),
@@ -564,6 +565,7 @@ export function secureNewPath(
 }
 
 export interface NewCommentInput {
+  allowChanges?: boolean;
   pullRequestId: string;
   createdHeadOid: string;
   target: CommentTarget;
@@ -994,10 +996,13 @@ export class RvwDatabase {
     leaseId: string,
     writeKey: string,
   ): CommentWatchWriteReservation & { status: "reserved" | "existing" } {
-    if (!/^[^/\s]+\/[^/\s]+$/.test(writeKey)) {
+    if (!/^[^/#\s]+\/[^/#\s]+(?:#[^/#\s]+)?$/.test(writeKey)) {
       throw new RvwError("INVALID_INPUT", "writer reservation keyはowner/repository形式です。");
     }
-    const canonicalWriteKey = writeKey.toLowerCase();
+    const [repositoryKey, branchKey] = writeKey.split("#");
+    const canonicalWriteKey =
+      repositoryKey!.toLowerCase() +
+      (branchKey ? `#${encodeURIComponent(decodeURIComponent(branchKey))}` : "");
     return this.immediateTransaction(() => {
       const authority = this.assertCommentWatchTaskAuthority(taskId, generation);
       const existingLease = this.database
@@ -1024,9 +1029,16 @@ export class RvwDatabase {
       const existingWriter = this.database
         .prepare(
           `SELECT lease_id, task_id, generation
-          FROM comment_watch_write_reservations WHERE write_key = ?`,
+          FROM comment_watch_write_reservations WHERE write_key = ? OR write_key = ?
+            OR (? = 1 AND substr(write_key, 1, length(?) + 1) = ? || '#')`,
         )
-        .get(canonicalWriteKey) as DbRow | undefined;
+        .get(
+          canonicalWriteKey,
+          repositoryKey!.toLowerCase(),
+          branchKey ? 0 : 1,
+          repositoryKey!.toLowerCase(),
+          repositoryKey!.toLowerCase(),
+        ) as DbRow | undefined;
       if (existingWriter) {
         throw new RvwError(
           "WATCH_WRITE_RESERVED",
@@ -1130,6 +1142,8 @@ export class RvwDatabase {
       commentRef: stringValue(row, "comment_ref"),
       pullRequestUrl: stringValue(row, "pull_request_url"),
       deleted: numberValue(row, "deleted") === 1,
+      allowChanges: numberValue(row, "allow_changes") === 1,
+      kind: stringValue(row, "kind") as CommentPostEvent["kind"],
     }));
   }
 
@@ -2174,7 +2188,7 @@ export class RvwDatabase {
       this.insertCommentTarget(id, input.target);
       this.database
         .prepare(
-          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, last_modified_by, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)",
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, last_modified_by, allow_changes, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
         )
         .run(
           postId,
@@ -2183,6 +2197,7 @@ export class RvwDatabase {
           input.relatedCommitOid ?? null,
           input.authorLabel ?? null,
           input.lastModifiedBy ?? null,
+          input.allowChanges ? 1 : 0,
           now,
           now,
         );
@@ -2190,10 +2205,10 @@ export class RvwDatabase {
       this.database
         .prepare(
           `INSERT INTO comment_post_events(
-            post_id, comment_ref, pull_request_url, created_at
-          ) VALUES (?, ?, ?, ?)`,
+            post_id, comment_ref, pull_request_url, created_at, allow_changes
+          ) VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(postId, formatCommentUri(id), pullRequest.url, now);
+        .run(postId, formatCommentUri(id), pullRequest.url, now, input.allowChanges ? 1 : 0);
       this.incrementDomainRevisions(["comments"]);
     });
     const comment = this.getComment(id);
@@ -2440,7 +2455,7 @@ export class RvwDatabase {
         .prepare(
           `SELECT c.*, t.*,
             w.title AS walkthrough_title,
-            root.id AS root_id, root.body AS root_body,
+            root.id AS root_id, root.body AS root_body, root.allow_changes AS root_allow_changes,
             root.related_commit_oid AS root_related_commit_oid,
             root.author_label AS root_author_label,
             root.last_modified_by AS root_last_modified_by, root.created_at AS root_created_at,
@@ -2463,6 +2478,7 @@ export class RvwDatabase {
           id: stringValue(row, "root_id"),
           commentId: comment.id,
           body: stringValue(row, "root_body"),
+          allowChanges: numberValue(row, "root_allow_changes") === 1,
           relatedCommitOid: nullableString(row, "root_related_commit_oid"),
           references: [],
           authorLabel: nullableString(row, "root_author_label"),
@@ -2500,6 +2516,7 @@ export class RvwDatabase {
     commentId: string,
     input: {
       body: string;
+      allowChanges?: boolean;
       relatedCommitOid?: string | null;
       authorLabel?: string | null;
       lastModifiedBy?: CommentPostModifier;
@@ -2539,6 +2556,7 @@ export class RvwDatabase {
             hashIdempotencyKey(
               JSON.stringify({
                 operation: "comment.reply",
+                ...(input.allowChanges ? { allowChanges: true } : {}),
                 commentId,
                 body: input.body,
                 relatedCommitOid,
@@ -2574,7 +2592,7 @@ export class RvwDatabase {
       const now = new Date().toISOString();
       this.database
         .prepare(
-          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, last_modified_by, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)",
+          "INSERT INTO comment_posts(id, comment_id, body, related_commit_oid, author_label, last_modified_by, allow_changes, is_root, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
         )
         .run(
           id,
@@ -2583,6 +2601,7 @@ export class RvwDatabase {
           relatedCommitOid,
           authorLabel,
           input.lastModifiedBy ?? null,
+          input.allowChanges ? 1 : 0,
           now,
           now,
         );
@@ -2590,10 +2609,10 @@ export class RvwDatabase {
       this.database
         .prepare(
           `INSERT INTO comment_post_events(
-            post_id, comment_ref, pull_request_url, created_at
-          ) VALUES (?, ?, ?, ?)`,
+            post_id, comment_ref, pull_request_url, created_at, allow_changes
+          ) VALUES (?, ?, ?, ?, ?)`,
         )
-        .run(id, comment.ref, pullRequest.url, now);
+        .run(id, comment.ref, pullRequest.url, now, input.allowChanges ? 1 : 0);
       if (idempotencyKeyHash !== null && idempotencyRequestHash !== null) {
         this.database
           .prepare(
@@ -2607,6 +2626,7 @@ export class RvwDatabase {
         id,
         commentId,
         body: input.body,
+        allowChanges: input.allowChanges ?? false,
         relatedCommitOid,
         references: input.references ?? [],
         authorLabel,
@@ -2620,6 +2640,37 @@ export class RvwDatabase {
     else write();
     if (!result) throw new RvwError("DATABASE_ERROR", "返信結果を読み出せません。");
     return result;
+  }
+
+  setCommentPostPermission(
+    commentId: string,
+    postId: string,
+    allowChanges: boolean,
+  ): ReviewComment {
+    this.immediateTransaction(() => {
+      const post = this.getCommentPost(postId);
+      const comment = this.getComment(commentId);
+      if (!post || post.commentId !== commentId || !comment) {
+        throw new RvwError("COMMENT_POST_NOT_FOUND", "コメント投稿が見つかりません。", {
+          status: 404,
+        });
+      }
+      if (post.allowChanges === allowChanges) return;
+      const now = new Date().toISOString();
+      this.database
+        .prepare("UPDATE comment_posts SET allow_changes = ?, updated_at = ? WHERE id = ?")
+        .run(allowChanges ? 1 : 0, now, postId);
+      this.database.prepare("UPDATE comments SET updated_at = ? WHERE id = ?").run(now, commentId);
+      const pr = this.getPullRequest(comment.pullRequestId)!;
+      this.database
+        .prepare(
+          `INSERT INTO comment_post_events(post_id, comment_ref, pull_request_url, created_at, allow_changes, kind)
+        VALUES (?, ?, ?, ?, ?, 'permission-changed')`,
+        )
+        .run(postId, comment.ref, pr.url, now, allowChanges ? 1 : 0);
+      this.incrementDomainRevisions(["comments"]);
+    });
+    return this.getComment(commentId)!;
   }
 
   updateCommentPost(

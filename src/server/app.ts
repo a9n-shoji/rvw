@@ -545,6 +545,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
           pullRequestId: input.pullRequestId,
           target: input.target,
           body: input.body,
+          allowChanges: input.allowChanges ?? false,
           ...(input.relatedCommitOid === undefined
             ? {}
             : { relatedCommitOid: input.relatedCommitOid }),
@@ -562,6 +563,7 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     const commentId = context.req.param("id");
     const post = await service.replyToComment(commentId, {
       body: input.body,
+      allowChanges: input.allowChanges ?? false,
       ...(input.relatedCommitOid === undefined ? {} : { relatedCommitOid: input.relatedCommitOid }),
       ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
       lastModifiedBy: "human",
@@ -575,6 +577,19 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       },
       201,
     );
+  });
+
+  app.patch("/api/comments/:id/posts/:postId/permission", async (context) => {
+    const input = z
+      .object({ allowChanges: z.boolean() })
+      .strict()
+      .parse(await context.req.json());
+    const comment = service.database.setCommentPostPermission(
+      context.req.param("id"),
+      context.req.param("postId"),
+      input.allowChanges,
+    );
+    return context.json({ ok: true, comment });
   });
 
   app.patch("/api/comments/:id/posts/:postId", async (context) => {

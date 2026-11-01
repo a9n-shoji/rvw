@@ -197,6 +197,7 @@ async function main() {
     const authority = await runState(state, "verify");
     const watchTask = { taskId: authority.taskId, generation: authority.generation };
     const claimArgs = ["--pull-request", pullRequest];
+    if (options.lane) claimArgs.push("--lane", options.lane);
     if (options["write-key"]) claimArgs.push("--write-key", options["write-key"]);
     if (authorLabel === null) claimArgs.push("--no-author-label");
     else claimArgs.push("--author-label", authorLabel);
@@ -208,6 +209,46 @@ async function main() {
     );
     const operations = [];
     for (let index = 0; index < claimed.operations.length; index += 1) {
+      const operation = claimed.operations[index];
+      const thread = threadResults[index];
+      if (
+        claimed.lane === "change" &&
+        successfulJson(thread) &&
+        !claimed.events.some(
+          (event) =>
+            event.commentRef === operation.commentRef &&
+            thread.json.comment.posts.some(
+              (post) => post.id === event.postId && post.allowChanges === true,
+            ),
+        )
+      ) {
+        if (operation.statusPostId && !thread.json.comment.resolved) {
+          const stopped = await runRvw(
+            [
+              "comment",
+              "edit",
+              operation.commentRef,
+              "--post",
+              operation.statusPostId,
+              "--stdin",
+              "--json",
+            ],
+            {
+              input: {
+                body: "📝 調査結果\n変更許可が取り消されたため、この変更作業を停止しました。",
+                relatedCommitOid: null,
+                references: [],
+                watchTask,
+              },
+            },
+          );
+          if (!successfulJson(stopped)) fail("Cannot finalize revoked change acknowledgement");
+        }
+        operations.push(
+          await skipOperation(state, claimed.leaseId, operation, "permission-revoked", thread.json),
+        );
+        continue;
+      }
       operations.push(
         await acknowledgeOperation(
           state,
@@ -253,6 +294,7 @@ async function main() {
         pullRequest: claimed.pullRequest,
         attempts: claimed.attempts,
         writeKey: claimed.writeKey,
+        lane: claimed.lane,
         events: claimed.events.filter((event) => actionableCommentRefs.has(event.commentRef)),
         operations: actionableOperations,
         skippedOperations,

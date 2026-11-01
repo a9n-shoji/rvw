@@ -191,6 +191,28 @@ function tableExists(database, tableName) {
 }
 
 function migrateStateSchema(database) {
+  transaction(database, () => {
+    for (const table of ["events", "batches"]) {
+      if (
+        !database
+          .prepare(`PRAGMA table_info(${table})`)
+          .all()
+          .some((column) => column.name === "lane")
+      ) {
+        database.exec(`ALTER TABLE ${table} ADD COLUMN lane TEXT NOT NULL DEFAULT 'investigate'`);
+      }
+    }
+  });
+  transaction(database, () => {
+    if (
+      !database
+        .prepare("PRAGMA table_info(events)")
+        .all()
+        .some((column) => column.name === "event_kind")
+    ) {
+      database.exec("ALTER TABLE events ADD COLUMN event_kind TEXT NOT NULL DEFAULT 'posted'");
+    }
+  });
   const operationColumns = database.prepare("PRAGMA table_info(operations)").all();
   if (
     operationColumns.some((column) => column.name === "post_id") &&
@@ -319,10 +341,9 @@ function quarantinedBatches(database) {
 }
 
 function initialize(database, options) {
-  const ownMode = options["own-mode"] ?? "investigate-and-reply";
-  if (ownMode !== "investigate-and-reply" && ownMode !== "fix-and-push") {
-    fail("--own-mode must be investigate-and-reply or fix-and-push");
-  }
+  if (options["own-mode"] !== undefined)
+    fail("Task modes were removed; use each post's change permission");
+  const ownMode = "per-comment";
   const expectedLogin = options["expected-login"] ?? "";
   return transaction(database, () => {
     const existingTaskId = getMeta(database, "task_id");
@@ -375,6 +396,7 @@ function rvwCommandFailure(command, result) {
 }
 
 async function activateOwnership(database) {
+  assertPermissionPolicy(database);
   const taskId = getMeta(database, "task_id");
   if (!taskId) fail("State database is not initialized");
   if (getMeta(database, "watch_ownership_schema") !== "1") {
@@ -414,6 +436,7 @@ async function activateOwnership(database) {
 
 async function verifyOwnership(database) {
   const authority = localAuthority(database);
+  assertPermissionPolicy(database);
   const result = await runRvw([
     "comment",
     "watch-task",
@@ -537,7 +560,9 @@ function ingestEvent(database, frame) {
     typeof event.postId !== "string" ||
     typeof event.commentRef !== "string" ||
     typeof event.pullRequestUrl !== "string" ||
-    typeof event.deleted !== "boolean"
+    typeof event.deleted !== "boolean" ||
+    (event.allowChanges !== undefined && typeof event.allowChanges !== "boolean") ||
+    (event.kind !== undefined && !["posted", "permission-changed"].includes(event.kind))
   ) {
     fail("Invalid comment-posted frame");
   }
@@ -554,17 +579,26 @@ function ingestEvent(database, frame) {
     }
     const lastSequence = Number(getMeta(database, "last_sequence") ?? "0");
     if (event.sequence <= lastSequence) fail("Out-of-order event was not previously stored");
-    const suppressed = database
-      .prepare("SELECT 1 AS present FROM suppressed_posts WHERE post_id = ?")
-      .get(event.postId);
+    const suppressed =
+      event.kind !== "permission-changed" &&
+      database
+        .prepare("SELECT 1 AS present FROM suppressed_posts WHERE post_id = ?")
+        .get(event.postId);
+    // Re-evaluate the original request under its new permission, without duplicating queued work.
+    if (event.kind === "permission-changed") {
+      database
+        .prepare("UPDATE events SET status = 'completed' WHERE post_id = ? AND batch_id IS NULL")
+        .run(event.postId);
+    }
     const status = event.deleted || suppressed ? "completed" : "pending";
+    const lane = event.allowChanges === true ? "change" : "investigate";
     const now = new Date().toISOString();
     database
       .prepare(
         `INSERT INTO events(
           sequence, cursor, post_id, comment_ref, pull_request_url, deleted,
-          status, batch_id, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+          status, batch_id, created_at, updated_at, lane, event_kind
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
       )
       .run(
         event.sequence,
@@ -576,6 +610,8 @@ function ingestEvent(database, frame) {
         status,
         now,
         now,
+        lane,
+        event.kind ?? "posted",
       );
     if (event.deleted) {
       const operations = database
@@ -604,66 +640,66 @@ function ingestEvent(database, frame) {
   });
 }
 
-function listPending(database) {
+function listPermissionPending(database) {
   const now = new Date().toISOString();
-  const batches = database
+  const rows = database
     .prepare(
-      `SELECT b.pull_request_url, b.id AS batch_id, count(e.sequence) AS event_count,
-        min(e.sequence) AS first_sequence
-      FROM batches b
-      JOIN events e ON e.batch_id = b.id AND e.status = 'pending'
-      WHERE b.status = 'pending' AND (b.next_attempt_at IS NULL OR b.next_attempt_at <= ?)
-      GROUP BY b.id
-      ORDER BY first_sequence`,
+      `
+    SELECT b.pull_request_url, b.id AS batch_id, b.lane, count(*) AS event_count, min(e.sequence) AS first_sequence
+    FROM batches b JOIN events e ON e.batch_id = b.id AND e.status = 'pending'
+    WHERE b.status = 'pending' AND (b.next_attempt_at IS NULL OR b.next_attempt_at <= ?)
+    GROUP BY b.id
+    UNION ALL
+    SELECT pull_request_url, NULL AS batch_id, lane, count(*) AS event_count, min(sequence) AS first_sequence
+    FROM events WHERE status = 'pending' AND batch_id IS NULL GROUP BY pull_request_url, lane
+    ORDER BY first_sequence`,
     )
     .all(now);
-  const blockedStatuses =
-    getMeta(database, "own_mode") === "investigate-and-reply"
-      ? "status = 'pending'"
-      : "status IN ('pending', 'in_flight')";
-  const blockedPullRequests = new Set(
+  const active = new Set(
     database
-      .prepare(`SELECT DISTINCT pull_request_url FROM batches WHERE ${blockedStatuses}`)
+      .prepare(
+        "SELECT pull_request_url FROM batches WHERE status = 'in_flight' AND lane = 'change'",
+      )
       .all()
       .map((row) => row.pull_request_url),
   );
-  const unbatched = database
-    .prepare(
-      `SELECT pull_request_url, NULL AS batch_id, count(*) AS event_count,
-        min(sequence) AS first_sequence
-      FROM events
-      WHERE status = 'pending' AND batch_id IS NULL
-      GROUP BY pull_request_url
-      ORDER BY first_sequence`,
-    )
-    .all()
-    .filter((row) => !blockedPullRequests.has(row.pull_request_url));
-  return [...batches, ...unbatched]
-    .sort((left, right) => Number(left.first_sequence) - Number(right.first_sequence))
-    .map((row) => {
-      const commentRefs = row.batch_id
-        ? database
-            .prepare(
-              "SELECT DISTINCT comment_ref FROM events WHERE batch_id = ? ORDER BY comment_ref",
-            )
-            .all(row.batch_id)
-            .map((item) => item.comment_ref)
-        : database
-            .prepare(
-              `SELECT DISTINCT comment_ref FROM events
-              WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL
-              ORDER BY comment_ref`,
-            )
-            .all(row.pull_request_url)
-            .map((item) => item.comment_ref);
-      return {
-        pullRequest: row.pull_request_url,
-        batchId: row.batch_id ?? null,
-        eventCount: Number(row.event_count),
-        firstSequence: Number(row.first_sequence),
-        commentRefs,
-      };
-    });
+  const seen = new Set();
+  return rows
+    .filter((row) => {
+      const key = `${row.pull_request_url}:${row.lane}`;
+      if ((row.lane === "change" && active.has(row.pull_request_url)) || seen.has(key))
+        return false;
+      // A retry backoff must preserve write order for this PR.
+      if (
+        row.lane === "change" &&
+        database
+          .prepare(
+            `SELECT 1 FROM batches WHERE pull_request_url = ? AND lane = 'change' AND status = 'pending' AND next_attempt_at > ?`,
+          )
+          .get(row.pull_request_url, now)
+      )
+        return false;
+      seen.add(key);
+      return true;
+    })
+    .map((row) => ({
+      pullRequest: row.pull_request_url,
+      batchId: row.batch_id,
+      lane: row.lane,
+      eventCount: Number(row.event_count),
+      firstSequence: Number(row.first_sequence),
+      commentRefs: database
+        .prepare(
+          `SELECT DISTINCT comment_ref FROM events WHERE status = 'pending' AND
+      ((? IS NOT NULL AND batch_id = ?) OR (? IS NULL AND batch_id IS NULL AND pull_request_url = ? AND lane = ?))`,
+        )
+        .all(row.batch_id, row.batch_id, row.batch_id, row.pull_request_url, row.lane)
+        .map((event) => event.comment_ref),
+    }));
+}
+
+function listPending(database) {
+  return listPermissionPending(database);
 }
 
 function listWork(database) {
@@ -672,6 +708,13 @@ function listWork(database) {
     .get();
   return {
     inFlight: Number(inFlight.count),
+    changeInFlight: Number(
+      database
+        .prepare(
+          "SELECT count(*) AS count FROM batches WHERE status = 'in_flight' AND lane = 'change'",
+        )
+        .get().count,
+    ),
     pending: listPending(database),
   };
 }
@@ -698,62 +741,71 @@ async function waitForPending(database, options) {
 }
 
 function normalizeWriteKey(writeKey) {
-  if (typeof writeKey !== "string" || !/^[^/\s]+\/[^/\s]+$/.test(writeKey)) {
+  if (typeof writeKey !== "string" || !/^[^/#\s]+\/[^/#\s]+(?:#[^/#\s]+)?$/.test(writeKey)) {
     fail("--write-key must be owner/repository");
   }
-  return writeKey.toLowerCase();
+  const [repositoryKey, branchKey] = writeKey.split("#");
+  return (
+    repositoryKey.toLowerCase() +
+    (branchKey ? `#${encodeURIComponent(decodeURIComponent(branchKey))}` : "")
+  );
 }
 
-function createBatch(database, pullRequestUrl, now) {
+function createBatch(database, pullRequestUrl, now, lane) {
   const batchId = randomUUID();
   const events = database
     .prepare(
       `SELECT sequence, comment_ref FROM events
-      WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL
+      WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL AND (? IS NULL OR lane = ?)
       ORDER BY sequence`,
     )
-    .all(pullRequestUrl);
+    .all(pullRequestUrl, lane, lane);
   if (events.length === 0) fail("No pending events for Pull Request");
   database
     .prepare(
       `INSERT INTO batches(
         id, pull_request_url, status, attempts, next_attempt_at, lease_id,
-        write_key, last_error, created_at, updated_at
-      ) VALUES (?, ?, 'pending', 0, NULL, NULL, NULL, NULL, ?, ?)`,
+        write_key, last_error, created_at, updated_at, lane
+      ) VALUES (?, ?, 'pending', 0, NULL, NULL, NULL, NULL, ?, ?, ?)`,
     )
-    .run(batchId, pullRequestUrl, now, now);
+    .run(batchId, pullRequestUrl, now, now, lane ?? "investigate");
   database
     .prepare(
-      "UPDATE events SET batch_id = ?, updated_at = ? WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL",
+      "UPDATE events SET batch_id = ?, updated_at = ? WHERE pull_request_url = ? AND status = 'pending' AND batch_id IS NULL AND (? IS NULL OR lane = ?)",
     )
-    .run(batchId, now, pullRequestUrl);
+    .run(batchId, now, pullRequestUrl, lane, lane);
   ensureBatchOperations(database, batchId);
   return batchId;
 }
 
-function claim(database, pullRequestUrl, requestedAuthorLabel) {
+function claim(database, pullRequestUrl, requestedAuthorLabel, requestedLane) {
   return transaction(database, () => {
     const authorLabel =
       requestedAuthorLabel === undefined
         ? taskAuthorLabel(database)
         : bindTaskAuthorLabel(database, requestedAuthorLabel);
     const now = new Date().toISOString();
-    const ownMode = getMeta(database, "own_mode");
-    if (ownMode !== "investigate-and-reply") {
-      const active = database
-        .prepare("SELECT id FROM batches WHERE pull_request_url = ? AND status = 'in_flight'")
-        .get(pullRequestUrl);
-      if (active) fail("Pull Request already has an in-flight batch");
-    }
+    const lane = requestedLane ?? "investigate";
+    if (!["investigate", "change"].includes(lane)) fail("Invalid work lane");
+    if (
+      lane === "change" &&
+      database
+        .prepare(
+          "SELECT 1 FROM batches WHERE pull_request_url = ? AND status = 'in_flight' AND lane = 'change'",
+        )
+        .get(pullRequestUrl)
+    )
+      fail("Pull Request already has a change worker");
     let batch = database
       .prepare(
         `SELECT * FROM batches
-        WHERE pull_request_url = ? AND status = 'pending'
+        WHERE pull_request_url = ? AND status = 'pending' AND lane = ?
+          AND (lane = 'change' OR next_attempt_at IS NULL OR next_attempt_at <= ?)
         ORDER BY created_at LIMIT 1`,
       )
-      .get(pullRequestUrl);
+      .get(pullRequestUrl, lane, now);
     if (batch?.next_attempt_at && batch.next_attempt_at > now) fail("Batch retry is not due yet");
-    const batchId = batch?.id ?? createBatch(database, pullRequestUrl, now);
+    const batchId = batch?.id ?? createBatch(database, pullRequestUrl, now, lane);
     batch = database.prepare("SELECT * FROM batches WHERE id = ?").get(batchId);
     const leaseId = randomUUID();
     database
@@ -764,7 +816,7 @@ function claim(database, pullRequestUrl, requestedAuthorLabel) {
       .run(leaseId, now, batchId);
     const events = database
       .prepare(
-        `SELECT sequence, post_id, comment_ref, pull_request_url
+        `SELECT sequence, post_id, comment_ref, pull_request_url, lane
         FROM events WHERE batch_id = ? AND status = 'pending' ORDER BY sequence`,
       )
       .all(batchId)
@@ -773,6 +825,7 @@ function claim(database, pullRequestUrl, requestedAuthorLabel) {
         postId: event.post_id,
         commentRef: event.comment_ref,
         pullRequestUrl: event.pull_request_url,
+        allowChanges: event.lane === "change",
       }));
     ensureBatchOperations(database, batchId);
     const operations = database
@@ -793,6 +846,7 @@ function claim(database, pullRequestUrl, requestedAuthorLabel) {
       pullRequest: pullRequestUrl,
       attempts: Number(batch.attempts) + 1,
       writeKey: null,
+      lane: batch.lane,
       authorLabel,
       events,
       operations,
@@ -803,8 +857,10 @@ function claim(database, pullRequestUrl, requestedAuthorLabel) {
 function recordWriteReservation(database, leaseId, writeKey) {
   const canonicalWriteKey = normalizeWriteKey(writeKey);
   return transaction(database, () => {
-    if (getMeta(database, "own_mode") !== "fix-and-push") {
-      fail("Task policy does not allow repository write reservations");
+    if (getMeta(database, "own_mode") !== "per-comment") {
+      fail(
+        "Legacy task modes cannot claim new work; recover existing leases and initialize a new task",
+      );
     }
     const batch = database
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
@@ -850,7 +906,29 @@ function abandonClaim(database, leaseId) {
 }
 
 async function reserveWrite(database, leaseId, writeKey) {
-  assertWriteMode(database);
+  assertPermissionPolicy(database);
+  if (getMeta(database, "own_mode") === "per-comment") {
+    const batch = database
+      .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
+      .get(leaseId);
+    if (!batch || batch.lane !== "change") fail("This lease has no change permission");
+    const events = database
+      .prepare("SELECT post_id, comment_ref FROM events WHERE batch_id = ? AND status = 'pending'")
+      .all(batch.id);
+    let allowed = false;
+    for (const event of events) {
+      const result = await runRvw(["comment", "get", event.comment_ref, "--json"]);
+      if (!successfulJson(result)) fail("Cannot verify current comment permission");
+      if (
+        !result.json.comment.resolved &&
+        result.json.comment.posts.some(
+          (post) => post.id === event.post_id && post.allowChanges === true,
+        )
+      )
+        allowed = true;
+    }
+    if (!allowed) fail("Change permission was revoked or the request is no longer actionable");
+  }
   const reservation = await acquireSharedWriteReservation(database, leaseId, writeKey);
   try {
     return {
@@ -863,9 +941,11 @@ async function reserveWrite(database, leaseId, writeKey) {
   }
 }
 
-function assertWriteMode(database) {
-  if (getMeta(database, "own_mode") !== "fix-and-push") {
-    fail("Task policy does not allow repository write reservations");
+function assertPermissionPolicy(database) {
+  if (getMeta(database, "own_mode") !== "per-comment") {
+    fail(
+      "Legacy task modes cannot claim new work; recover existing leases and initialize a new task",
+    );
   }
 }
 
@@ -906,7 +986,7 @@ function acknowledge(database, leaseId, input) {
       .run(input.postId, now);
     database
       .prepare(
-        "UPDATE events SET status = 'completed', updated_at = ? WHERE post_id = ? AND status = 'pending'",
+        "UPDATE events SET status = 'completed', updated_at = ? WHERE post_id = ? AND status = 'pending' AND event_kind = 'posted'",
       )
       .run(now, input.postId);
     return {
@@ -922,8 +1002,8 @@ function skipOperation(database, leaseId, input) {
   if (typeof input.commentRef !== "string" || input.commentRef.length === 0) {
     fail("commentRef is required");
   }
-  if (input.reason !== "resolved" && input.reason !== "gone") {
-    fail("reason must be resolved or gone");
+  if (!["resolved", "gone", "permission-revoked"].includes(input.reason)) {
+    fail("reason must be resolved, gone, or permission-revoked");
   }
   return transaction(database, () => {
     const batch = database
@@ -992,7 +1072,7 @@ function complete(database, leaseId, input) {
         .run(postId, now);
       database
         .prepare(
-          "UPDATE events SET status = 'completed', updated_at = ? WHERE post_id = ? AND status = 'pending'",
+          "UPDATE events SET status = 'completed', updated_at = ? WHERE post_id = ? AND status = 'pending' AND event_kind = 'posted'",
         )
         .run(now, postId);
     }
@@ -1103,7 +1183,7 @@ function status(database) {
     .get();
   const inFlightBatches = database
     .prepare(
-      `SELECT id, pull_request_url, attempts, lease_id, write_key, updated_at
+      `SELECT id, pull_request_url, attempts, lease_id, write_key, updated_at, lane
       FROM batches WHERE status = 'in_flight' ORDER BY created_at`,
     )
     .all()
@@ -1113,6 +1193,7 @@ function status(database) {
       pullRequest: batch.pull_request_url,
       attempts: Number(batch.attempts),
       writeKey: batch.write_key,
+      lane: batch.lane,
       updatedAt: batch.updated_at,
       operations: batchStatusOperations(database, batch.id),
     }));
@@ -1200,8 +1281,13 @@ async function main() {
           : options["no-author-label"] === true
             ? null
             : undefined;
-      if (options["write-key"] !== undefined) assertWriteMode(database);
-      const claimed = claim(database, required(options, "pull-request"), requestedAuthorLabel);
+      if (options["write-key"] !== undefined) assertPermissionPolicy(database);
+      const claimed = claim(
+        database,
+        required(options, "pull-request"),
+        requestedAuthorLabel,
+        options.lane,
+      );
       if (options["write-key"] === undefined) {
         write({ ok: true, ...claimed });
         return;

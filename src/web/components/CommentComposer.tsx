@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ErrorNotice } from "./ErrorNotice.js";
 
 type CommentSubmitKeyEvent = {
@@ -52,8 +53,9 @@ export function InlineCommentComposer({
   placement: "file" | "line";
   onBodyChange: (body: string) => void;
   onCancel: () => void;
-  onSubmit: () => void;
+  onSubmit: (allowChanges: boolean) => void;
 }) {
+  const [allowChanges, setAllowChanges] = useState(false);
   const canSubmit = Boolean(body.trim()) && !disabled && !pending;
   return (
     <div className={`inline-comment-composer inline-comment-composer--${placement}`}>
@@ -69,7 +71,7 @@ export function InlineCommentComposer({
             onCancel();
             return;
           }
-          handleCommentSubmitShortcut(event, canSubmit, onSubmit);
+          handleCommentSubmitShortcut(event, canSubmit, () => onSubmit(allowChanges));
         }}
         placeholder="コメントを入力（Markdown対応）"
         aria-label={label}
@@ -77,6 +79,11 @@ export function InlineCommentComposer({
       {validationError && <p className="form-error">{validationError}</p>}
       <ErrorNotice error={error} />
       <div className="inline-comment-actions">
+        <ChangePermissionCheckbox
+          checked={allowChanges}
+          onChange={setAllowChanges}
+          disabled={pending}
+        />
         <button
           type="button"
           className="button--quiet"
@@ -89,10 +96,35 @@ export function InlineCommentComposer({
         >
           キャンセル
         </button>
-        <button type="button" disabled={!canSubmit} onClick={onSubmit}>
+        <button type="button" disabled={!canSubmit} onClick={() => onSubmit(allowChanges)}>
           コメント
         </button>
       </div>
     </div>
+  );
+}
+
+export function ChangePermissionCheckbox({
+  checked,
+  onChange,
+  disabled = false,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className="comment-change-permission"
+      title="本文の依頼に応じてファイルやArtifactを変更してよい、という許可です。変更を指示するものではありません。"
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      この依頼に伴う変更を許可
+    </label>
   );
 }

@@ -59,8 +59,9 @@ const json = (value, code = 0) => {
   process.exitCode = code;
 };
 if (args[0] === "protocol") {
-  json({ protocolVersion: 6, appVersion: "9.9.9", capabilities: [
-    "agent.transport", "comment.watch", "comment.watchOwnership", "comment.read", "comment.reply",
+  json({ protocolVersion: 7, appVersion: "9.9.9", capabilities: [
+    "agent.transport", "comment.watch", "comment.watchOwnership",
+        "comment.changePermission", "comment.read", "comment.reply",
     "comment.edit", "comment.codeReferences", "pullRequest.sync"
   ] });
 } else if (args[0] === "agent" && args[1] === "status") {
@@ -126,7 +127,7 @@ if (args[0] === "protocol") {
   if (gone.includes(args[2])) {
     json({ ok: false, error: { code: "COMMENT_NOT_FOUND", message: "gone" } }, 2);
   } else {
-    json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], resolved: resolved.includes(args[2]), posts: [] } });
+    json({ ok: true, pullRequest: { url: "https://github.com/acme/repo/pull/1" }, comment: { ref: args[2], resolved: resolved.includes(args[2]), posts: JSON.parse(process.env.FAKE_RVW_POSTS ?? "[]") } });
   }
 } else if (args[0] === "comment" && args[1] === "reply") {
   if (process.env.FAKE_RVW_REPLY_NON_ACTIONABLE === "1") {
@@ -264,7 +265,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     expect(JSON.parse(result.stdout)).toMatchObject({
       ok: true,
       node: { ok: true },
-      rvw: { appVersion: "9.9.9", protocolVersion: 6, missingCapabilities: [] },
+      rvw: { appVersion: "9.9.9", protocolVersion: 7, missingCapabilities: [] },
       checks: { agentStatus: true, agentPingConnected: true },
     });
     const calls = readFakeCalls(fake.log).map((call) => call.args);
@@ -718,7 +719,7 @@ describe("rvw-watch-comments bundled scripts", () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-watch-writer-fence-"));
     const fake = createFakeRvw(directory);
     const state = path.join(directory, "task.db");
-    runState(state, "init", ["--own-mode", "fix-and-push"]);
+    runState(state, "init", []);
     activateState(state, fake);
     runState(state, "ingest", [], {
       type: "ready",
@@ -736,6 +737,7 @@ describe("rvw-watch-comments bundled scripts", () => {
         pullRequestUrl: "https://github.com/acme/repo/pull/1",
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
+        allowChanges: true,
       },
     });
 
@@ -746,6 +748,8 @@ describe("rvw-watch-comments bundled scripts", () => {
         "claim",
         "--state",
         state,
+        "--lane",
+        "change",
         "--pull-request",
         "https://github.com/acme/repo/pull/1",
         "--write-key",
@@ -753,7 +757,11 @@ describe("rvw-watch-comments bundled scripts", () => {
       ],
       {
         encoding: "utf8",
-        env: { ...fakeEnvironment(fake), FAKE_RVW_RESERVE_SUPERSEDED: "1" },
+        env: {
+          ...fakeEnvironment(fake),
+          FAKE_RVW_RESERVE_SUPERSEDED: "1",
+          FAKE_RVW_POSTS: JSON.stringify([{ id: "human-post-writer-fence", allowChanges: true }]),
+        },
       },
     );
 
@@ -765,9 +773,19 @@ describe("rvw-watch-comments bundled scripts", () => {
     const claimed = runState(
       state,
       "claim",
-      ["--pull-request", "https://github.com/acme/repo/pull/1", "--write-key", "acme/repo"],
+      [
+        "--lane",
+        "change",
+        "--pull-request",
+        "https://github.com/acme/repo/pull/1",
+        "--write-key",
+        "acme/repo",
+      ],
       undefined,
-      fakeEnvironment(fake),
+      {
+        ...fakeEnvironment(fake),
+        FAKE_RVW_POSTS: JSON.stringify([{ id: "human-post-writer-fence", allowChanges: true }]),
+      },
     );
     expect(claimed).toMatchObject({ attempts: 1, writeKey: "acme/repo" });
     runState(
@@ -1018,6 +1036,136 @@ describe("rvw-watch-comments bundled scripts", () => {
     });
     expect(restartedCode, restartedStderr).toBe(0);
     expect(existsSync(lockPath)).toBe(false);
+  });
+
+  it("reserves investigation capacity while multiple permitted PRs are queued", async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-mixed-capacity-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init");
+    activateState(state, fake);
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const enqueue = (sequence: number, allowChanges: boolean, pr: number) =>
+      runState(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId: `post-${sequence}`,
+          commentRef: `rvw://comment/comment-${sequence}`,
+          pullRequestUrl: `https://github.com/acme/repo/pull/${pr}`,
+          createdAt: "2026-11-01T00:00:00.000Z",
+          deleted: false,
+          allowChanges,
+        },
+      });
+    for (const sequence of [1, 2, 3]) enqueue(sequence, true, sequence);
+    const env = {
+      ...fakeEnvironment(fake),
+      FAKE_RVW_POSTS: JSON.stringify(
+        [1, 2, 3].map((n) => ({ id: `post-${n}`, allowChanges: true })),
+      ),
+      RVW_WATCH_AUTO_ACK_POLL_MS: "10",
+    };
+    const child = spawn(
+      process.execPath,
+      [driverScript, state, "--auto-ack", "--max-in-flight", "2"],
+      { env, stdio: ["pipe", "pipe", "pipe"] },
+    );
+    const output = collectJsonLines(child);
+    try {
+      await output.waitFor((message) => message.type === "watch-ready");
+      expect(
+        output.messages.filter((message) => message.type === "batch-acknowledged"),
+      ).toHaveLength(1);
+      enqueue(4, false, 1);
+      const read = await output.waitFor(
+        (message) => message.type === "batch-acknowledged" && message.lane === "investigate",
+      );
+      expect(read).toMatchObject({ pullRequest: "https://github.com/acme/repo/pull/1" });
+      expect(runState(state, "list")).toMatchObject({
+        inFlight: 2,
+        changeInFlight: 1,
+        pending: [{ lane: "change" }, { lane: "change" }],
+      });
+    } finally {
+      const exited = new Promise((resolve) => child.once("close", resolve));
+      child.kill("SIGTERM");
+      await exited;
+    }
+  });
+
+  it("rechecks permission before acknowledgement and writer reservation", () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "rvw-revoked-permission-"));
+    const fake = createFakeRvw(directory);
+    const state = path.join(directory, "task.db");
+    runState(state, "init");
+    activateState(state, fake);
+    runState(state, "ingest", [], {
+      type: "ready",
+      databaseId: "0123456789abcdef0123456789abcdef",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const enqueue = (sequence: number) =>
+      runState(state, "ingest", [], {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId: `post-${sequence}`,
+          commentRef: `rvw://comment/comment-${sequence}`,
+          pullRequestUrl: "https://github.com/acme/repo/pull/1",
+          createdAt: "2026-11-01T00:00:00.000Z",
+          deleted: false,
+          allowChanges: true,
+        },
+      });
+    enqueue(1);
+    const skipped = spawnSync(
+      process.execPath,
+      [
+        autoAckScript,
+        "--state",
+        state,
+        "--pull-request",
+        "https://github.com/acme/repo/pull/1",
+        "--lane",
+        "change",
+      ],
+      { encoding: "utf8", env: fakeEnvironment(fake) },
+    );
+    expect(skipped.status).toBe(0);
+    expect(JSON.parse(skipped.stdout)).toMatchObject({
+      type: "skipped",
+      skippedOperations: [{ skipReason: "permission-revoked" }],
+    });
+    expect(readFakeCalls(fake.log).filter((call) => call.args[1] === "reply")).toHaveLength(0);
+    enqueue(2);
+    const claim = runState(
+      state,
+      "claim",
+      ["--pull-request", "https://github.com/acme/repo/pull/1", "--lane", "change"],
+      undefined,
+      fakeEnvironment(fake),
+    );
+    expect(() =>
+      runState(
+        state,
+        "reserve-write",
+        ["--lease", String(claim.leaseId), "--write-key", "acme/repo#feature"],
+        undefined,
+        fakeEnvironment(fake),
+      ),
+    ).toThrow("permission was revoked");
+    expect(readFakeCalls(fake.log).filter((call) => call.args[2] === "reserve-write")).toHaveLength(
+      0,
+    );
   });
 
   it("limits acknowledged leases to reserved worker capacity and drains after completion", async () => {

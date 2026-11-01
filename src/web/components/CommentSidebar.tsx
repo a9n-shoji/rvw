@@ -1,3 +1,4 @@
+import { ChangePermissionCheckbox } from "./CommentComposer.js";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -162,6 +163,7 @@ export function CommentSidebar({
 
   const [selected, setSelected] = useState(() => new Set<string>());
   const [prComposerOpen, setPrComposerOpen] = useState(false);
+  const [allowChanges, setAllowChanges] = useState(false);
   const [prComment, setPrComment] = useState("");
   const [copyFeedback, setCopyFeedback] = useState(false);
   const walkthroughTitles = useMemo(
@@ -272,6 +274,7 @@ export function CommentSidebar({
           pullRequestId,
           target: { kind: "pull-request" },
           body: prComment,
+          allowChanges,
           authorLabel: "You",
         }),
       ),
@@ -279,6 +282,7 @@ export function CommentSidebar({
     onError: () => invalidateCommentQuery(queryClient, pullRequestId),
     onSuccess: ({ comment }) => {
       setPrComment("");
+      setAllowChanges(false);
       setPrComposerOpen(false);
       putCommentInCache(queryClient, pullRequestId, comment);
     },
@@ -296,6 +300,7 @@ export function CommentSidebar({
     setSelected(new Set());
   };
   const closePrComposer = (): void => {
+    setAllowChanges(false);
     setPrComment("");
     setPrComposerOpen(false);
     createPrComment.reset();
@@ -338,6 +343,11 @@ export function CommentSidebar({
       {prComposerOpen && (
         <div className="pr-comment-composer">
           <label>Pull Request全体へコメント</label>
+          <ChangePermissionCheckbox
+            checked={allowChanges}
+            onChange={setAllowChanges}
+            disabled={createPrComment.isPending}
+          />
           <textarea
             autoFocus
             rows={3}

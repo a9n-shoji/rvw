@@ -189,6 +189,7 @@ const codeReferenceOutputSchema = z
 
 const commentPostOutputSchema = z
   .object({
+    allowChanges: z.boolean(),
     id: z.string(),
     commentId: z.string(),
     body: z.string(),
@@ -318,6 +319,7 @@ export const commentListOutputSchema = z
                 .object({
                   body: z.string(),
                   bodyTruncated: z.boolean(),
+                  allowChanges: z.boolean(),
                   authorLabel: z.string().nullable(),
                   relatedCommitOid: z.string().nullable(),
                   createdAt: z.string(),

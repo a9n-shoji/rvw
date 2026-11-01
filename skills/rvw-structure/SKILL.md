@@ -79,7 +79,7 @@ select a node, or claim that publication changed rvw navigation.
 ## Preflight
 
 1. Run `rvw protocol --json` and parse stdout as JSON.
-2. Require `protocolVersion` 6, `agent.transport`, and `structure.presentation` so version-6 current
+2. Require `protocolVersion` 7, `agent.transport`, and `structure.presentation` so version-6 current
    values can be parsed. Require only the operation capabilities the task uses: `structure.read` for
    `get`, `structure.list` for listing or uncertain-publication recovery, `structure.preview` before
    publish or update, and the corresponding `structure.publish`, `structure.update`, or

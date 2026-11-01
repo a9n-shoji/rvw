@@ -32,7 +32,7 @@ For every composition task, read
 
 ## Preflight
 
-1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 6 and
+1. Run `rvw protocol --json` and parse stdout as JSON. Require `protocolVersion` 7 and
    `agent.transport`, and record the available Walkthrough and Structure capabilities, including
    `walkthrough.list` for Walkthrough discovery. Immediately
    before every producer invocation, including contextual discovery or a current-value read, require
