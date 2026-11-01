@@ -3950,3 +3950,14 @@ an always-running aggregate that fails unless quality and every shard succeed, i
 or cancelled dependencies. Keep all existing tests and platform/security checks. GitHub-native
 failure artifacts preserve debugging evidence for seven days. This increases runner setup/build
 minutes but avoids a worker-isolation rewrite or a cache correctness dependency; see `ci.md`.
+
+## 2026-11-01: Balance eight E2E shards by file duration
+
+The first four-shard run reduced CI to 3m19s, but the largest shard took 3m15s and serial quality/unit
+checks took 2m10s. Native eight-way sharding produced an empty shard and a 68-test shard. Replace it
+in CI with deterministic longest-file-first assignment using committed timing hints and automatic
+filesystem discovery. Unknown files receive a conservative default estimate and are always included;
+stale hints cannot select removed files. Preserve file order and one worker per isolated runner.
+Split quality and unit/integration into independent jobs; require both plus all E2E shards at the
+existing `test` gate. Download only Chromium's headless shell. More runner setup work is acceptable
+for shorter feedback on this public repository; no tests or platform/security gates are removed.

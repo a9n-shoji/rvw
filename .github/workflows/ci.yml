@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Quality and unit tests
+    name: Quality checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -30,16 +30,32 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit
       - run: pnpm check
+
+  unit:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
   e2e:
-    name: E2E (shard ${{ matrix.shard }}/4)
+    name: E2E (shard ${{ matrix.shard }}/8)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: pnpm/action-setup@f520eceda224fe1a4aed5a2a27a194379a409996 # v6
@@ -49,9 +65,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install chromium
+      - run: pnpm exec playwright install --only-shell chromium
       - name: Run isolated contract and realistic E2E shard
-        run: pnpm test:e2e --shard=${{ matrix.shard }}/4
+        env:
+          RVW_E2E_SHARD: ${{ matrix.shard }}/8
+        run: pnpm test:e2e
       - name: Preserve failed shard diagnostics
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -64,16 +82,18 @@ jobs:
   # Preserve the existing required check. A skipped/cancelled dependency must not pass.
   test:
     if: always()
-    needs: [quality, e2e]
+    needs: [quality, unit, e2e]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Require quality and every E2E shard
+      - name: Require quality, unit tests and every E2E shard
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
+          UNIT_RESULT: ${{ needs.unit.result }}
           E2E_RESULT: ${{ needs.e2e.result }}
         run: |
           test "$QUALITY_RESULT" = success
+          test "$UNIT_RESULT" = success
           test "$E2E_RESULT" = success
 
   fixture-test-windows:
