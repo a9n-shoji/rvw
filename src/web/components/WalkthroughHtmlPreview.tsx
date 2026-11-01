@@ -476,7 +476,10 @@ export function WalkthroughHtmlPreview({
         };
       };
 
+      let hoverTarget: { surface: Element; x: number; y: number } | null = null;
+
       const setSelectionAction = (): void => {
+        hoverTarget = null;
         const selected = selectionRange();
         if (!selected) {
           setOverlayAction(null);
@@ -513,17 +516,41 @@ export function WalkthroughHtmlPreview({
       };
       const onPointerMove = (event: PointerEvent): void => {
         clearPreview();
-        if (document.getSelection()?.toString().trim()) return;
+        if (document.getSelection()?.toString().trim()) {
+          hoverTarget = null;
+          return;
+        }
         const target = eventElement(event.target);
         const surface =
           target?.closest("[data-rvw-commentable]") ??
           target?.closest("[data-rvw-comment-surface='true']") ??
           null;
+        const iframeRect = iframe.getBoundingClientRect();
+        if (hoverTarget && surface !== hoverTarget.surface) {
+          const button = frameShell.querySelector(".walkthrough-html-comment-action");
+          const rect = button?.getBoundingClientRect();
+          if (rect) {
+            // Bridge the last point on the surface to the real overlay bounds. Adjacent
+            // cells can occupy this route too; they must not steal the action mid-move.
+            const x = iframeRect.left + event.clientX;
+            const y = iframeRect.top + event.clientY;
+            const originX = iframeRect.left + hoverTarget.x;
+            const originY = iframeRect.top + hoverTarget.y;
+            if (
+              x >= Math.min(originX, rect.left) - 4 &&
+              x <= Math.max(originX, rect.right) + 4 &&
+              y >= Math.min(originY, rect.top) - 4 &&
+              y <= Math.max(originY, rect.bottom) + 4
+            )
+              return;
+          }
+        }
+        hoverTarget = null;
         const range = elementRange(surface);
         // Keep the action reachable while crossing the gap from its surface to the overlay.
         if (!surface || !range) return;
+        hoverTarget = { surface, x: event.clientX, y: event.clientY };
         const rect = surface.getBoundingClientRect();
-        const iframeRect = iframe.getBoundingClientRect();
         const frameShellRect = frameShell.getBoundingClientRect();
         setOverlayAction({
           range,
@@ -591,6 +618,7 @@ export function WalkthroughHtmlPreview({
       document.addEventListener("toggle", updateLayout, true);
       let layoutFrame: number | null = null;
       const scheduleLayout = (): void => {
+        hoverTarget = null;
         if (layoutFrame !== null) return;
         layoutFrame = window.requestAnimationFrame(() => {
           layoutFrame = null;

@@ -416,3 +416,65 @@ test("keeps same-line cells and partial text distinct across reload, without a c
     shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }),
   ).toHaveCount(0);
 });
+
+test("keeps a middle-row cell anchored while slowly crossing the next row to its comment button", async ({
+  page,
+  request,
+}) => {
+  const title = "Middle row hover bridge";
+  const body = `~~~html-preview
+<style>table { border-collapse: collapse; width: 400px; } td { height: 100px; padding: 0; border: 1px solid; }</style>
+<table><tbody><tr><td>before</td></tr><tr><td>alpha</td></tr><tr><td>bravo</td></tr><tr><td>after</td></tr></tbody></table>
+<a href="rvw-ref:handler">Source</a>
+~~~`;
+  expect(
+    (
+      await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
+        data: { title, body, referenceLabel: "Route" },
+      })
+    ).ok(),
+  ).toBe(true);
+  await openWalkthrough(page, title);
+  const shell = page.locator(".walkthrough-html-preview-shell");
+  const frame = shell.frameLocator("iframe");
+  const alpha = frame.getByRole("cell", { name: "alpha", exact: true });
+  const bravo = frame.getByRole("cell", { name: "bravo", exact: true });
+  await alpha.hover();
+  const action = shell.getByRole("button", { name: "この要素へコメント", exact: true });
+  await expect(action).toBeVisible();
+  const button = (await action.boundingBox())!;
+  const cell = (await alpha.boundingBox())!;
+  // Cross the bottom border and the 4px gap one pixel at a time; hover() alone teleports.
+  const x = Math.min(button.x + button.width / 2, cell.x + cell.width - 8);
+  await page.mouse.move(x, cell.y + cell.height - 10);
+  for (let y = cell.y + cell.height - 9; y <= button.y + button.height / 2; y += 1) {
+    await page.mouse.move(x, y);
+    await page.waitForTimeout(20);
+    expect((await action.boundingBox())!.y).toBeCloseTo(button.y, 1);
+  }
+  await expect(alpha).toHaveClass(/rvw-html-comment-target/);
+  await expect(bravo).not.toHaveClass(/rvw-html-comment-target/);
+  // Leaving the bridge still permits choosing another row.
+  await bravo.hover();
+  await action.hover();
+  await expect(bravo).toHaveClass(/rvw-html-comment-target/);
+  await alpha.hover();
+  await page.mouse.move(x, cell.y + cell.height - 10);
+  await page.mouse.move(x, button.y + button.height / 2, { steps: 30 });
+  await page.mouse.click(x, button.y + button.height / 2);
+  const composer = shell.locator(".walkthrough-html-comment-composer");
+  await composer.getByRole("textbox").fill("Still alpha");
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const response = await saved;
+  expect(response.ok()).toBe(true);
+  const { comment } = (await response.json()) as { comment: SavedHtmlComment };
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }).click();
+  await expect(alpha).toHaveClass(/rvw-html-active-comment/);
+  await expect(bravo).not.toHaveClass(/rvw-html-active-comment/);
+});

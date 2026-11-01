@@ -2250,7 +2250,9 @@ Open / Draft / Closed / Merged badge、一覧表示中のchange-sequence polling
     一致件数、前後移動、wrap、`Escape`後のpane focus復元を確認。片方の検索状態とhighlightが他方へ混ざらない
 20. full-Walkthroughの`html-preview`をsandboxで表示し、exact source画像、`rvw-ref:`、source-mapped commentを
     確認する。composerはtarget付近へ表示し、HTML内部threadは外側Markdown inlineへ重複せず、markerから
-    Comments sidebarのthreadをactivateできる。Pane Findはiframe本文を検索・highlight・前後移動できる
+    Comments sidebarのthreadをactivateできる。表の途中行からcommentボタンまで段階的にpointerを移動しても、
+    経路上の次行へtargetが切り替わらず、保存・reload後も元のcellへanchorする。経路を離れると別cellを選べる。
+    Pane Findはiframe本文を検索・highlight・前後移動できる
 21. 同じPRのStructureを2件以上一覧し、片方を開いてもcodeを自動表示せず、1/2-hop / All、focus、
     Home / Back、全relation表示、Relation選択、pan / zoom / fit / drag / layout resetを操作できる。
     non-null presentationではthesisとauthorial startがcompact Guide、start-centered exact 1-hopの初期Home、exportへ反映され、optionalな
