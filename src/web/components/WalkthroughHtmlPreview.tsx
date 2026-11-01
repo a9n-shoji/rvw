@@ -53,22 +53,22 @@ const previewContentSecurityPolicy = [
 
 function themeCss(themePreference: ThemePreference): string {
   const dark = `
-    --rvw-bg: #161b22;
-    --rvw-fg: #e6edf3;
-    --rvw-muted: #8b949e;
-    --rvw-border: #30363d;
-    --rvw-accent: #58a6ff;
-    --rvw-panel: #21262d;
-    --rvw-highlight: #d29922;
+    --rvw-bg: #262624;
+    --rvw-fg: #ecebe5;
+    --rvw-muted: #b5b3aa;
+    --rvw-border: #45453f;
+    --rvw-accent: #a9c7e8;
+    --rvw-panel: #30302d;
+    --rvw-highlight: #d6aa81;
     color-scheme: dark;`;
   const light = `
-    --rvw-bg: #ffffff;
-    --rvw-fg: #1f2328;
-    --rvw-muted: #57606a;
-    --rvw-border: #d8dee4;
-    --rvw-accent: #0969da;
-    --rvw-panel: #f6f8fa;
-    --rvw-highlight: #9a6700;
+    --rvw-bg: #fffefb;
+    --rvw-fg: #30302b;
+    --rvw-muted: #6b6a61;
+    --rvw-border: #e5e3da;
+    --rvw-accent: #37658c;
+    --rvw-panel: #f5f4ee;
+    --rvw-highlight: #a66a43;
     color-scheme: light;`;
   if (themePreference === "dark") return `:root {${dark}}`;
   if (themePreference === "light") return `:root {${light}}`;
@@ -80,13 +80,23 @@ function previewBaseCss(themePreference: ThemePreference): string {
     *, *::before, *::after { box-sizing: border-box; }
     html { background: transparent; }
     body { margin: 0; overflow-x: auto; overflow-y: hidden; background: var(--rvw-bg); color: var(--rvw-fg); }
-    body, button, input, select, textarea { font: 14px/1.5 var(--rvw-font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
+    body, button, input, select, textarea { font: 15px/1.75 var(--rvw-font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
     code, kbd, pre { font-family: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); }
     img, svg { max-width: 100%; }
+    :where(h1, h2, h3, h4) { line-height: 1.35; letter-spacing: -0.025em; font-weight: 600; margin: 1.6em 0 0.65em; }
+    :where(h1) { font-size: 2em; }
+    :where(h2) { font-size: 1.5em; }
+    :where(p, ul, ol) { margin: 0.9em 0; }
+    :where(table) { width: 100%; border-collapse: collapse; font-size: 0.93em; }
+    :where(th, td) { padding: 12px 16px; border-bottom: 1px solid var(--rvw-border); text-align: left; vertical-align: top; }
+    :where(th) { font-weight: 600; background: var(--rvw-panel); }
+    :where(blockquote) { margin: 1.4em 0; padding: 0.25em 1.2em; border-left: 3px solid var(--rvw-border); color: var(--rvw-muted); }
+    :where(pre) { padding: 16px; overflow: auto; border-radius: 8px; background: var(--rvw-panel); }
+    :where(a) { text-underline-offset: 3px; }
     a { color: var(--rvw-accent); cursor: pointer; }
     button, input, select, textarea { color: inherit; }
-    .rvw-preview-root { min-width: 0; padding: 16px; }
-    @media (max-width: 480px) { .rvw-preview-root { padding: 8px; } }
+    .rvw-preview-root { min-width: 0; padding: 28px; }
+    @media (max-width: 480px) { .rvw-preview-root { padding: 12px; } }
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
     [data-rvw-comment-surface="true"] { cursor: default; }
     ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
@@ -95,11 +105,11 @@ function previewBaseCss(themePreference: ThemePreference): string {
 }
 
 const previewCommentCss = `
-  ::highlight(rvw-comment) { background: var(--rvw-highlight); }
+  ::highlight(rvw-comment) { background: color-mix(in srgb, var(--rvw-highlight) 28%, transparent); }
   .rvw-html-comment-target,
   .rvw-html-active-comment {
-    outline: 3px solid var(--rvw-highlight) !important;
-    outline-offset: 3px !important;
+    outline: 2px solid var(--rvw-highlight) !important;
+    outline-offset: 2px !important;
   }
 `;
 
@@ -308,6 +318,7 @@ export function WalkthroughHtmlPreview({
       document.body.style.overflowY = contentHeight > maximumFrameHeight ? "auto" : "hidden";
     const iframeRect = iframe.getBoundingClientRect();
     const frameShellRect = frameShell.getBoundingClientRect();
+    const occupied: Array<{ left: number; top: number }> = [];
     setMarkers(
       placedComments.flatMap(({ comment, placement }) => {
         if (placement.outdated || !placement.range) return [];
@@ -319,11 +330,21 @@ export function WalkthroughHtmlPreview({
           : bestElementForRange(document, placement.range);
         if (!element) return [];
         const rect = element.getBoundingClientRect();
+        const left = iframeRect.left - frameShellRect.left + rect.right;
+        let top = iframeRect.top - frameShellRect.top + rect.top;
+        while (
+          occupied.some(
+            (position) => Math.abs(position.left - left) < 28 && Math.abs(position.top - top) < 28,
+          )
+        ) {
+          top += 28;
+        }
+        occupied.push({ left, top });
         return [
           {
             id: comment.id,
-            left: iframeRect.left - frameShellRect.left + rect.right,
-            top: iframeRect.top - frameShellRect.top + rect.top,
+            left,
+            top,
             active: comment.id === activeCommentId,
             label: `${comment.id}のコメントを開く`,
           },
@@ -454,12 +475,13 @@ export function WalkthroughHtmlPreview({
         clearPreview();
         if (document.getSelection()?.toString().trim()) return;
         const target = eventElement(event.target);
-        const surface = target?.closest("[data-rvw-comment-surface='true']") ?? null;
+        const surface =
+          target?.closest("[data-rvw-commentable]") ??
+          target?.closest("[data-rvw-comment-surface='true']") ??
+          null;
         const range = elementRange(surface);
-        if (!surface || !range) {
-          setOverlayAction(null);
-          return;
-        }
+        // Keep the action reachable while crossing the gap from its surface to the overlay.
+        if (!surface || !range) return;
         const rect = surface.getBoundingClientRect();
         const iframeRect = iframe.getBoundingClientRect();
         const frameShellRect = frameShell.getBoundingClientRect();
@@ -471,28 +493,6 @@ export function WalkthroughHtmlPreview({
           composerTop: iframeRect.top - frameShellRect.top + rect.bottom,
           onPreview: () => preview(surface),
           onPreviewEnd: clearPreview,
-          alternatives: surface.closest("table")
-            ? [
-                { label: "セル", element: surface.closest("td, th") },
-                { label: "行", element: surface.closest("tr") },
-                { label: "表全体", element: surface.closest("table") },
-              ].flatMap(({ label, element }) => {
-                const mapped = elementRange(element);
-                return element && mapped
-                  ? [
-                      {
-                        label,
-                        range: mapped,
-                        composerTop:
-                          iframeRect.top -
-                          frameShellRect.top +
-                          element.getBoundingClientRect().bottom,
-                        onPreview: () => preview(element),
-                      },
-                    ]
-                  : [];
-              })
-            : undefined,
         });
       };
 

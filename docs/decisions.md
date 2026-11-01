@@ -3928,3 +3928,5 @@ rvw bundles remain affected until a new release is built and approved through th
 ## HTML Walkthrough authoring and precise comments
 
 New Walkthroughs use one static `html-preview` fence; the existing body and reference protocol stays compatible. No comment mode is added. HTML comments store DOM paths and optional text endpoints in a nullable target field, plus the existing document hash. Paths are only resolved against the unchanged document. Any body change makes these anchors Outdated; we do not guess a new target or retain historical bodies. Legacy line comments keep their existing mapping. This supersedes the line-only HTML anchor rule in section 5.4.
+
+HTML comments use the exact browser text selection across cells and rows, without a cell/row/table chooser or automatic expansion to a larger element. Hover comments remain available for visual elements and empty cells. The preview uses warm neutral surfaces, restrained borders, and readable typography inspired by document artifacts; authored CSS still takes precedence over baseline typography.

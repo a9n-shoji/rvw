@@ -2986,12 +2986,13 @@ diffs-container > [slot="header-metadata"] {
 .walkthrough-html-preview-shell {
   margin: 22px 0 28px;
   overflow: visible;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: var(--panel);
-  box-shadow: 0 4px 18px var(--shadow-small);
+  box-shadow: 0 2px 8px var(--shadow-small);
 }
 .walkthrough-html-preview-toolbar {
+  border-radius: 12px 12px 0 0;
   display: flex;
   min-height: 34px;
   align-items: center;
@@ -3002,8 +3003,8 @@ diffs-container > [slot="header-metadata"] {
   background: var(--panel-2);
   color: var(--muted);
   font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.03em;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 .walkthrough-html-preview-toolbar > span:nth-child(2) {
   min-width: 0;
@@ -3015,6 +3016,7 @@ diffs-container > [slot="header-metadata"] {
   min-width: 0;
 }
 .walkthrough-html-preview-frame-shell iframe {
+  border-radius: 0 0 12px 12px;
   display: block;
   width: 100%;
   min-height: 240px;
@@ -3041,40 +3043,13 @@ diffs-container > [slot="header-metadata"] {
   gap: 5px;
   padding: 4px 8px;
   transform: translate(-50%, 0);
-  border-color: var(--accent);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
   background: var(--panel);
-  color: var(--accent);
+  color: var(--text);
   font-size: 12px;
   white-space: nowrap;
   width: max-content;
-}
-.walkthrough-html-target-options {
-  position: absolute;
-  display: flex;
-  gap: 4px;
-  padding: 3px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--panel);
-  box-shadow: 0 3px 10px var(--shadow-medium);
-  white-space: nowrap;
-}
-.walkthrough-html-target-options button {
-  min-height: 28px;
-  min-width: 36px;
-  padding: 3px 7px;
-  font-size: 12px;
-  background: var(--panel);
-  color: var(--text);
-  border-color: transparent;
-}
-.walkthrough-html-target-options button:hover,
-.walkthrough-html-target-options button:focus-visible {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent);
 }
 .walkthrough-html-comment-action:hover {
   background: var(--accent-soft);

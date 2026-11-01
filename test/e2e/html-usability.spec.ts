@@ -31,7 +31,7 @@ for (const width of [1440, 900, 640]) {
       await expect(frame.getByRole("heading", { name: "注文はいつ確定する？" })).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("reading.png") });
       await frame.getByRole("cell", { name: "通知だけを再試行", exact: true }).hover();
-      const option = shell.getByRole("button", { name: "セル", exact: true });
+      const option = shell.getByRole("button", { name: "この要素へコメント", exact: true });
       await option.hover();
       const targetBefore = await frame
         .getByRole("cell", { name: "通知だけを再試行", exact: true })
@@ -43,7 +43,7 @@ for (const width of [1440, 900, 640]) {
         /rvw-html-comment-target/,
       );
       await page.screenshot({ path: testInfo.outputPath("selection.png") });
-      const box = await shell.locator(".walkthrough-html-target-options").boundingBox();
+      const box = await option.boundingBox();
       expect(box).not.toBeNull();
       expect(box!.x).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width).toBeLessThanOrEqual(width);

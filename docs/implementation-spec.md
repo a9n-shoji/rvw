@@ -619,7 +619,7 @@ interface Walkthrough {
 - 新規Walkthroughは本文全体を一つのstatic `html-preview`として作成する。既存Markdown / Mermaid表示を維持する。
 - HTML要素とtext selectionはparser由来のsource lineに加え、fence開始行、DOM child path、文字選択の両端offsetを保存する。
   保存時に本文hashを照合してstaleな選択を拒否する。本文変更後は精密anchorをOutdatedとし、旧行commentの再配置は従来どおりとする。
-  hover / text selectionでcomment actionを表示し、tableではcell / row / tableを選択できる。comment modeは設けない。
+  hover / text selectionでcomment actionを表示し、tableを含めtext selectionの両端をそのまま対象とし、cell / row / tableの選択menuは設けない。comment modeは設けない。
   新規comment composerは選択したtextまたはvisualの近くへparent overlayとして表示し、既存commentはvisual
   markerからcanonicalなComments sidebar threadをactivateする。HTML内部rangeのthreadを外側Markdown blockの
   inline threadとして重複表示しない。overlay actionはiframeからparent overlayへpointerを移動しても維持し、

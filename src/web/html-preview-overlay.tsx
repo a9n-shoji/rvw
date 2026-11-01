@@ -8,14 +8,6 @@ export interface HtmlPreviewOverlayAction {
   top: number;
   label: string;
   composerTop?: number | undefined;
-  alternatives?:
-    | Array<{
-        label: string;
-        range: MarkdownSourceRange;
-        composerTop?: number;
-        onPreview?: () => void;
-      }>
-    | undefined;
   onPreview?: () => void;
   onPreviewEnd?: () => void;
 }
@@ -85,36 +77,6 @@ export function HtmlPreviewOverlay({
             <CommentIcon />
             コメント
           </button>
-          {action.alternatives && (
-            <div
-              className="walkthrough-html-target-options"
-              style={{
-                left: action.left,
-                top: action.top + 36,
-              }}
-            >
-              {action.alternatives.map((option) => (
-                <button
-                  key={option.label}
-                  type="button"
-                  onMouseEnter={option.onPreview}
-                  onMouseLeave={action.onPreviewEnd}
-                  onFocus={option.onPreview}
-                  onBlur={action.onPreviewEnd}
-                  onClick={() =>
-                    onComment({
-                      ...action,
-                      range: option.range,
-                      composerTop: option.composerTop,
-                      label: `${option.label}へコメント`,
-                    })
-                  }
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
         </>
       )}
       {composer && composerAnchor && (

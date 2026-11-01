@@ -183,6 +183,10 @@ Walkthroughs remain supported. Preserve their format on updates unless conversio
 
 Keep HTML visuals static and self-contained:
 
+- Prefer the built-in warm neutral document styling, readable typography, and subtle table headers.
+  Add CSS for the explanation’s layout rather than replacing the baseline with heavy borders,
+  shadows, or saturated panels. Authored styles can still override these defaults when useful.
+
 - Design for a narrow reading pane as well as a full-width view. Use readable body text (normally
   14px or larger), responsive widths, modest padding, and the rvw theme variables for foregrounds,
   backgrounds, borders, and links. Do not assume a white background.
