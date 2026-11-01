@@ -1,11 +1,26 @@
 import { expect, test } from "@playwright/test";
 
+test.afterEach(async ({ request }) => {
+  await request.delete(
+    "/api/pull-requests/11111111-1111-4111-8111-111111111111/walkthroughs/81000000-0000-4000-8000-000000000005",
+    { data: {} },
+  );
+});
+
 for (const width of [1440, 900, 640]) {
   for (const colorScheme of ["light", "dark"] as const) {
     test(`HTML reading and comments at ${width}px in ${colorScheme}`, async ({
       page,
       request,
     }, testInfo) => {
+      expect(
+        (
+          await request.post(
+            "/api/fixture/walkthroughs/70000000-0000-4000-8000-000000000005/clone",
+            { data: { id: "81000000-0000-4000-8000-000000000005" } },
+          )
+        ).ok(),
+      ).toBe(true);
       await page.setViewportSize({ width, height: 960 });
       await page.emulateMedia({ colorScheme });
       const title = "注文確定：決済から通知まで";
@@ -14,7 +29,7 @@ for (const width of [1440, 900, 640]) {
       expect(
         (
           await request.post(
-            "/api/fixture/walkthroughs/70000000-0000-4000-8000-000000000005/update",
+            "/api/fixture/walkthroughs/81000000-0000-4000-8000-000000000005/update",
             { data: { title, body, referenceLabel: "処理の入口" } },
           )
         ).ok(),

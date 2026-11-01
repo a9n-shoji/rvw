@@ -503,8 +503,8 @@ supplied reference must be used by at least one Markdown or HTML `rvw-ref:` link
 phantom-bound references are rejected because the viewer has no separate reference index.
 
 A fenced code block whose language is exactly `html-preview` is rendered as a static HTML/CSS visual.
-HTML previews remain part of the Markdown `body`; no alternate Walkthrough format or persistence shape
-is added. They may contain `rvw-ref:<referenceId>` links, which participate in the same declared/used
+HTML previews remain part of the Markdown `body`; no alternate Walkthrough kind is added. Optional
+owned assets are stored separately from that body. They may contain `rvw-ref:<referenceId>` links, which participate in the same declared/used
 reference validation as Markdown links. Repository images use repository-root-relative paths fixed to
 `sourceOid`. JavaScript, event handlers, frames, forms, external resources, network-capable CSS, and
 internal `data-rvw-source-*` attributes are rejected with a Walkthrough line number. Consumers must
@@ -1023,3 +1023,7 @@ Walkthrough body. A stale hash or a source range outside the named HTML fence is
 target includes `htmlAnchor` alongside its existing source lines, quoted source and document hash;
 `expectedDocumentHash` is only a write precondition. A body update makes precise HTML targets
 Outdated, keeping their threads. Legacy line-only targets retain quoted-line remapping.
+
+### Static artifact import and assets
+
+`walkthrough.staticAssets` advertises standalone HTML and bundled assets. `walkthrough publish/update` accept optional `assets: [{path, mediaType, base64}]`; `get` returns only asset metadata. `--html <file>` fills the body from a standalone HTML file; omit stdin `body`. `--assets-dir <dir>` fills assets from local regular files; omit stdin `assets`. Existing JSON-only calls remain compatible. See [static-artifacts.md](static-artifacts.md) for MIME/size/path constraints and atomic replacement/preservation/deletion semantics.

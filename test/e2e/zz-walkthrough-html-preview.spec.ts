@@ -206,6 +206,8 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   ).toHaveCount(0);
   const marker = shell.locator(".walkthrough-html-marker").last();
   await expect(marker).toBeVisible();
+  // Full-width HTML now fits the original canvas; explicitly create a narrow viewport for scrolling.
+  await page.setViewportSize({ width: 1000, height: 900 });
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
   await page.evaluate(
     () =>
@@ -230,6 +232,8 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     page.locator(".comment-sidebar .comment-thread").filter({ hasText: commentBody }),
   ).toBeVisible();
 
+  // Full-width HTML now fits the original canvas; explicitly create a narrow viewport for scrolling.
+  await page.setViewportSize({ width: 1000, height: 900 });
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
   await frame.getByRole("heading", { name: "Before" }).hover();
   await expect(commentAction).toBeVisible();

@@ -1,3 +1,8 @@
+import {
+  validateWalkthroughAssets,
+  type WalkthroughAssetInput,
+  type WalkthroughAssetMetadata,
+} from "../../shared/walkthrough-assets.js";
 import { htmlCommentAnchorSchema } from "../../shared/html-comment-anchor.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STRUCTURE_NODE_NOTATIONS } from "../../domain/models.js";
@@ -581,6 +586,7 @@ export interface CommentUpdateInput {
 }
 
 export interface NewWalkthroughInput {
+  assets?: WalkthroughAssetInput[];
   pullRequestId: string;
   sourceOid: string;
   title: string;
@@ -1910,11 +1916,63 @@ export class RvwDatabase {
     });
   }
 
+  getWalkthroughAsset(
+    id: string,
+    path: string,
+  ): { mediaType: string; sha256: string; content: Uint8Array } | null {
+    const row = this.database
+      .prepare(
+        "SELECT media_type, sha256, content FROM walkthrough_assets WHERE walkthrough_id = ? AND path = ?",
+      )
+      .get(id, path) as DbRow | undefined;
+    return row
+      ? {
+          mediaType: stringValue(row, "media_type"),
+          sha256: stringValue(row, "sha256"),
+          content: row.content as Uint8Array,
+        }
+      : null;
+  }
+
+  listWalkthroughAssets(id: string): WalkthroughAssetMetadata[] {
+    // Also permits reading legacy schemas during migration verification.
+    if (
+      !this.database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'walkthrough_assets'")
+        .get()
+    )
+      return [];
+    return (
+      this.database
+        .prepare(
+          "SELECT path, media_type, byte_length, sha256 FROM walkthrough_assets WHERE walkthrough_id = ? ORDER BY path",
+        )
+        .all(id) as DbRow[]
+    ).map((row) => ({
+      path: stringValue(row, "path"),
+      mediaType: stringValue(row, "media_type"),
+      byteLength: numberValue(row, "byte_length"),
+      sha256: stringValue(row, "sha256"),
+    }));
+  }
+
+  private replaceWalkthroughAssets(id: string, inputs: WalkthroughAssetInput[] | undefined): void {
+    if (inputs === undefined) return;
+    const assets = validateWalkthroughAssets(inputs);
+    this.database.prepare("DELETE FROM walkthrough_assets WHERE walkthrough_id = ?").run(id);
+    const insert = this.database.prepare(
+      "INSERT INTO walkthrough_assets(walkthrough_id, path, media_type, byte_length, sha256, content) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    for (const asset of assets)
+      insert.run(id, asset.path, asset.mediaType, asset.byteLength, asset.sha256, asset.bytes);
+  }
+
   private mapWalkthrough(row: DbRow): Walkthrough {
     const id = stringValue(row, "id");
     return {
       id,
       ref: formatWalkthroughUri(id),
+      assets: this.listWalkthroughAssets(id),
       pullRequestId: stringValue(row, "pull_request_id"),
       sourceOid: stringValue(row, "source_oid"),
       title: stringValue(row, "title"),
@@ -2008,6 +2066,7 @@ export class RvwDatabase {
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
+      this.replaceWalkthroughAssets(id, input.assets);
       this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
@@ -2041,6 +2100,7 @@ export class RvwDatabase {
       }
       this.database.prepare("DELETE FROM walkthrough_references WHERE walkthrough_id = ?").run(id);
       this.insertCodeReferences("walkthrough", id, input.references);
+      this.replaceWalkthroughAssets(id, input.assets);
       this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);

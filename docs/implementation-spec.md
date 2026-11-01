@@ -605,14 +605,14 @@ interface Walkthrough {
   その間の全矢印を証明しない。説明上のactorやaggregate stateを無理にclickableにしない。複数fenceでは
   `diagramBindings`のWalkthrough-global ID scopeを守り、異なるsourceを開くelementに同じIDを再利用しない。
   同じsourceを意図的に共有する場合だけID共有を使う。
-- exact `html-preview` fenced blockは、Markdown正本の一部としてstaticなHTML fragmentをvisual explanationへ
+- exact `html-preview` fenced blockは、Markdown正本の一部としてstaticなHTML fragmentまたはstandalone documentをvisual explanationへ
   描画する。通常の`html` fenceはcode表示のままとする。Walkthrough本文全体を一つの`html-preview`中心で
-  構成することも許容するが、HTML用domain model、DB row、別revisionは追加せず、current Markdown本文と
-  そのinclusive source lineだけを正本にする。
+  構成することも許容するが、HTML用domain modelや別revisionへ分離しない。current Markdown本文と
+  そのinclusive source lineを正本とし、同梱assetはWalkthrough所有の別tableで同一transactionに保存する。
 - `html-preview`はpublish / update時にHTML、inline CSS、inline SVGをparse、allowlist検証、sanitizeし、
   source line情報を付けてからsame-origin sandbox iframeへ`srcdoc`として渡す。Agent authored script、event
-  handler、frame、form送信、network、font、media、worker、外部resourceは実行・取得させず、sandboxへ
-  `allow-scripts`を付けない。CSPを最終防衛線としてscriptと全networkを拒否する。
+  handler、frame、form送信、network、media、worker、外部resourceは実行・取得させず、sandboxへ
+  `allow-scripts`を付けない。CSPを最終防衛線としてscriptと全networkを拒否する。検証済み同梱WOFF2と画像はparentが取得しdata URLへ変換する。
 - HTML visual内の`rvw-ref:<referenceId>`はMarkdownと共有するcode-reference CSS、file icon、行範囲badge、path tooltipを自動適用する。装飾は属性と疑似要素のみでDOM path / text offsetを変えない。
 - HTML visual内の`rvw-ref:<referenceId>`はMarkdown linkと同じreference lifecycleへ統合し、人間が選んだ
   時だけ同じlatest/fallback解決でcodeを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
@@ -2591,3 +2591,7 @@ Manual acceptance:
 - live browser stateをAgent protocolへ入れない
 
 変更が本当に必要な場合は、問題、代替案、選択、trade-offを`docs/decisions.md`へ記録する。
+
+### Static artifact assets
+
+Walkthrough remains the domain object. Migration 026 adds an owned BLOB asset table with cascading deletion; document/references/assets update atomically. Optional publish/update `assets` is bounded and MIME/signature checked. Omission preserves, explicit arrays replace; existing path bytes are immutable. The viewer obtains hash-checked assets through the existing PR security boundary, never arbitrary URLs. Standalone HTML keeps its document structure and CSS selectors. CSS-tree parses styles/declarations/resource values; only typed bundled URLs and internal SVG fragments are permitted. HTML uses full pane width and artifact-owned design, with font load layout refresh. Detailed limits, import protocol and lifecycle are in `static-artifacts.md`.

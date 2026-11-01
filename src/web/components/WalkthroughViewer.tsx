@@ -1,3 +1,4 @@
+import type { WalkthroughAssetMetadata } from "../../shared/walkthrough-assets.js";
 import {
   MarkdownCommentContainer,
   MarkdownCommentContainerContext,
@@ -324,6 +325,8 @@ function WalkthroughMermaidDiagram({
 }
 
 interface MermaidMarkdownRenderContext {
+  walkthroughId: string;
+  assets: WalkthroughAssetMetadata[];
   pullRequestId: string;
   sourceOid: string;
   diagramBindings: Record<string, string>;
@@ -417,6 +420,8 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
       <WalkthroughHtmlPreview
         source={codeText(child.props.children).replace(/\n$/u, "")}
         fenceRange={sourceRange}
+        walkthroughId={context.walkthroughId}
+        assets={context.assets}
         pullRequestId={context.pullRequestId}
         sourceOid={context.sourceOid}
         references={context.references}
@@ -484,7 +489,11 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
   );
 };
 
+const emptyAssets: WalkthroughAssetMetadata[] = [];
+
 const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
+  walkthroughId,
+  assets,
   pullRequestId,
   body,
   diagramBindings,
@@ -511,6 +520,8 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   onSubmitDiagramComment,
   onCreateExpandedDiagramComment,
 }: {
+  walkthroughId: string;
+  assets: WalkthroughAssetMetadata[];
   pullRequestId: string;
   body: string;
   diagramBindings: Record<string, string>;
@@ -616,6 +627,8 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   return (
     <MermaidMarkdownRenderContext.Provider
       value={{
+        walkthroughId,
+        assets,
         pullRequestId,
         sourceOid: markdownSourceOid,
         diagramBindings,
@@ -1060,6 +1073,8 @@ export function WalkthroughViewer({
   ) : null;
   const walkthroughMarkdown = (
     <WalkthroughMarkdown
+      walkthroughId={walkthrough.id}
+      assets={walkthrough.assets ?? emptyAssets}
       pullRequestId={walkthrough.pullRequestId}
       body={walkthrough.body}
       diagramBindings={walkthrough.diagramBindings}

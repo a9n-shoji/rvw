@@ -181,29 +181,40 @@ fences and diagram bindings remain available for existing Markdown documents. Th
 compatible storage envelope; the reader sees the rendered HTML. Existing Markdown and Mermaid
 Walkthroughs remain supported. Preserve their format on updates unless conversion is requested.
 
-Keep HTML visuals static and self-contained:
+Design the artifact for its content, readers, and explanatory purpose. rvw does not prescribe a
+report design system. The artifact owns typography, palette, spacing, grids, backgrounds, diagrams,
+visual hierarchy, and information density. An editorial layout, a dense comparison, or a dashboard
+are equally valid; do not default to the same card layout for every report. Prioritize intended
+appearance and reproducibility over consistency with the viewer chrome.
 
-- The viewer supplies theme colors, basic typography, and code-link/comment styling, but does not
-  add inner page padding or prescribe paragraph, table, blockquote, or code-block spacing.
-  Own the document layout in your HTML/CSS: use one outer padding layer (normally 16–24px),
-  remove the first heading’s top margin, and style tables locally as needed. Avoid stacking
-  wrapper padding and heading margins. Prefer restrained borders and shadows.
-
-- Design for a narrow reading pane as well as a full-width view. Use readable body text (normally
-  14px or larger), responsive widths, modest padding, and the rvw theme variables for foregrounds,
-  backgrounds, borders, and links. Do not assume a white background.
-- Keep short table labels readable rather than breaking each character onto a separate line.
-  For genuinely wide tables, use a horizontally scrollable wrapper instead of shrinking the text.
-  Avoid fixed-width page layouts that force the entire explanation to scroll horizontally.
-
-- Author an HTML fragment only: do not include `<!doctype>`, `<html>`, `<head>`, or `<body>`.
-  Put `<style>` directly inside the `html-preview` fence before the visual markup.
-- Write HTML and CSS only. Never add JavaScript, event handlers, forms, frames, external stylesheets,
-  fonts, images, or other network resources.
-- Use inline `<svg>` for vector art. Use `<img src="docs/image.png">` only for an existing image at the
-  Walkthrough `sourceOid`; resolve the path from the repository root, not from a Markdown file.
-- Use theme variables such as `--rvw-bg`, `--rvw-fg`, `--rvw-muted`, `--rvw-border`, and `--rvw-accent`
-  when practical, while allowing an intentional self-contained theme when the subject needs it.
+- rvw theme variables are optional conveniences. Independent palettes, light-only or dark-only designs,
+  custom type, and visually expressive treatments are supported. Padding sizes, restrained borders,
+  or neutral colors in examples are examples, not constraints or aesthetic requirements.
+- Verify readability, contrast, accessible labels, and layout at one- and two-pane widths. Let authored
+  CSS choose the report width/max-width. Local overflow containers can help wide tables or diagrams;
+  avoid accidental page-wide clipping. These are usability concerns, not a prescribed visual style.
+- Both HTML fragments and standalone `<!doctype html><html><head>…</head><body>…</body></html>` documents
+  work inside `html-preview`. Standalone body/html selectors and font declarations are preserved.
+  Safe charset/viewport/color-scheme/description metadata is supported; unsupported active content is
+  rejected explicitly. Inline external stylesheets before import.
+- `rvw walkthrough publish --html report.html --assets-dir assets --stdin --json` imports a
+  document plus its local assets. Supply ordinary metadata/references on stdin, omitting `body`.
+  The same options work with `walkthrough update <URI>` (omit `pullRequest` from update metadata).
+- With `--html`, asset paths remain relative to the HTML file's directory: for `assets/fonts/report.woff2`,
+  use `--assets-dir assets` beneath that directory and keep the original URL. Without `--html`, paths
+  are relative to the chosen assets directory. Source, metadata, and license files are not bundled.
+- Bundles support PNG/JPEG/GIF/WebP/AVIF and WOFF2 (32 files, 5 MiB each, 20 MiB total). They are stored
+  with the Walkthrough without a Git commit. Use relative URLs such as `url(assets/fonts/report.woff2)` in
+  `@font-face` or `url(assets/images/cover.png)` in backgrounds. `<img src="rvw-asset:assets/images/cover.png">`
+  explicitly selects a bundle; ordinary relative image paths also retain repository-image fallback.
+- Never add JavaScript or event handlers. Put `<style>` directly inside the fragment or document head.
+  Repository-image fallback paths resolve from the repository root, not the imported HTML directory.
+- Never embed fonts as huge base64 strings in the body. Bundle the licensed font file. No external CDN,
+  `local()` font lookup, JavaScript, event handler, frame, form, or external network resource is allowed.
+  Inline SVG remains available; bundled SVG is not supported. Unsupported CSS is an explicit error.
+- Updates omit `assets` to preserve existing bundles, or replace the entire bundle via `--assets-dir`
+  / the JSON `assets` array. Use new paths for changed bytes. Deleting a Walkthrough removes its bundle.
+  See `docs/static-artifacts.md` in the rvw repository for the protocol and import examples.
 - HTML code links use `<a href="rvw-ref:<referenceId>">meaningful label</a>` with a matching
   entry in `references`. rvw automatically applies the same code-reference chip styling as
   Markdown walkthroughs, including the file-type icon, line range (or File), and path tooltip.
@@ -219,10 +230,10 @@ Keep HTML visuals static and self-contained:
   Agent session can recover what the visual represents from the Markdown source.
 - Pretty-print the HTML. Keep each semantic element on its own source line when practical so comments
   map to useful Walkthrough line ranges. Never minify authored HTML.
-- Do not add decoration merely because HTML is available. For an ELI5 request, reduce prose and favor
-  visual hierarchy, metaphor, Before / After, or flow only where it clarifies the verified subject.
+- Choose visual hierarchy, metaphor, diagrams, or dense analytical layouts according to the explanation.
+  For an ELI5 request, prioritize comprehension; do not apply one visual template to unrelated content.
 
-Example:
+One possible compact comparison (not a required visual template):
 
 ````markdown
 ```html-preview
@@ -342,5 +353,5 @@ Use this checklist internally; do not reproduce it mechanically in the Walkthrou
 - [ ] At the endpoint, changing one condition lets the reader identify a likely divergence and code
       to inspect; a generic instruction to explore more does not suffice.
 - [ ] Every file, symbol, range, link, and binding is real and valid at the selected commit.
-- [ ] Any HTML preview is static, network-free, readable in both themes, pretty-printed, and presents the complete new Walkthrough.
+- [ ] Any HTML preview is static, network-free, readable in its intended palette at supported widths, pretty-printed, and presents the complete new Walkthrough.
 - [ ] A reviewer seeing the subject for the first time gains a useful route into the committed code.

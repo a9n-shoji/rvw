@@ -1,3 +1,4 @@
+import type { WalkthroughAssetMetadata } from "../shared/walkthrough-assets.js";
 import type { SerializedRvwError } from "../shared/errors.js";
 
 export interface PullRequestIdentity {
@@ -170,6 +171,7 @@ export interface CodeReference {
 export type WalkthroughReference = CodeReference;
 
 export interface Walkthrough {
+  assets?: WalkthroughAssetMetadata[];
   id: string;
   ref: string;
   pullRequestId: string;

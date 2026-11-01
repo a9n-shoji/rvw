@@ -1,3 +1,4 @@
+import { importWalkthroughFiles } from "./walkthrough-import.js";
 import { fork } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -810,6 +811,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "walkthrough.update",
           "walkthrough.delete",
           "walkthrough.htmlPreview",
+          "walkthrough.staticAssets",
         ],
       };
       writeOutput(options, result, `rvw protocol ${PROTOCOL_VERSION}`);
@@ -1189,11 +1191,15 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
   const walkthrough = program.command("walkthrough").description("コード参照付きwalkthroughを管理");
   walkthrough
     .command("publish")
+    .option("--html <file>", "Import a static HTML document; omit body from stdin metadata")
+    .option("--assets-dir <directory>", "Bundle local raster images and WOFF2 fonts")
     .requiredOption("--stdin", "stdinからJSONを読む")
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughを登録（viewerは開かずnavigationも変更しない）")
-    .action(async () => {
-      const input = walkthroughPublishInputSchema.parse(await readStdinJson());
+    .action(async (options: { html?: string; assetsDir?: string }) => {
+      const input = walkthroughPublishInputSchema.parse(
+        await importWalkthroughFiles(await readStdinJson(), options),
+      );
       const request = {
         pullRequest: input.pullRequest,
         sourceOid: input.sourceOid,
@@ -1202,6 +1208,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         references: input.references,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
+        ...(input.assets === undefined ? {} : { assets: input.assets }),
       };
       const published = await callService(
         "walkthrough.publish",
@@ -1251,11 +1258,15 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
   walkthrough
     .command("update")
     .argument("<walkthrough-uri>")
+    .option("--html <file>", "Import a static HTML document; omit body from stdin metadata")
+    .option("--assets-dir <directory>", "Bundle local raster images and WOFF2 fonts")
     .requiredOption("--stdin", "stdinからJSONを読む")
     .requiredOption("--json", "JSONで出力")
     .description("walkthroughを同じ参照のまま更新")
-    .action(async (uri: string) => {
-      const input = walkthroughUpdateInputSchema.parse(await readStdinJson());
+    .action(async (uri: string, options: { html?: string; assetsDir?: string }) => {
+      const input = walkthroughUpdateInputSchema.parse(
+        await importWalkthroughFiles(await readStdinJson(), options),
+      );
       const content = {
         sourceOid: input.sourceOid,
         title: input.title,
@@ -1263,6 +1274,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
         references: input.references,
         ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
         ...(input.diagramBindings === undefined ? {} : { diagramBindings: input.diagramBindings }),
+        ...(input.assets === undefined ? {} : { assets: input.assets }),
       };
       const updated = await callService(
         "walkthrough.update",

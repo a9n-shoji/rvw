@@ -1731,6 +1731,33 @@ app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) => {
       );
 });
 
+app.post("/api/fixture/walkthroughs/:walkthroughId/clone", async (context) => {
+  const source = activeWalkthroughs.find((item) => item.id === context.req.param("walkthroughId"));
+  const input = await context.req.json();
+  if (!source || activeWalkthroughs.some((item) => item.id === input.id))
+    return context.json({ ok: false }, 400);
+  const clone = {
+    ...structuredClone(source),
+    id: input.id,
+    ref: `rvw://walkthrough/${input.id}`,
+    assets: [],
+  };
+  activeWalkthroughs.push(clone);
+  bump("walkthroughs");
+  return context.json({ ok: true, walkthrough: clone });
+});
+
+const bundledWalkthroughAssets = new Map();
+app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId/asset", (context) => {
+  const asset = bundledWalkthroughAssets.get(
+    `${context.req.param("walkthroughId")}:${context.req.query("path")}`,
+  );
+  if (!asset || asset.sha256 !== context.req.query("sha256"))
+    return context.text("Missing asset", 404);
+  context.header("Content-Type", asset.mediaType);
+  return context.body(asset.bytes);
+});
+
 app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
   const walkthrough = activeWalkthroughs.find(
     (candidate) => candidate.id === context.req.param("walkthroughId"),
@@ -1742,6 +1769,18 @@ app.post("/api/fixture/walkthroughs/:walkthroughId/update", async (context) => {
     );
   }
   const input = await context.req.json();
+  if (input.assets) {
+    walkthrough.assets = input.assets.map((asset) => {
+      const bytes = Buffer.from(asset.base64, "base64");
+      const sha256 = createHash("sha256").update(bytes).digest("hex");
+      bundledWalkthroughAssets.set(`${walkthrough.id}:${asset.path}`, {
+        bytes,
+        sha256,
+        mediaType: asset.mediaType,
+      });
+      return { path: asset.path, mediaType: asset.mediaType, byteLength: bytes.length, sha256 };
+    });
+  }
   walkthrough.title = input.title;
   walkthrough.body = input.body;
   walkthrough.updatedAt = new Date().toISOString();

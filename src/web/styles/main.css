@@ -2773,7 +2773,8 @@ diffs-container > [slot="header-metadata"] {
   line-height: 1.7;
 }
 .walkthrough-markdown:has(> .walkthrough-html-preview-shell:only-child) {
-  padding: 24px clamp(8px, 2vw, 24px) 100px;
+  width: 100%;
+  padding: 12px 0 100px;
 }
 .walkthrough-markdown > :first-child {
   margin-top: 0;
@@ -6513,4 +6514,8 @@ path.structure-edge-label-leader.selected,
 }
 .deleted-comment-drafts button {
   margin: 8px 8px 0 0;
+}
+
+.main-view.two-pane .walkthrough-markdown:has(> .walkthrough-html-preview-shell:only-child) {
+  padding-inline: 0;
 }

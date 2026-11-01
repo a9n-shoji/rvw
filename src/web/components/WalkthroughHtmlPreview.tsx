@@ -1,3 +1,4 @@
+import type { WalkthroughAssetMetadata } from "../../shared/walkthrough-assets.js";
 import codeReferenceCss from "../styles/code-reference.css?inline";
 import { codeReferenceLineLabel, codeReferenceLocation } from "./CodeReferenceLink.js";
 import { fileIconDataUrl } from "./FileIcon.js";
@@ -44,7 +45,7 @@ const previewContentSecurityPolicy = [
   "script-src 'none'",
   "style-src 'unsafe-inline'",
   "img-src data:",
-  "font-src 'none'",
+  "font-src data:",
   "connect-src 'none'",
   "media-src 'none'",
   "object-src 'none'",
@@ -54,7 +55,7 @@ const previewContentSecurityPolicy = [
   "form-action 'none'",
 ].join("; ");
 
-function themeCss(themePreference: ThemePreference): string {
+function themeCss(themePreference: ThemePreference, standalone: boolean): string {
   const dark = `
     --rvw-bg: #262624;
     --rvw-fg: #ecebe5;
@@ -63,7 +64,7 @@ function themeCss(themePreference: ThemePreference): string {
     --rvw-accent: #a9c7e8;
     --rvw-panel: #30302d;
     --rvw-highlight: #d6aa81;
-    color-scheme: dark;`;
+    ${standalone ? "" : "color-scheme: dark;"}`;
   const light = `
     --rvw-bg: #fffefb;
     --rvw-fg: #30302b;
@@ -72,27 +73,16 @@ function themeCss(themePreference: ThemePreference): string {
     --rvw-accent: #37658c;
     --rvw-panel: #f5f4ee;
     --rvw-highlight: #a66a43;
-    color-scheme: light;`;
-  if (themePreference === "dark") return `:root {${dark}}`;
-  if (themePreference === "light") return `:root {${light}}`;
-  return `:root {${light} color-scheme: light dark;} @media (prefers-color-scheme: dark) { :root {${dark}} }`;
+    ${standalone ? "" : "color-scheme: light;"}`;
+  if (themePreference === "dark") return `:where(:root) {${dark}}`;
+  if (themePreference === "light") return `:where(:root) {${light}}`;
+  return `:where(:root) {${light}} @media (prefers-color-scheme: dark) { :where(:root) {${dark}} }`;
 }
 
-function previewBaseCss(themePreference: ThemePreference): string {
-  return `${themeCss(themePreference)}
-    *, *::before, *::after { box-sizing: border-box; }
-    html { background: transparent; }
-    body { margin: 0; overflow-x: auto; overflow-y: hidden; background: var(--rvw-bg); color: var(--rvw-fg); }
-    body, button, input, select, textarea { font: 15px/1.75 var(--rvw-font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
-    code, kbd, pre { font-family: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); }
-    img, svg { max-width: 100%; }
-    :where(h1, h2, h3, h4) { line-height: 1.35; letter-spacing: -0.025em; font-weight: 600; }
-    :where(h1) { font-size: 2em; }
-    :where(h2) { font-size: 1.5em; }
-    :where(a) { text-underline-offset: 3px; }
-    a { color: var(--rvw-accent); cursor: pointer; }
-    button, input, select, textarea { color: inherit; }
-    .rvw-preview-root { min-width: 0; display: flow-root; }
+function previewBaseCss(themePreference: ThemePreference, standalone: boolean): string {
+  return `${themeCss(themePreference, standalone)}
+    ${standalone ? "" : `:where(html) { background: var(--rvw-bg); color: var(--rvw-fg); font: 15px/1.5 ui-sans-serif, sans-serif; } :where(a) { color: var(--rvw-accent); }`}
+    ${standalone ? "" : ".rvw-preview-root { min-width: 0; }"}
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
     [data-rvw-comment-surface="true"] { cursor: default; }
     ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
@@ -109,15 +99,14 @@ const previewCommentCss = `
   }
 `;
 
-function srcdoc(html: string, themePreference: ThemePreference): string {
-  return `<meta http-equiv="Content-Security-Policy" content="${previewContentSecurityPolicy}">
-<meta name="color-scheme" content="light dark">
-<style>${previewBaseCss(themePreference)}</style>
-<div class="rvw-preview-root" data-pane-find-text>${html}</div>
-<style>
-:root { --accent: var(--rvw-accent); --line: var(--rvw-border); --panel: var(--rvw-bg); --muted: var(--rvw-muted); --mono: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); --accent-soft: color-mix(in srgb, var(--rvw-accent) 12%, var(--rvw-bg)); }
-${codeReferenceCss}
-${previewCommentCss}</style>`;
+function srcdoc(html: string, themePreference: ThemePreference, standalone: boolean): string {
+  const security = `<meta http-equiv="Content-Security-Policy" content="${previewContentSecurityPolicy}"><style>${previewBaseCss(themePreference, standalone)}</style>`;
+  const interaction = `<style>.code-inline-reference { --accent: var(--rvw-accent); --line: var(--rvw-border); --panel: var(--rvw-bg); --muted: var(--rvw-muted); --mono: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); --accent-soft: color-mix(in srgb, var(--rvw-accent) 12%, var(--rvw-bg)); } ${codeReferenceCss} ${previewCommentCss}</style>`;
+  if (standalone)
+    return html
+      .replace(/<head([^>]*)>/u, `<head$1>${security}`)
+      .replace(/<\/body>/u, `${interaction}</body>`);
+  return `${security}<style>:where(body) { margin: 0; }</style><div class="rvw-preview-root" data-pane-find-text>${html}</div>${interaction}`;
 }
 
 function rangeFromElement(element: Element | null): MarkdownSourceRange | null {
@@ -228,6 +217,8 @@ async function resolveImages(
 }
 
 export function WalkthroughHtmlPreview({
+  walkthroughId,
+  assets,
   source,
   fenceRange,
   pullRequestId,
@@ -243,6 +234,8 @@ export function WalkthroughHtmlPreview({
   onCommentRange,
   onActivateComment,
 }: {
+  walkthroughId: string;
+  assets: WalkthroughAssetMetadata[];
   source: string;
   fenceRange: MarkdownSourceRange;
   pullRequestId: string;
@@ -262,6 +255,11 @@ export function WalkthroughHtmlPreview({
   const frameShellRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const textRangesRef = useRef(new WeakMap<Text, MarkdownSourceRange>());
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+  const assetVersion = assets.map((asset) => `${asset.path}:${asset.sha256}`).join("|");
+  const [loadedAssetVersion, setLoadedAssetVersion] = useState("");
+  const [assetError, setAssetError] = useState<string | null>(null);
   const [resolvedImages, setResolvedImages] = useState<Map<string, string | null>>(new Map());
   const [frameHeight, setFrameHeight] = useState(minimumFrameHeight);
   const [overlayAction, setOverlayAction] = useState<HtmlPreviewOverlayAction | null>(null);
@@ -284,22 +282,49 @@ export function WalkthroughHtmlPreview({
 
   useEffect(() => {
     const controller = new AbortController();
+    setAssetError(null);
+    setLoadedAssetVersion("");
     setResolvedImages(new Map());
-    if (authoredRepositoryImages.length > 0) {
-      void resolveImages(
+    const load = async (): Promise<void> => {
+      const manifest = assetsRef.current;
+      const images = await resolveImages(
         pullRequestId,
         sourceOid,
-        authoredRepositoryImages,
+        authoredRepositoryImages.filter((path) => !manifest.some((asset) => asset.path === path)),
         controller.signal,
-      ).then(
-        (images) => {
-          if (!controller.signal.aborted) setResolvedImages(images);
-        },
-        () => undefined,
       );
-    }
+      for (const asset of manifest) {
+        const response = await fetch(
+          `/api/pull-requests/${encodeURIComponent(pullRequestId)}/walkthroughs/${encodeURIComponent(walkthroughId)}/asset?${new URLSearchParams({ path: asset.path, sha256: asset.sha256 })}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error(`Bundled asset unavailable: ${asset.path}`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length !== asset.byteLength)
+          throw new Error(`Bundled asset length mismatch: ${asset.path}`);
+        const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+        const hash = [...new Uint8Array(digest)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+        if (
+          hash !== asset.sha256 ||
+          response.headers.get("content-type")?.split(";", 1)[0] !== asset.mediaType
+        )
+          throw new Error(`Bundled asset integrity mismatch: ${asset.path}`);
+        images.set(asset.path, bytesToDataUrl(bytes, asset.mediaType));
+      }
+      if (!controller.signal.aborted) {
+        setAssetError(null);
+        setLoadedAssetVersion(assetVersion);
+        setResolvedImages(images);
+      }
+    };
+    void load().catch((error: unknown) => {
+      if (!controller.signal.aborted)
+        setAssetError(error instanceof Error ? error.message : "Bundled assets unavailable.");
+    });
     return () => controller.abort();
-  }, [authoredRepositoryImages, pullRequestId, sourceOid]);
+  }, [assetVersion, walkthroughId, authoredRepositoryImages, pullRequestId, sourceOid]);
 
   const updateLayout = useCallback((): void => {
     const iframe = iframeRef.current;
@@ -366,6 +391,10 @@ export function WalkthroughHtmlPreview({
       detachDocument();
       const document = iframe.contentDocument;
       if (!document) return;
+      if (rendered.value?.standalone) {
+        document.body.classList.add("rvw-preview-root");
+        document.body.setAttribute("data-pane-find-text", "");
+      }
       // Decorate attributes only: saved DOM paths and text offsets must remain unchanged.
       for (const link of document.querySelectorAll<HTMLAnchorElement>('a[href^="rvw-ref:"]')) {
         const reference = references.get(link.getAttribute("href")!.slice("rvw-ref:".length));
@@ -580,7 +609,18 @@ export function WalkthroughHtmlPreview({
       const hostResizeObserver = new ResizeObserver(updateLayout);
       hostResizeObserver.observe(host);
       updateLayout();
+      void document.fonts.ready.then(() => {
+        if (iframe.contentDocument === document) updateLayout();
+      });
+      const fontError = (): void => {
+        if (iframe.contentDocument === document)
+          setAssetError("A bundled font could not be decoded. Supply a valid WOFF2 font.");
+      };
+      document.fonts.addEventListener("loadingdone", updateLayout);
+      document.fonts.addEventListener("loadingerror", fontError);
       detachDocument = () => {
+        document.fonts.removeEventListener("loadingerror", fontError);
+        document.fonts.removeEventListener("loadingdone", updateLayout);
         document.removeEventListener("selectionchange", setSelectionAction);
         document.removeEventListener("pointerup", setSelectionAction);
         document.removeEventListener("pointermove", onPointerMove);
@@ -661,6 +701,12 @@ export function WalkthroughHtmlPreview({
     element.scrollIntoView({ block: "center", inline: "nearest" });
   }, [navigationLine, rendered.value]);
 
+  if (assetError)
+    return (
+      <div role="alert" className="walkthrough-html-preview-error">
+        {assetError}
+      </div>
+    );
   if (rendered.error) {
     return (
       <div className="walkthrough-html-preview-error" role="alert">
@@ -669,6 +715,12 @@ export function WalkthroughHtmlPreview({
     );
   }
 
+  if (assets.length > 0 && loadedAssetVersion !== assetVersion)
+    return (
+      <div className="walkthrough-html-preview-shell" role="status">
+        アセットを読み込んでいます…
+      </div>
+    );
   return (
     <div
       className="walkthrough-html-preview-shell"
@@ -689,7 +741,11 @@ export function WalkthroughHtmlPreview({
           title={`Walkthrough HTML preview L${fenceRange.startLine}`}
           data-pane-find-child-document
           sandbox="allow-same-origin"
-          srcDoc={srcdoc(rendered.value?.html ?? "", themePreference)}
+          srcDoc={srcdoc(
+            rendered.value?.html ?? "",
+            themePreference,
+            rendered.value?.standalone ?? false,
+          )}
           style={{ height: frameHeight }}
         />
         <HtmlPreviewOverlay

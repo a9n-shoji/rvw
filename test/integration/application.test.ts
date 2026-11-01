@@ -1,7 +1,7 @@
 import { hashDocument } from "../../src/domain/pr-markdown.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1215,6 +1215,88 @@ describe("RvwService commit workflow", () => {
     });
     expect(secondPage.comments.map(({ comment }) => comment.ref)).toEqual([unresolvedComment.ref]);
     expect(secondPage.page.hasMore).toBe(false);
+  });
+
+  it("persists bundled artifact assets atomically across reopen, update and deletion", async () => {
+    const { repository, firstHead, service, database, dbFile } = setup("rvw-artifact-assets-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const input = {
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Editorial",
+      body: `~~~html-preview\n${readFileSync("test/fixtures/static-artifact/editorial.html", "utf8")}\n~~~`,
+      references: [
+        {
+          id: "handler",
+          label: "Handler",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+      assets: [
+        {
+          path: "assets/editorial.woff2",
+          mediaType: "font/woff2" as const,
+          base64: readFileSync("test/fixtures/static-artifact/assets/editorial.woff2").toString(
+            "base64",
+          ),
+        },
+        {
+          path: "assets/pixel.png",
+          mediaType: "image/png" as const,
+          base64: readFileSync("test/fixtures/static-artifact/assets/pixel.png").toString("base64"),
+        },
+      ],
+    };
+    const saved = await service.publishWalkthrough(input);
+    expect(saved.assets).toHaveLength(2);
+    const reopened = new RvwDatabase({ filePath: dbFile, migrationsDirectory: "./migrations" });
+    databases.push(reopened);
+    expect(reopened.getWalkthrough(saved.id)?.assets).toEqual(saved.assets);
+    const asset = saved.assets!.find((item) => item.path === "assets/editorial.woff2")!;
+    expect(
+      Buffer.from(
+        service.getWalkthroughAsset(opened.pullRequest.id, saved.id, asset.path, asset.sha256)
+          .content,
+      ).toString("base64"),
+    ).toBe(input.assets[0]!.base64);
+    expect(() =>
+      service.getWalkthroughAsset(opened.pullRequest.id, saved.id, asset.path, "stale"),
+    ).toThrow();
+    await expect(service.updateWalkthrough(saved.ref, { ...input, assets: [] })).rejects.toThrow(
+      /Missing/,
+    );
+    expect(database.getWalkthrough(saved.id)?.assets).toEqual(saved.assets);
+    const changedImage = Buffer.from(input.assets[1]!.base64, "base64");
+    changedImage[changedImage.length - 1] = changedImage[changedImage.length - 1]! ^ 1;
+    await expect(
+      service.updateWalkthrough(saved.ref, {
+        ...input,
+        assets: [
+          input.assets[0]!,
+          { ...input.assets[1]!, base64: changedImage.toString("base64") },
+        ],
+      }),
+    ).rejects.toThrow(/immutable/);
+    const metadata = {
+      sourceOid: input.sourceOid,
+      title: input.title,
+      body: input.body,
+      references: input.references,
+    };
+    const updated = await service.updateWalkthrough(saved.ref, { ...metadata, title: "Updated" });
+    expect(updated.assets).toEqual(saved.assets);
+    await service.updateWalkthrough(saved.ref, {
+      ...metadata,
+      body: "[Handler](rvw-ref:handler)",
+      assets: [],
+    });
+    expect(database.listWalkthroughAssets(saved.id)).toEqual([]);
+    await service.updateWalkthrough(saved.ref, input);
+    service.deleteWalkthroughByUri(saved.ref);
+    expect(database.listWalkthroughAssets(saved.id)).toEqual([]);
   });
 
   it("persists exact HTML targets and rejects stale selections without remapping changed bodies", async () => {
