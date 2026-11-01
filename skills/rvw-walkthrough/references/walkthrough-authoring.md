@@ -183,9 +183,11 @@ Walkthroughs remain supported. Preserve their format on updates unless conversio
 
 Keep HTML visuals static and self-contained:
 
-- Prefer the built-in warm neutral document styling, readable typography, and subtle table headers.
-  Add CSS for the explanation’s layout rather than replacing the baseline with heavy borders,
-  shadows, or saturated panels. Authored styles can still override these defaults when useful.
+- The viewer supplies theme colors, basic typography, and code-link/comment styling, but does not
+  add inner page padding or prescribe paragraph, table, blockquote, or code-block spacing.
+  Own the document layout in your HTML/CSS: use one outer padding layer (normally 16–24px),
+  remove the first heading’s top margin, and style tables locally as needed. Avoid stacking
+  wrapper padding and heading margins. Prefer restrained borders and shadows.
 
 - Design for a narrow reading pane as well as a full-width view. Use readable body text (normally
   14px or larger), responsive widths, modest padding, and the rvw theme variables for foregrounds,

@@ -86,20 +86,13 @@ function previewBaseCss(themePreference: ThemePreference): string {
     body, button, input, select, textarea { font: 15px/1.75 var(--rvw-font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
     code, kbd, pre { font-family: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); }
     img, svg { max-width: 100%; }
-    :where(h1, h2, h3, h4) { line-height: 1.35; letter-spacing: -0.025em; font-weight: 600; margin: 1.6em 0 0.65em; }
+    :where(h1, h2, h3, h4) { line-height: 1.35; letter-spacing: -0.025em; font-weight: 600; }
     :where(h1) { font-size: 2em; }
     :where(h2) { font-size: 1.5em; }
-    :where(p, ul, ol) { margin: 0.9em 0; }
-    :where(table) { width: 100%; border-collapse: collapse; font-size: 0.93em; }
-    :where(th, td) { padding: 12px 16px; border-bottom: 1px solid var(--rvw-border); text-align: left; vertical-align: top; }
-    :where(th) { font-weight: 600; background: var(--rvw-panel); }
-    :where(blockquote) { margin: 1.4em 0; padding: 0.25em 1.2em; border-left: 3px solid var(--rvw-border); color: var(--rvw-muted); }
-    :where(pre) { padding: 16px; overflow: auto; border-radius: 8px; background: var(--rvw-panel); }
     :where(a) { text-underline-offset: 3px; }
     a { color: var(--rvw-accent); cursor: pointer; }
     button, input, select, textarea { color: inherit; }
-    .rvw-preview-root { min-width: 0; padding: 28px; }
-    @media (max-width: 480px) { .rvw-preview-root { padding: 12px; } }
+    .rvw-preview-root { min-width: 0; display: flow-root; }
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
     [data-rvw-comment-surface="true"] { cursor: default; }
     ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
