@@ -197,6 +197,10 @@ appearance and reproducibility over consistency with the viewer chrome.
 - Verify readability, contrast, accessible labels, and layout at one- and two-pane widths. Let authored
   CSS choose the report width/max-width. Local overflow containers can help wide tables or diagrams;
   avoid accidental page-wide clipping. These are usability concerns, not a prescribed visual style.
+- Verify selected text is readable too. rvw supplies an inherited selection background/text color
+  pair as a low-priority fallback. Override `::selection` in your own CSS when another palette fits
+  the artifact better; set both `background-color` and `color` together and check contrast on nested
+  emphasis and code as well as body text. Selection colors are part of the artifact's visual design.
 - Both HTML fragments and standalone `<!doctype html><html><head>…</head><body>…</body></html>` documents
   work inside `html-preview`. Standalone body/html selectors and font declarations are preserved.
   Safe charset/viewport/color-scheme/description metadata is supported; unsupported active content is
