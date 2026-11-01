@@ -38,10 +38,7 @@ class FakeGitHub implements GitHubPort {
     );
   }
 
-  getPullRequest(_reference?: string, _cwd?: string, options: { allowClosed?: boolean } = {}) {
-    if (this.pullRequest.state !== "OPEN" && !options.allowClosed) {
-      return Promise.reject(new Error("Pull Request is not open"));
-    }
+  getPullRequest() {
     return Promise.resolve(this.pullRequest);
   }
 
@@ -771,13 +768,24 @@ describe("RvwService commit workflow", () => {
     expect(git(repository, "rev-parse", "HEAD")).toBe(firstHead);
   });
 
-  it("rejects a new closed Pull Request but lets individual refresh update saved states", async () => {
-    const unopened = setup("rvw-unopened-closed-");
-    unopened.fake.pullRequest = { ...unopened.fake.pullRequest, state: "CLOSED" };
-    await expect(unopened.service.openPullRequest(undefined, unopened.repository)).rejects.toThrow(
-      "Pull Request is not open",
-    );
+  it.each(["CLOSED", "MERGED"] as const)(
+    "registers a new %s PR and reopens it offline",
+    async (state) => {
+      const { repository, fake, service, firstHead } = setup("rvw-new-finished-");
+      fake.pullRequest = { ...fake.pullRequest, state };
+      const opened = await service.openPullRequest(fake.pullRequest.url, repository);
+      expect(opened.fromCache).toBe(false);
+      expect(opened.pullRequest).toMatchObject({ githubState: state, latestHeadOid: firstHead });
+      expect(service.listPullRequests({ hideClosedOrMerged: false }).items).toHaveLength(1);
+      expect(service.listPullRequests({}).items).toHaveLength(0);
+      vi.spyOn(fake, "getPullRequest").mockRejectedValue(new Error("offline"));
+      const cached = await service.openPullRequest(fake.pullRequest.url, repository);
+      expect(cached.fromCache).toBe(true);
+      expect(cached.pullRequest.id).toBe(opened.pullRequest.id);
+    },
+  );
 
+  it("lets individual refresh update saved states", async () => {
     const saved = setup("rvw-saved-merged-");
     const opened = await saved.service.openPullRequest(undefined, saved.repository);
     saved.fake.pullRequest = {
