@@ -5,6 +5,7 @@ import { RvwDatabase } from "../../src/infrastructure/db/database.js";
 import { GitClient } from "../../src/infrastructure/git/git-client.js";
 import type { GitHubPort } from "../../src/infrastructure/github/github-client.js";
 import { createApp } from "../../src/server/app.js";
+import { MAX_HTTP_BODY_BYTES } from "../../src/shared/constants.js";
 import { startServer } from "../../src/server/start-server.js";
 import { RvwError } from "../../src/shared/errors.js";
 import { createGitRepository, git } from "../fixtures/git-repository.js";
@@ -73,6 +74,64 @@ function registerPullRequest(
 }
 
 describe("local HTTP security", () => {
+  it("sets browser defenses on successful and rejected requests", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    try {
+      const app = createApp(new RvwService(database, new GitClient(), github), {
+        security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+      });
+      for (const host of ["127.0.0.1:4321", "evil.example"]) {
+        const response = await app.request("http://127.0.0.1:4321/api/preferences/theme", {
+          headers: { host },
+        });
+        expect(response.status).toBe(host === "evil.example" ? 403 : 200);
+        expect(response.headers.get("x-frame-options")).toBe("DENY");
+        expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+        expect(response.headers.get("content-security-policy")).toContain("connect-src 'self'");
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      }
+    } finally {
+      database.close();
+    }
+  });
+
+  it("rejects oversized declared and streamed bodies before parsing or writing", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    try {
+      const app = createApp(new RvwService(database, new GitClient(), github), {
+        security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+      });
+      const original = database.getThemePreference();
+      for (const declared of [true, false]) {
+        const response = await app.request("http://127.0.0.1:4321/api/preferences/theme", {
+          method: "POST",
+          headers: {
+            host: "127.0.0.1:4321",
+            "content-type": "application/json",
+            ...(declared ? { "content-length": String(MAX_HTTP_BODY_BYTES + 1) } : {}),
+          },
+          body: declared ? "{" : " ".repeat(MAX_HTTP_BODY_BYTES + 1),
+        });
+        expect(response.status).toBe(413);
+        expect(await response.json()).toMatchObject({
+          ok: false,
+          error: { code: "INVALID_INPUT" },
+        });
+        expect(database.getThemePreference()).toBe(original);
+      }
+      const body = JSON.stringify({ themePreference: "dark" });
+      const accepted = await app.request("http://127.0.0.1:4321/api/preferences/theme", {
+        method: "POST",
+        headers: { host: "127.0.0.1:4321", "content-type": "application/json" },
+        body: body.padEnd(MAX_HTTP_BODY_BYTES),
+      });
+      expect(accepted.status).toBe(200);
+      expect(database.getThemePreference()).toBe("dark");
+    } finally {
+      database.close();
+    }
+  });
+
   it("accepts human per-post grants, rejects cross-origin grants, and keeps agent replies unprivileged", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const pullRequestId = registerPullRequest(database);

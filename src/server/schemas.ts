@@ -6,6 +6,7 @@ import {
   GIT_OBJECT_ID_PATTERN,
   MAX_AUTHOR_LABEL_CHARACTERS,
   MAX_COMMENT_BODY_BYTES,
+  MAX_CODE_REFERENCES,
   MAX_PULL_REQUEST_LIST_LIMIT,
 } from "../shared/constants.js";
 import { codeReferenceInputSchema } from "../application/agent-command-schemas.js";
@@ -82,7 +83,7 @@ export const createCommentSchema = z
       .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
     relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
-    references: z.array(codeReferenceInputSchema).optional(),
+    references: z.array(codeReferenceInputSchema).max(MAX_CODE_REFERENCES).optional(),
   })
   .superRefine((input, context) => {
     if ((input.references?.length ?? 0) > 0 && !input.relatedCommitOid) {
@@ -103,7 +104,7 @@ export const replySchema = z
       .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
     relatedCommitOid: z.string().regex(GIT_OBJECT_ID_PATTERN).nullable().optional(),
     authorLabel: z.string().max(MAX_AUTHOR_LABEL_CHARACTERS).nullable().optional(),
-    references: z.array(codeReferenceInputSchema).optional(),
+    references: z.array(codeReferenceInputSchema).max(MAX_CODE_REFERENCES).optional(),
   })
   .superRefine((input, context) => {
     if ((input.references?.length ?? 0) > 0 && !input.relatedCommitOid) {
@@ -120,7 +121,7 @@ export const editCommentPostSchema = z.object({
     .string()
     .min(1)
     .refine((value) => Buffer.byteLength(value, "utf8") <= MAX_COMMENT_BODY_BYTES),
-  references: z.array(codeReferenceInputSchema).optional(),
+  references: z.array(codeReferenceInputSchema).max(MAX_CODE_REFERENCES).optional(),
 });
 
 const placementDocumentRefSchema = z.discriminatedUnion("kind", [

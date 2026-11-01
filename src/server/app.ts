@@ -2,11 +2,16 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { z } from "zod";
 import type { RvwService } from "../application/rvw-service.js";
 import type { DiffDocumentRef, DocumentRef, StructureSourceLocator } from "../domain/models.js";
-import { CONTENT_FINGERPRINT_PATTERN, GIT_OBJECT_ID_PATTERN } from "../shared/constants.js";
+import {
+  CONTENT_FINGERPRINT_PATTERN,
+  GIT_OBJECT_ID_PATTERN,
+  MAX_HTTP_BODY_BYTES,
+} from "../shared/constants.js";
 import { asRvwError, RvwError } from "../shared/errors.js";
 import {
   detectImageContentType,
@@ -27,6 +32,7 @@ import {
   structureDeleteSchema,
   themePreferenceSchema,
 } from "./schemas.js";
+import { securityHeaders } from "./security-headers.js";
 
 export interface ServerSecurityContext {
   expectedHost: string | null;
@@ -142,6 +148,7 @@ function documentRefFromQuery(pullRequestId: string, query: Record<string, strin
 
 export function createApp(service: RvwService, options: CreateAppOptions): Hono {
   const app = new Hono();
+  app.use("*", securityHeaders);
 
   app.use("*", async (context, next) => {
     const expectedHost = options.security.expectedHost;
@@ -166,6 +173,18 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
     }
     await next();
   });
+
+  app.use(
+    "/api/*",
+    bodyLimit({
+      maxSize: MAX_HTTP_BODY_BYTES,
+      onError: () => {
+        throw new RvwError("INVALID_INPUT", "HTTP request bodyは8 MiB以下にしてください。", {
+          status: 413,
+        });
+      },
+    }),
+  );
 
   app.onError((error, context) => {
     const rvwError =
