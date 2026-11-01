@@ -3940,3 +3940,24 @@ This supersedes the earlier warm-neutral artifact styling and fragment-only/font
 Keep Walkthrough and html-preview as the model/storage envelope. Accept parsed standalone documents without stripping html/head/body. Add optional bounded asset envelopes over the existing CLI/socket protocol and store decoded bytes in a per-Walkthrough SQLite BLOB table, transactionally with content. No files need to enter Git, and no filesystem paths reach the server. Omitted assets preserve; explicit assets replace; cascade deletion cleans up. Immutable existing paths require changed resources to use new names, making content changes explicit. Hash-checked, PR-scoped reads prevent mixing a stale document with new asset bytes.
 
 Use css-tree AST parsing instead of regex relaxation. Permit only bundled raster images and WOFF2 in CSS resource positions; no external URL, import, local font lookup, executable function, or unparsed syntax. SVG continues inline under the existing allowlist; uploaded SVG and external stylesheets remain unsupported. Font headers and declared size bounds are validated, with browser font decoding as a final boundary. Parent resolves bytes into data URLs; CSP permits data fonts/images but continues denying scripts/network/frames/forms. No generic hosting or runtime is introduced.
+
+## 2026-11-01: Shard E2E across isolated CI runners
+
+The PR #116 baseline spent 6m23s of its 8m04s critical job in serial build/E2E. Run quality/unit checks
+and four file-level Playwright shards concurrently. Each shard owns its servers and runner; retain
+one worker and file-local order because the fixtures are mutable. Reuse the required `test` name as
+an always-running aggregate that fails unless quality and every shard succeed, including on skipped
+or cancelled dependencies. Keep all existing tests and platform/security checks. GitHub-native
+failure artifacts preserve debugging evidence for seven days. This increases runner setup/build
+minutes but avoids a worker-isolation rewrite or a cache correctness dependency; see `ci.md`.
+
+## 2026-11-01: Balance eight E2E shards by file duration
+
+The first four-shard run reduced CI to 3m19s, but the largest shard took 3m15s and serial quality/unit
+checks took 2m10s. Native eight-way sharding produced an empty shard and a 68-test shard. Replace it
+in CI with deterministic longest-file-first assignment using committed timing hints and automatic
+filesystem discovery. Unknown files receive a conservative default estimate and are always included;
+stale hints cannot select removed files. Preserve file order and one worker per isolated runner.
+Split quality and unit/integration into independent jobs; require both plus all E2E shards at the
+existing `test` gate. Download only Chromium's headless shell. More runner setup work is acceptable
+for shorter feedback on this public repository; no tests or platform/security gates are removed.
