@@ -4010,3 +4010,18 @@ Advance the public protocol to 7 and the private socket protocol to 9. Every bun
 7 so an older watcher cannot silently interpret task-wide authorization as per-post permission.
 Forward migration defaults old posts to false and preserves event sequences; install the updated
 Skills and restart an old runtime before using the new workflow.
+
+## 2026-11-01: Harden the personal local viewer boundary
+
+Keep the personal-machine trust model without adding HTTP authentication. Reject framing of the
+viewer, constrain scripts and connections to its own origin, and forbid inline scripts, eval,
+workers, plugins, base changes and form submission. Allow inline styles for existing React and
+Mermaid rendering, data/blob images for previews and exports, and bundled data-URL fonts. The srcdoc preview inherits the
+parent CSP and retains its stricter script-free policy and sandbox. SVG responses retain their
+separate sandbox CSP. Apply the production headers to browser fixtures so rendering tests exercise
+the same constraints.
+
+Limit API request bodies to 8 MiB before JSON parsing, including requests without Content-Length.
+This leaves room for UTF-8 and JSON escaping of valid comment references while bounding buffering.
+Apply the existing 200-reference domain limit at the HTTP schema boundary too. These changes extend
+the security specification; shared-machine user isolation remains outside the product scope.

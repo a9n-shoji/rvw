@@ -4,6 +4,7 @@ import path from "node:path";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { securityHeaders } from "../../src/server/security-headers.ts";
 import {
   createContractStructures,
   fullStackRepositoryPaths,
@@ -455,6 +456,7 @@ function enrichCommentTarget(target) {
 }
 
 const app = new Hono();
+app.use("*", securityHeaders);
 app.use("*", async (context, next) => {
   if (context.req.header("host") !== `${host}:${port}`) {
     return context.json(

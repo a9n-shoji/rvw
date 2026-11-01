@@ -2096,6 +2096,13 @@ CLIは`--yes`必須とする。不可逆であり、明示的な利用者authori
   `--port 0`を明示した場合だけ空きportを自動選択する。既定portが使用中ならsilentに別portへ移らず、
   別の`--port`または`--port 0`を案内する明示errorを返す
 - expected Hostを検証
+- ViewerはCSP `frame-ancestors 'none'`と`X-Frame-Options: DENY`で埋め込みを拒否する。
+  scriptと通信はsame-originのみ、inline script・eval・worker・object・form送信・base変更を禁止する。
+  React/Mermaidのinline style、画像data/blob URL、同梱fontのdata URL、same-origin HTML preview frameは許可する。
+  SVG assetは既存の専用sandbox CSPを維持する
+- HTTP API bodyはJSON解析前に8 MiBへ制限し、超過は413の構造化errorを返す。
+  comment reference配列は既存domain上限の200件へHTTP schemaでも制限する
+- 個人PCの同一OS userを信頼する。共有マシンのuser分離やHTTP token認証は対象外とする
 - write APIは`application/json`だけ
 - same-origin以外のwriteを拒否、CORSを有効にしない
 - GitHub attachment readも存在するFetch Metadataと`Origin`でsame-originへ限定し、画像responseへ
