@@ -6501,3 +6501,25 @@ path.structure-edge-label-leader.selected,
     min-height: 44px;
   }
 }
+
+.comment-change-permission {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-block: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: normal;
+}
+
+.comment-change-permission input {
+  width: auto;
+  margin: 0;
+}
+
+.inline-comment-actions {
+  flex-wrap: wrap;
+}
+
+.inline-comment-actions .comment-change-permission {
+  margin-right: auto;
+}

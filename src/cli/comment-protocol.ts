@@ -162,6 +162,7 @@ export function formatCommentListOutput(
           rootPost: {
             body: preview.value,
             bodyTruncated: preview.truncated,
+            allowChanges: rootPost.allowChanges,
             authorLabel: rootPost.authorLabel,
             relatedCommitOid: rootPost.relatedCommitOid,
             createdAt: rootPost.createdAt,

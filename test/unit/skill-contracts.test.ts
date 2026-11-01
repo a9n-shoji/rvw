@@ -84,7 +84,7 @@ describe("bundled Skill code-reference guidance", () => {
     expect(structureSkill).toContain("Do not author backbone layers or stages");
     expect(structureSkill).toContain("primaryBackbone");
     expect(structureSkill).not.toContain("primarySpine");
-    expect(structureSkill).toContain("Require `protocolVersion` 6");
+    expect(structureSkill).toContain("Require `protocolVersion` 7");
     expect(structureSkill).toContain("`structure.presentation`");
     expect(structureSkill).toMatch(
       /Require only the operation capabilities the task uses:[\s\S]*`structure.read` for\s+`get`[\s\S]*`structure.list` for listing or uncertain-publication recovery[\s\S]*`structure.preview` before\s+publish or update/,
@@ -313,8 +313,8 @@ describe("rvw review composition contract", () => {
     );
   });
 
-  it("preflights protocol v6 before delegating an Artifact operation", () => {
-    expect(reviewComposeSkill).toContain("Require `protocolVersion` 6");
+  it("preflights protocol v7 before delegating an Artifact operation", () => {
+    expect(reviewComposeSkill).toContain("Require `protocolVersion` 7");
     expect(reviewComposeSkill).toMatch(
       /Immediately\s+before every producer invocation, including contextual discovery or a current-value read, require\s+only the capabilities that invocation actually uses/,
     );

@@ -47,3 +47,12 @@ Node／Edgeのtombstoneとpublish冪等性台帳も保持します。台帳はha
 新CLIは旧browser管理runtimeを再利用せず、protocol不一致として拒否します。更新前に起動していたruntimeは、
 従来どおり全tabを閉じるか、起動端末でCtrl+Cを使って停止してから新しいrvwを起動してください。
 新しい`rvw stop`は旧runtimeのPIDを強制終了しません。DBの手動削除やresetは不要です。
+
+## Protocol 7: 投稿ごとの変更許可
+
+comment post出力へ`allowChanges`を追加し、watch eventは投稿だけでなくpermission変更も通知する。
+`comment.changePermission` capabilityを追加し、全5 Skillはprotocol 7を要求する。旧Skillがtask-wideの
+編集許可を投稿単位の許可として扱わないよう、旧protocolとの混在を拒否する。
+内部socketは9へ進め、旧runtimeは停止・再起動する。既存postの変更許可はmigration 027でfalseにする。
+watch cursorのsequenceは保持する。旧watch task stateは回収・予約解放に使えるが、新規claimは拒否する。
+新規watch taskはmode指定を受け付けず、投稿ごとの許可だけを使う。

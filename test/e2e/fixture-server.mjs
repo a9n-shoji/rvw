@@ -2097,6 +2097,7 @@ app.post("/api/comments", async (context) => {
         id: randomUUID(),
         commentId: id,
         body: input.body,
+        allowChanges: input.allowChanges ?? false,
         relatedCommitOid: input.relatedCommitOid ?? null,
         references: input.references ?? [],
         authorLabel: input.authorLabel,
@@ -2121,6 +2122,7 @@ app.post("/api/comments/:id/posts", async (context) => {
     id: randomUUID(),
     commentId: comment.id,
     body: input.body,
+    allowChanges: input.allowChanges ?? false,
     relatedCommitOid: input.relatedCommitOid,
     references: input.references ?? [],
     authorLabel: input.authorLabel,
@@ -2133,6 +2135,17 @@ app.post("/api/comments/:id/posts", async (context) => {
   comment.updatedAt = post.createdAt;
   bump("comments");
   return context.json({ ok: true, post, comment }, 201);
+});
+
+app.patch("/api/comments/:id/posts/:postId/permission", async (context) => {
+  const input = await context.req.json();
+  const comment = comments.find((item) => item.id === context.req.param("id"));
+  const post = comment?.posts.find((item) => item.id === context.req.param("postId"));
+  if (!post) return context.json({ ok: false }, 404);
+  post.allowChanges = input.allowChanges;
+  comment.updatedAt = post.updatedAt = new Date().toISOString();
+  bump("comments");
+  return context.json({ ok: true, comment });
 });
 
 app.patch("/api/comments/:id/posts/:postId", async (context) => {

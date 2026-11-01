@@ -388,6 +388,7 @@ export type CommentTarget =
     };
 
 export interface CommentPost {
+  allowChanges: boolean;
   id: string;
   commentId: string;
   body: string;
@@ -403,6 +404,8 @@ export interface CommentPost {
 export type CommentPostModifier = "human" | "agent";
 
 export interface CommentPostEvent {
+  allowChanges: boolean;
+  kind: "posted" | "permission-changed";
   sequence: number;
   createdAt: string;
   postId: string;

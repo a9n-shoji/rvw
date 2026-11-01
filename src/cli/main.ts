@@ -789,6 +789,7 @@ export function createProgram(runtimeFactory: () => Runtime = defaultRuntimeFact
           "comment.list",
           "comment.watch",
           "comment.watchOwnership",
+          "comment.changePermission",
           "comment.read",
           "comment.reply",
           "comment.edit",

@@ -887,7 +887,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   await expect(
     sidebarLineThread.getByText("サイドバーから追記しました。", { exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".comment-list-item").getByRole("checkbox")).toHaveCount(3);
+  await expect(
+    page.locator(".comment-list-item").getByRole("checkbox", { name: /のコメントを選択$/ }),
+  ).toHaveCount(3);
   await page.getByRole("button", { name: "＋ PR全体" }).click();
   const prCommentComposer = page.getByPlaceholder("Pull Request全体へのコメント");
   await expect(prCommentComposer).toBeFocused();
@@ -903,7 +905,9 @@ test("reviews a line across commits, preserves the tabbed UI, and resolves it", 
   expect(selectAllBox).not.toBeNull();
   expect(prCommentButtonBox).not.toBeNull();
   expect(selectAllBox!.x).toBeLessThan(prCommentButtonBox!.x);
-  const sidebarLineCheckbox = sidebarLineThread.getByRole("checkbox");
+  const sidebarLineCheckbox = sidebarLineThread.getByRole("checkbox", {
+    name: /のコメントを選択$/,
+  });
   const sidebarLineBox = await sidebarLineThread.boundingBox();
   const checkboxHitAreaBox = await sidebarLineThread
     .locator(".comment-select-toggle")

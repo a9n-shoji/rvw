@@ -61,6 +61,7 @@ const rootPost: CommentPost = {
   authorLabel: "Reviewer",
   lastModifiedBy: null,
   isRoot: true,
+  allowChanges: false,
   createdAt: "2026-08-10T00:02:00.000Z",
   updatedAt: "2026-08-10T00:02:00.000Z",
 };
@@ -194,7 +195,7 @@ describe("CLI protocol discovery", () => {
     await program.parseAsync(["node", "rvw", "protocol", "--json"]);
 
     expect(readStdout()).toEqual({
-      protocolVersion: 6,
+      protocolVersion: 7,
       appVersion: "0.14.1",
       capabilities: [
         "agent.transport",
@@ -202,6 +203,7 @@ describe("CLI protocol discovery", () => {
         "comment.list",
         "comment.watch",
         "comment.watchOwnership",
+        "comment.changePermission",
         "comment.read",
         "comment.reply",
         "comment.edit",
@@ -640,6 +642,7 @@ describe("CLI protocol discovery", () => {
             rootPost: {
               body: "Please preserve this line.",
               bodyTruncated: false,
+              allowChanges: false,
               authorLabel: "Reviewer",
               relatedCommitOid: null,
               createdAt: rootPost.createdAt,

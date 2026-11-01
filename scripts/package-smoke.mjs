@@ -86,7 +86,7 @@ const skillStatusResponseSchema = z.object({
 });
 const watchStateInitSchema = z.object({
   ok: z.literal(true),
-  ownPullRequests: z.literal("investigate-and-reply"),
+  ownPullRequests: z.literal("per-comment"),
 });
 const packageJson = packageJsonSchema.parse(
   JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")),
@@ -569,7 +569,7 @@ try {
     "rvw-watch-comments state init",
   );
   assert.equal(initializedWatchState.ok, true);
-  assert.equal(initializedWatchState.ownPullRequests, "investigate-and-reply");
+  assert.equal(initializedWatchState.ownPullRequests, "per-comment");
 
   process.stdout.write(
     `Package smoke passed: ${pack.files.length} files, ${packedBytes} bytes packed, ${unpackedBytes} bytes unpacked.\n`,

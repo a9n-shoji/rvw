@@ -46,6 +46,175 @@ function ingest(state: string, frame: unknown) {
 }
 
 describe("rvw-watch-comments task state", () => {
+  it("does not suppress human permission changes to an Agent-created post", () => {
+    const state = path.join(
+      mkdtempSync(path.join(os.tmpdir(), "rvw-human-permission-")),
+      "task.db",
+    );
+    const pr = "https://github.com/acme/repo/pull/1";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "abc123abc123abc123abc123abc123ab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const event = (sequence: number, postId: string, kind = "posted", allowChanges = false) =>
+      ingest(state, {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId,
+          commentRef: "rvw://comment/1",
+          pullRequestUrl: pr,
+          createdAt: new Date().toISOString(),
+          deleted: false,
+          allowChanges,
+          kind,
+        },
+      });
+    event(1, "human");
+    const lease = run(state, "claim", ["--pull-request", pr]);
+    event(2, "agent");
+    event(3, "agent", "permission-changed", true);
+    run(state, "ack", ["--lease", String(lease.leaseId)], {
+      commentRef: "rvw://comment/1",
+      postId: "agent",
+    });
+    run(state, "complete", ["--lease", String(lease.leaseId)], { postIds: ["agent"] });
+    expect(run(state, "list")).toMatchObject({ pending: [{ lane: "change", eventCount: 1 }] });
+    event(4, "agent", "permission-changed", false);
+    expect(run(state, "list")).toMatchObject({ pending: [{ lane: "investigate", eventCount: 1 }] });
+  });
+
+  it("starts a new investigation while an older investigation is in retry backoff", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-read-retry-")), "task.db");
+    const pr = "https://github.com/acme/repo/pull/1";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "abc123abc123abc123abc123abc123ab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const enqueue = (sequence: number) =>
+      ingest(state, {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId: `post-${sequence}`,
+          commentRef: `rvw://comment/${sequence}`,
+          pullRequestUrl: pr,
+          createdAt: new Date().toISOString(),
+          deleted: false,
+          allowChanges: false,
+        },
+      });
+    enqueue(1);
+    const first = run(state, "claim", ["--pull-request", pr]);
+    run(state, "fail", ["--lease", String(first.leaseId)], { error: "temporary", retryable: true });
+    enqueue(2);
+    const second = run(state, "claim", ["--pull-request", pr]);
+    expect(second.batchId).not.toBe(first.batchId);
+    expect(second).toMatchObject({ events: [{ postId: "post-2" }] });
+  });
+
+  it("rejects removed task modes and prevents legacy policy from claiming new work", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-removed-mode-")), "task.db");
+    expect(() => run(state, "init", ["--own-mode", "fix-and-push"])).toThrow(
+      "Task modes were removed",
+    );
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "abc123abc123abc123abc123abc123ab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const db = new DatabaseSync(state);
+    db.prepare("UPDATE meta SET value = 'fix-and-push' WHERE key = 'own_mode'").run();
+    db.close();
+    expect(run(state, "status")).toMatchObject({ ownPullRequests: "fix-and-push" });
+    expect(() => run(state, "verify")).toThrow("Legacy task modes cannot claim new work");
+    expect(run(state, "recover")).toMatchObject({ recovered: 0 });
+  });
+
+  it("serializes permitted work per PR while investigations and other PRs proceed", () => {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-per-post-")), "task.db");
+    const pr = "https://github.com/acme/repo/pull/1";
+    const other = "https://github.com/acme/repo/pull/2";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "abc123abc123abc123abc123abc123ab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const post = (
+      sequence: number,
+      allowChanges: boolean,
+      pullRequestUrl = pr,
+      postId = `post-${sequence}`,
+      kind = "posted",
+    ) =>
+      ingest(state, {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId,
+          commentRef: `rvw://comment/${postId}`,
+          pullRequestUrl,
+          createdAt: "2026-11-01T00:00:00.000Z",
+          deleted: false,
+          allowChanges,
+          kind,
+        },
+      });
+    post(1, true);
+    const editing = run(state, "claim", ["--pull-request", pr, "--lane", "change"]);
+    expect(editing).toMatchObject({
+      lane: "change",
+      events: [{ postId: "post-1", allowChanges: true }],
+    });
+    post(2, true);
+    post(3, false);
+    post(4, true, other);
+    expect(run(state, "list")).toMatchObject({
+      changeInFlight: 1,
+      pending: [
+        { pullRequest: pr, lane: "investigate" },
+        { pullRequest: other, lane: "change" },
+      ],
+    });
+    expect(() => run(state, "claim", ["--pull-request", pr, "--lane", "change"])).toThrow(
+      "already has a change worker",
+    );
+    const reading = run(state, "claim", ["--pull-request", pr, "--lane", "investigate"]);
+    expect(() =>
+      run(state, "reserve-write", [
+        "--lease",
+        String(reading.leaseId),
+        "--write-key",
+        "acme/repo#feature",
+      ]),
+    ).toThrow("no change permission");
+    run(state, "claim", ["--pull-request", other, "--lane", "change"]);
+    // Complete the first lease without fabricating an acknowledgement.
+    run(state, "skip", ["--lease", String(editing.leaseId)], {
+      commentRef: "rvw://comment/post-1",
+      reason: "gone",
+    });
+    run(state, "complete", ["--lease", String(editing.leaseId)], { postIds: [] });
+    expect(run(state, "list")).toMatchObject({ pending: [{ pullRequest: pr, lane: "change" }] });
+    post(5, false, pr, "post-2", "permission-changed");
+    expect(run(state, "list")).toMatchObject({ pending: [{ lane: "investigate", eventCount: 1 }] });
+    post(6, true, pr, "post-2", "permission-changed");
+    expect(run(state, "list")).toMatchObject({ pending: [{ lane: "change", eventCount: 1 }] });
+  });
+
   it("fails closed instead of silently activating a legacy task state", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-legacy-")), "task.db");
     run(state, "init");
@@ -165,7 +334,7 @@ describe("rvw-watch-comments task state", () => {
 
   it("can reserve a repository writer after an automatically acknowledged claim", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-reserve-")), "task.db");
-    run(state, "init", ["--own-mode", "fix-and-push"]);
+    run(state, "init", []);
     ingest(state, {
       type: "ready",
       databaseId: "abcdefabcdefabcdefabcdefabcdefab",
@@ -182,10 +351,16 @@ describe("rvw-watch-comments task state", () => {
         pullRequestUrl: "https://github.com/acme/repo/pull/9",
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
+        allowChanges: true,
       },
     });
     bindAuthority(state);
-    const claimed = run(state, "claim", ["--pull-request", "https://github.com/acme/repo/pull/9"]);
+    const claimed = run(state, "claim", [
+      "--lane",
+      "change",
+      "--pull-request",
+      "https://github.com/acme/repo/pull/9",
+    ]);
 
     expect(
       run(state, "reserve-write", ["--lease", String(claimed.leaseId), "--write-key", "Acme/Repo"]),
@@ -207,7 +382,7 @@ describe("rvw-watch-comments task state", () => {
   it("allows concurrent leases for the same PR under an investigate-only policy", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-parallel-")), "task.db");
     const pullRequest = "https://github.com/acme/repo/pull/9";
-    run(state, "init", ["--own-mode", "investigate-and-reply"]);
+    run(state, "init", []);
     ingest(state, {
       type: "ready",
       databaseId: "abc123abc123abc123abc123abc123ab",
@@ -265,9 +440,7 @@ describe("rvw-watch-comments task state", () => {
       { encoding: "utf8", env: authorityEnvironment(state) },
     );
     expect(writeCapableClaim.status).toBe(1);
-    expect(writeCapableClaim.stderr).toContain(
-      "Task policy does not allow repository write reservations",
-    );
+    expect(writeCapableClaim.stderr).toContain("No pending events for Pull Request");
 
     const writeReservation = spawnSync(
       process.execPath,
@@ -284,14 +457,12 @@ describe("rvw-watch-comments task state", () => {
       { encoding: "utf8", env: authorityEnvironment(state) },
     );
     expect(writeReservation.status).toBe(1);
-    expect(writeReservation.stderr).toContain(
-      "Task policy does not allow repository write reservations",
-    );
+    expect(writeReservation.stderr).toContain("This lease has no change permission");
   });
 
   it("records a new durable status post for a later batch in the same thread", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
-    run(state, "init", ["--expected-login", "reviewer", "--own-mode", "fix-and-push"]);
+    run(state, "init", ["--expected-login", "reviewer"]);
     ingest(state, {
       type: "ready",
       databaseId: "0123456789abcdef0123456789abcdef",
@@ -310,6 +481,7 @@ describe("rvw-watch-comments task state", () => {
         pullRequestUrl: "https://github.com/acme/repo/pull/1",
         createdAt: "2026-08-20T00:00:00.000Z",
         deleted: false,
+        allowChanges: true,
       },
     });
 
@@ -322,6 +494,8 @@ describe("rvw-watch-comments task state", () => {
       ],
     });
     const claimed = run(state, "claim", [
+      "--lane",
+      "change",
       "--pull-request",
       "https://github.com/acme/repo/pull/1",
       "--write-key",
@@ -346,6 +520,7 @@ describe("rvw-watch-comments task state", () => {
         pullRequestUrl: "https://github.com/acme/repo/pull/1",
         createdAt: "2026-08-20T00:00:01.000Z",
         deleted: false,
+        allowChanges: true,
       },
     });
     expect(
@@ -374,9 +549,12 @@ describe("rvw-watch-comments task state", () => {
         pullRequestUrl: "https://github.com/acme/repo/pull/1",
         createdAt: "2026-08-20T00:00:02.000Z",
         deleted: false,
+        allowChanges: true,
       },
     });
     const interruptedFollowUp = run(state, "claim", [
+      "--lane",
+      "change",
       "--pull-request",
       "https://github.com/acme/repo/pull/1",
     ]);
@@ -408,7 +586,12 @@ describe("rvw-watch-comments task state", () => {
     legacyState.prepare("DELETE FROM meta WHERE key = 'batch_scoped_status_posts'").run();
     legacyState.close();
     expect(run(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
-    const followUp = run(state, "claim", ["--pull-request", "https://github.com/acme/repo/pull/1"]);
+    const followUp = run(state, "claim", [
+      "--lane",
+      "change",
+      "--pull-request",
+      "https://github.com/acme/repo/pull/1",
+    ]);
     expect(followUp).toMatchObject({
       batchId: interruptedFollowUp.batchId,
       attempts: 2,
@@ -443,6 +626,8 @@ describe("rvw-watch-comments task state", () => {
     });
     expect(run(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
     const afterDeletion = run(state, "claim", [
+      "--lane",
+      "change",
       "--pull-request",
       "https://github.com/acme/repo/pull/1",
     ]);
@@ -458,7 +643,7 @@ describe("rvw-watch-comments task state", () => {
 
   it("recovers a lease with the same idempotency key and serializes repository writers", () => {
     const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-watch-state-")), "task.db");
-    run(state, "init", ["--own-mode", "fix-and-push"]);
+    run(state, "init", []);
     ingest(state, {
       type: "ready",
       databaseId: "fedcba9876543210fedcba9876543210",
@@ -481,10 +666,13 @@ describe("rvw-watch-comments task state", () => {
           pullRequestUrl: `https://github.com/acme/repo/pull/${pull}`,
           createdAt: "2026-08-20T00:00:00.000Z",
           deleted: false,
+          allowChanges: true,
         },
       });
     }
     const first = run(state, "claim", [
+      "--lane",
+      "change",
       "--pull-request",
       "https://github.com/acme/repo/pull/1",
       "--write-key",
@@ -497,6 +685,8 @@ describe("rvw-watch-comments task state", () => {
         "claim",
         "--state",
         state,
+        "--lane",
+        "change",
         "--pull-request",
         "https://github.com/acme/repo/pull/2",
         "--write-key",
@@ -513,6 +703,8 @@ describe("rvw-watch-comments task state", () => {
     });
     expect(run(state, "recover")).toMatchObject({ recovered: 1, pending: 1 });
     const retried = run(state, "claim", [
+      "--lane",
+      "change",
       "--pull-request",
       "https://github.com/acme/repo/pull/1",
       "--write-key",

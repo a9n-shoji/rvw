@@ -227,9 +227,9 @@ function WalkthroughMermaidDiagram({
                   setExpandedCommentBody("");
                   reviewContext.onCancelDiagramComment();
                 }}
-                onSubmit={() => {
+                onSubmit={(allowChanges) => {
                   void reviewContext
-                    .onCreateExpandedDiagramComment(sourceRange, expandedCommentBody)
+                    .onCreateExpandedDiagramComment(sourceRange, expandedCommentBody, allowChanges)
                     .then(() => {
                       setExpandedComposerOpen(false);
                       setExpandedCommentBody("");
@@ -354,8 +354,12 @@ interface MermaidMarkdownRenderContext {
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
   onCancelDiagramComment: () => void;
-  onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
-  onCreateExpandedDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  onSubmitDiagramComment: (range: MarkdownSourceRange, body: string, allowChanges: boolean) => void;
+  onCreateExpandedDiagramComment: (
+    range: MarkdownSourceRange,
+    body: string,
+    allowChanges: boolean,
+  ) => Promise<void>;
   draftScope: string;
 }
 
@@ -374,7 +378,7 @@ function WalkthroughDiagramCommentComposer({
   pending: boolean;
   error: unknown;
   onCancel: () => void;
-  onSubmit: (body: string) => void;
+  onSubmit: (body: string, allowChanges: boolean) => void;
 }) {
   const [body, setBody] = useState("");
   const composerLabel =
@@ -392,7 +396,7 @@ function WalkthroughDiagramCommentComposer({
       placement="line"
       onBodyChange={setBody}
       onCancel={onCancel}
-      onSubmit={() => onSubmit(body)}
+      onSubmit={(allowChanges) => onSubmit(body, allowChanges)}
     />
   );
 }
@@ -443,7 +447,9 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
               pending={context.diagramCommentPending}
               error={context.diagramCommentError}
               onCancel={context.onCancelDiagramComment}
-              onSubmit={(body) => context.onSubmitDiagramComment(previewCommentRange, body)}
+              onSubmit={(body, allowChanges) =>
+                context.onSubmitDiagramComment(previewCommentRange, body, allowChanges)
+              }
             />
           ) : null
         }
@@ -481,7 +487,9 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
             pending={context.diagramCommentPending}
             error={context.diagramCommentError}
             onCancel={context.onCancelDiagramComment}
-            onSubmit={(body) => context.onSubmitDiagramComment(sourceRange, body)}
+            onSubmit={(body, allowChanges) =>
+              context.onSubmitDiagramComment(sourceRange, body, allowChanges)
+            }
           />
         ) : null
       }
@@ -553,8 +561,12 @@ const WalkthroughMarkdown = memo(function WalkthroughMarkdown({
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
   onCancelDiagramComment: () => void;
-  onSubmitDiagramComment: (range: MarkdownSourceRange, body: string) => void;
-  onCreateExpandedDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  onSubmitDiagramComment: (range: MarkdownSourceRange, body: string, allowChanges: boolean) => void;
+  onCreateExpandedDiagramComment: (
+    range: MarkdownSourceRange,
+    body: string,
+    allowChanges: boolean,
+  ) => Promise<void>;
 }) {
   const htmlPreviewRanges = useMemo(() => walkthroughHtmlPreviewSourceRanges(body), [body]);
   const markdownPlacedComments = useMemo(
@@ -948,7 +960,15 @@ export function WalkthroughViewer({
     [placedComments],
   );
   const createComment = useMutation({
-    mutationFn: async ({ range, body }: { range: MarkdownSourceRange | null; body: string }) =>
+    mutationFn: async ({
+      range,
+      body,
+      allowChanges,
+    }: {
+      range: MarkdownSourceRange | null;
+      body: string;
+      allowChanges: boolean;
+    }) =>
       await api<{ comment: ReviewComment }>(
         "/api/comments",
         jsonRequest({
@@ -977,6 +997,7 @@ export function WalkthroughViewer({
             endLine: range?.endLine ?? null,
           },
           body,
+          allowChanges,
           authorLabel: "You",
         }),
       ),
@@ -1050,12 +1071,15 @@ export function WalkthroughViewer({
     },
     [walkthrough.body],
   );
-  const submitDiagramComment = useCallback((range: MarkdownSourceRange, body: string): void => {
-    createCommentRef.current.mutate({ range, body });
-  }, []);
+  const submitDiagramComment = useCallback(
+    (range: MarkdownSourceRange, body: string, allowChanges: boolean): void => {
+      createCommentRef.current.mutate({ range, body, allowChanges });
+    },
+    [],
+  );
   const createExpandedDiagramComment = useCallback(
-    async (range: MarkdownSourceRange, body: string): Promise<void> => {
-      await createCommentRef.current.mutateAsync({ range, body });
+    async (range: MarkdownSourceRange, body: string, allowChanges: boolean): Promise<void> => {
+      await createCommentRef.current.mutateAsync({ range, body, allowChanges });
     },
     [],
   );
@@ -1069,7 +1093,9 @@ export function WalkthroughViewer({
       placement="line"
       onBodyChange={setCommentBody}
       onCancel={closeLineComposer}
-      onSubmit={() => createComment.mutate({ range: selectedRange, body: commentBody })}
+      onSubmit={(allowChanges) =>
+        createComment.mutate({ range: selectedRange, body: commentBody, allowChanges })
+      }
     />
   ) : null;
   const walkthroughMarkdown = (
@@ -1177,7 +1203,9 @@ export function WalkthroughViewer({
                 setCommentBody("");
                 setComposerOpen(false);
               }}
-              onSubmit={() => createComment.mutate({ range: null, body: commentBody })}
+              onSubmit={(allowChanges) =>
+                createComment.mutate({ range: null, body: commentBody, allowChanges })
+              }
             />
           )}
           {headerComments.map(({ comment, placement }) => (

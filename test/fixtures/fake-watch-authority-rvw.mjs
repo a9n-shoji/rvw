@@ -3,7 +3,19 @@
 import { DatabaseSync } from "node:sqlite";
 
 const args = process.argv.slice(2);
-if (args[0] !== "comment" || args[1] !== "watch-task") {
+if (args[0] === "comment" && args[1] === "get") {
+  const database = new DatabaseSync(process.env.FAKE_WATCH_STATE);
+  const posts = database
+    .prepare("SELECT DISTINCT post_id AS id FROM events WHERE comment_ref = ? AND lane = 'change'")
+    .all(args[2]);
+  database.close();
+  process.stdout.write(
+    JSON.stringify({
+      ok: true,
+      comment: { resolved: false, posts: posts.map((post) => ({ ...post, allowChanges: true })) },
+    }) + "\n",
+  );
+} else if (args[0] !== "comment" || args[1] !== "watch-task") {
   process.stdout.write(
     `${JSON.stringify({ ok: false, error: { code: "UNEXPECTED", message: args.join(" ") } })}\n`,
   );

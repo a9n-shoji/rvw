@@ -1,5 +1,5 @@
 export const APP_VERSION = "0.14.1";
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 export const DEFAULT_VIEWER_PORT = 43_117;
 
 export const GIT_OBJECT_ID_PATTERN = /^[0-9a-f]{40,64}$/i;

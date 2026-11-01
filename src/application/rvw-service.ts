@@ -1708,11 +1708,15 @@ export class RvwService {
     pullRequestId: string;
     target: CommentTargetRequest;
     body: string;
+    allowChanges?: boolean;
     authorLabel?: string | null;
     relatedCommitOid?: string | null;
     references?: CodeReference[];
     lastModifiedBy?: CommentPostModifier;
   }): Promise<ReviewComment> {
+    if (input.allowChanges === true && input.lastModifiedBy !== "human") {
+      throw new RvwError("INVALID_INPUT", "変更許可は人間のUI操作でのみ設定できます。");
+    }
     const pullRequest = this.getPullRequest(input.pullRequestId);
     const target = await this.prepareCommentTarget(pullRequest, input.target);
     assertAuthorLabel(input.authorLabel);
@@ -1728,6 +1732,7 @@ export class RvwService {
       this.database.createComment({
         pullRequestId: pullRequest.id,
         createdHeadOid: pullRequest.latestHeadOid,
+        allowChanges: input.allowChanges === true && input.lastModifiedBy === "human",
         target,
         body,
         ...(input.relatedCommitOid === undefined
@@ -2953,6 +2958,7 @@ export class RvwService {
     uriOrId: string,
     input: {
       body: string;
+      allowChanges?: boolean;
       relatedCommitOid?: string | null;
       authorLabel?: string | null;
       references?: CodeReference[];
@@ -2961,6 +2967,9 @@ export class RvwService {
       watchTask?: CommentWatchTaskFence;
     },
   ) {
+    if (input.allowChanges === true && input.lastModifiedBy !== "human") {
+      throw new RvwError("INVALID_INPUT", "変更許可は人間のUI操作でのみ設定できます。");
+    }
     const id = uriOrId.startsWith("rvw://") ? parseCommentUri(uriOrId) : uriOrId;
     const comment = this.database.getComment(id);
     if (!comment)
@@ -2979,6 +2988,7 @@ export class RvwService {
     const write = (): CommentPost =>
       this.database.insertReply(id, {
         ...input,
+        allowChanges: input.allowChanges === true && input.lastModifiedBy === "human",
         body,
         references,
         ...(input.lastModifiedBy === undefined ? {} : { lastModifiedBy: input.lastModifiedBy }),
@@ -2987,6 +2997,7 @@ export class RvwService {
           : {
               idempotencyRequestHash: idempotencyRequestHash({
                 operation: "comment.reply",
+                ...(input.allowChanges ? { allowChanges: true } : {}),
                 commentId: id,
                 body,
                 relatedCommitOid: input.relatedCommitOid ?? null,

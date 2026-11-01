@@ -489,7 +489,11 @@ function MarkdownMermaidDiagram({
     openInRightPane: boolean,
   ) => Promise<string | null>;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
-  onCreateComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  onCreateComment: (
+    range: MarkdownSourceRange,
+    body: string,
+    allowChanges: boolean,
+  ) => Promise<void>;
   createPending: boolean;
   createError: unknown;
   onResetCreate: () => void;
@@ -544,8 +548,8 @@ function MarkdownMermaidDiagram({
                   setComposerOpen(false);
                   onResetCreate();
                 }}
-                onSubmit={() => {
-                  void onCreateComment(sourceRange, body)
+                onSubmit={(allowChanges) => {
+                  void onCreateComment(sourceRange, body, allowChanges)
                     .then(() => {
                       setBody("");
                       setComposerOpen(false);
@@ -617,7 +621,11 @@ interface RepositoryMermaidRenderContext {
     reference: CodeReference,
     openInRightPane: boolean,
   ) => Promise<string | null>;
-  onCreateDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  onCreateDiagramComment: (
+    range: MarkdownSourceRange,
+    body: string,
+    allowChanges: boolean,
+  ) => Promise<void>;
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
   onResetDiagramComment: () => void;
@@ -721,7 +729,11 @@ function renderRepositoryMarkdown({
     reference: CodeReference,
     openInRightPane: boolean,
   ) => Promise<string | null>;
-  onCreateDiagramComment: (range: MarkdownSourceRange, body: string) => Promise<void>;
+  onCreateDiagramComment: (
+    range: MarkdownSourceRange,
+    body: string,
+    allowChanges: boolean,
+  ) => Promise<void>;
   diagramCommentPending: boolean;
   diagramCommentError: unknown;
   onResetDiagramComment: () => void;
@@ -1140,6 +1152,7 @@ export function DocumentViewer({
   );
   const diffSurfaceRef = useRef<HTMLDivElement>(null);
   const pendingViewportAnchor = useRef<DiffViewportAnchor | null>(null);
+  const submittedViewportAnchor = useRef<DiffViewportAnchor | null>(null);
   const appliedNavigationRequest = useRef<number | null>(null);
   const handleFullPostRender = useCallback(
     (
@@ -1581,10 +1594,12 @@ export function DocumentViewer({
     mutationFn: async ({
       target,
       body: commentBody,
+      allowChanges,
     }: {
       target: CreateCommentTarget;
       location: OptimisticCommentLocation;
       body: string;
+      allowChanges: boolean;
     }) =>
       await api<{ comment: ReviewComment }>(
         "/api/comments",
@@ -1592,12 +1607,14 @@ export function DocumentViewer({
           pullRequestId,
           target,
           body: commentBody,
+          allowChanges,
           authorLabel: "You",
         }),
       ),
     onMutate: async () => await cancelCommentQuery(queryClient, pullRequestId),
     onError: () => invalidateCommentQuery(queryClient, pullRequestId),
     onSuccess: ({ comment }, { target, location }) => {
+      submittedViewportAnchor.current = captureDiffViewportAnchor(diffSurfaceRef.current);
       window.getSelection()?.removeAllRanges();
       const range =
         target.kind === "document" && target.startLine !== null && target.endLine !== null
@@ -1682,7 +1699,7 @@ export function DocumentViewer({
     selectedLineRef !== null &&
     selectedLineRef !== undefined &&
     (!selection.side || !selection.endSide || selection.side === selection.endSide);
-  const create = (level: "file" | "line"): void => {
+  const create = (level: "file" | "line", allowChanges: boolean): void => {
     const selectedRef = level === "file" ? fileLevelRef : selectedLineRef;
     if (!selectedRef || (level === "line" && !selection)) return;
     const startLine = level === "file" ? null : Math.min(selection!.start, selection!.end);
@@ -1718,11 +1735,15 @@ export function DocumentViewer({
                 : "additions",
             lineNumber,
           };
-    createMutation.mutate({ target, location, body });
+    createMutation.mutate({ target, location, body, allowChanges });
   };
 
   const createDiagramComment = useCallback(
-    async (range: MarkdownSourceRange, commentBody: string): Promise<void> => {
+    async (
+      range: MarkdownSourceRange,
+      commentBody: string,
+      allowChanges: boolean,
+    ): Promise<void> => {
       const target =
         fullRef.kind === "pull-request-markdown"
           ? {
@@ -1742,6 +1763,7 @@ export function DocumentViewer({
       await createMutation.mutateAsync({
         target,
         body: commentBody,
+        allowChanges,
         location: { mode: "full", lineNumber: range.endLine },
       });
     },
@@ -1940,10 +1962,24 @@ export function DocumentViewer({
     if (loaded) loadedOptimisticCommentId.current = optimisticComment.comment.id;
   }, [annotationData, optimisticComment]);
   useLayoutEffect(() => {
-    const anchor = pendingViewportAnchor.current;
+    const submitted = submittedViewportAnchor.current;
+    const anchor = submitted ?? pendingViewportAnchor.current;
     pendingViewportAnchor.current = null;
     if (anchor) restoreDiffViewportAnchor(diffSurfaceRef.current, anchor);
+    // Annotation slots are measured after React commits. Preserve the pre-replacement
+    // code anchor through those measurements when a composer becomes a thread.
+    let frame: number | undefined;
+    if (submitted) {
+      frame = requestAnimationFrame(() => {
+        restoreDiffViewportAnchor(diffSurfaceRef.current, submitted);
+        frame = requestAnimationFrame(() => {
+          restoreDiffViewportAnchor(diffSurfaceRef.current, submitted);
+          submittedViewportAnchor.current = null;
+        });
+      });
+    }
     return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
       pendingViewportAnchor.current = captureDiffViewportAnchor(diffSurfaceRef.current);
     };
   }, [diffAnnotations, fileAnnotations, renderedDiffCacheKey]);
@@ -2215,7 +2251,7 @@ export function DocumentViewer({
         placement="line"
         onBodyChange={setBody}
         onCancel={closeComposer}
-        onSubmit={() => create("line")}
+        onSubmit={(allowChanges) => create("line", allowChanges)}
       />
     );
   };
@@ -2418,7 +2454,7 @@ export function DocumentViewer({
           placement="file"
           onBodyChange={setBody}
           onCancel={closeComposer}
-          onSubmit={() => create("file")}
+          onSubmit={(allowChanges) => create("file", allowChanges)}
         />
       )}
       <div className="diff-surface" ref={diffSurfaceRef} data-pane-find-surface>
@@ -2455,7 +2491,7 @@ export function DocumentViewer({
                     placement="line"
                     onBodyChange={setBody}
                     onCancel={closeComposer}
-                    onSubmit={() => create("line")}
+                    onSubmit={(allowChanges) => create("line", allowChanges)}
                   />
                 }
               >

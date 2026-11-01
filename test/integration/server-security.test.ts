@@ -1,3 +1,4 @@
+import type { ReviewComment } from "../../src/domain/models.js";
 import { describe, expect, it, vi } from "vitest";
 import { RvwService } from "../../src/application/rvw-service.js";
 import { RvwDatabase } from "../../src/infrastructure/db/database.js";
@@ -72,6 +73,62 @@ function registerPullRequest(
 }
 
 describe("local HTTP security", () => {
+  it("accepts human per-post grants, rejects cross-origin grants, and keeps agent replies unprivileged", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const pullRequestId = registerPullRequest(database);
+    const service = new RvwService(database, new GitClient(), github);
+    const app = createApp(service, {
+      security: { expectedHost: "127.0.0.1:4321", expectedOrigin: "http://127.0.0.1:4321" },
+    });
+    const headers = {
+      host: "127.0.0.1:4321",
+      origin: "http://127.0.0.1:4321",
+      "content-type": "application/json",
+    };
+    const created = await app.request("http://127.0.0.1:4321/api/comments", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        pullRequestId,
+        target: { kind: "pull-request" },
+        body: "Explain this choice",
+        allowChanges: true,
+      }),
+    });
+    expect(created.status).toBe(201);
+    const { comment } = (await created.json()) as { comment: ReviewComment };
+    expect(comment.posts[0]!.allowChanges).toBe(true);
+    await expect(
+      service.replyToComment(comment.id, {
+        body: "Answer",
+        allowChanges: true,
+        lastModifiedBy: "agent",
+      }),
+    ).rejects.toThrow("変更許可は人間のUI操作でのみ設定できます");
+    expect(
+      (await service.replyToComment(comment.id, { body: "Answer", lastModifiedBy: "agent" }))
+        .allowChanges,
+    ).toBe(false);
+    const url = `http://127.0.0.1:4321/api/comments/${comment.id}/posts/${comment.posts[0]!.id}/permission`;
+    const denied = await app.request(url, {
+      method: "PATCH",
+      headers: { ...headers, origin: "https://evil.example" },
+      body: JSON.stringify({ allowChanges: false }),
+    });
+    expect(denied.status).toBe(403);
+    expect(database.getComment(comment.id)?.posts[0]?.allowChanges).toBe(true);
+    const revoked = await app.request(url, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ allowChanges: false }),
+    });
+    expect(revoked.status).toBe(200);
+    expect(
+      ((await revoked.json()) as { comment: ReviewComment }).comment.posts[0]!.allowChanges,
+    ).toBe(false);
+    database.close();
+  });
+
   it("serves only PR-owned, hash-matching bundled assets with restrictive headers", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const service = new RvwService(database, new GitClient(), github);

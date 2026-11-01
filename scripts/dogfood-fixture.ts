@@ -530,6 +530,7 @@ function createComments(
         authorLabel: "Reviewer",
         lastModifiedBy: "human",
         isRoot: true,
+        allowChanges: false,
         createdAt,
         updatedAt: createdAt,
       },
@@ -544,6 +545,7 @@ function createComments(
         authorLabel: "Demo Agent",
         lastModifiedBy: "agent",
         isRoot: false,
+        allowChanges: false,
         createdAt: `2026-08-20T03:${String(index).padStart(2, "0")}:00.000Z`,
         updatedAt: `2026-08-20T03:${String(index).padStart(2, "0")}:00.000Z`,
       });

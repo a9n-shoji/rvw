@@ -24,6 +24,7 @@ export interface CommentDraftContext {
 }
 
 export interface CommentReplyDraftSnapshot {
+  allowChanges?: boolean;
   revision: number;
   body: string;
   focused: boolean;
@@ -239,13 +240,18 @@ export function writeCommentReplyDraft(
 ): void {
   if (draft.revision !== currentCommentDraftRevision(pullRequestId)) return;
   const existing = readCommentReplyDraft(pullRequestId, contextKey);
-  if (existing.body === draft.body && existing.focused === draft.focused) return;
+  if (
+    existing.body === draft.body &&
+    existing.focused === draft.focused &&
+    (existing.allowChanges ?? false) === (draft.allowChanges ?? false)
+  )
+    return;
   let drafts = replyDraftsByPullRequest.get(pullRequestId);
   if (!drafts) {
     drafts = new Map();
     replyDraftsByPullRequest.set(pullRequestId, drafts);
   }
-  if (draft.body || draft.focused) drafts.set(contextKey, draft);
+  if (draft.body || draft.focused || draft.allowChanges) drafts.set(contextKey, draft);
   else drafts.delete(contextKey);
   if (drafts.size === 0) replyDraftsByPullRequest.delete(pullRequestId);
   notifyReplyDraftListeners();

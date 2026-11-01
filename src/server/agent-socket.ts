@@ -25,7 +25,7 @@ import { asRvwError, RvwError } from "../shared/errors.js";
 // pr sync may contain hundreds of valid 64 KiB replies. Reserve framing space above the stdin cap.
 export const MAX_CLI_STDIN_BYTES = 40 * 1024 * 1024;
 export const MAX_AGENT_MESSAGE_BYTES = MAX_CLI_STDIN_BYTES + 64 * 1024;
-export const AGENT_SOCKET_PROTOCOL_VERSION = 8;
+export const AGENT_SOCKET_PROTOCOL_VERSION = 9;
 export const RUNTIME_VIEWER_OPEN_OPERATION = "viewer.open";
 export const RUNTIME_STOP_OPERATION = "runtime.stop";
 const AGENT_SOCKET_RESTART_SUGGESTION =

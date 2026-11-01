@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 const skill = readFileSync("skills/rvw-watch-comments/SKILL.md", "utf8");
 
 describe("rvw-watch-comments delegation contract", () => {
-  it("requires immediate fresh-subagent dispatch for every acknowledged lease", () => {
+  it("requires immediate dispatch for every acknowledged lease", () => {
     expect(skill).toContain("Delegate every acknowledged batch immediately");
     expect(skill).toContain("same parent scheduling turn");
     expect(skill).toContain("No direct-processing exception exists");
@@ -29,21 +29,18 @@ describe("rvw-watch-comments delegation contract", () => {
     );
   });
 
-  it("parallelizes investigate-only follow-ups without weakening writer serialization", () => {
-    expect(skill).toMatch(
-      /Do not reduce capacity merely because multiple leases may inspect the same Pull\s+Request or repository/,
-    );
-    expect(skill).toMatch(
-      /an event for a PR with an active lease becomes a separate\s+eligible batch/,
-    );
-    expect(skill).toMatch(
-      /immutable task policy allows `fix-and-push`[\s\S]*same-PR\s+follow-ups remain durable but ineligible/,
-    );
-    expect(skill).toMatch(/repository write\s+reservations serialize writers across different PRs/);
-    expect(skill).toMatch(/different task-state databases and generations[\s\S]*same repository/);
-    expect(skill).toMatch(
-      /atomically verifies the shared generation and acquires the shared repository key/,
-    );
+  it("treats each checkbox as permission and keeps PR workers separate from investigations", () => {
+    expect(skill).toContain("permission, never an instruction");
+    expect(skill).toContain("Infer the requested outcome only from the comment body");
+    expect(skill).toContain("Never inherit a root post's permission");
+    expect(skill).toContain("one change worker associated with each PR");
+    expect(skill).toContain("Reuse that worker for later");
+    expect(skill).toContain("dedicated clean worktree for each PR");
+    expect(skill).toContain("one slot available for");
+    expect(skill).toContain("never wait for a same-PR");
+    expect(skill).toContain("immutable committed source");
+    expect(skill).toContain("stop further changes at a safe boundary");
+    expect(skill).toContain("same head branch");
     expect(skill).toMatch(/Activation does not discard[\s\S]*existing reservation/);
   });
 

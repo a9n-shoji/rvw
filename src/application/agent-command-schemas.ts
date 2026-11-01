@@ -603,7 +603,7 @@ export const agentCommandInputSchemas = {
   "comment.watch.activate": z.object({ taskId: z.uuid() }).strict(),
   "comment.watch.verify": commentWatchTaskFenceSchema,
   "comment.watch.reserveWrite": commentWatchLeaseSchema
-    .extend({ writeKey: z.string().regex(/^[^/\s]+\/[^/\s]+$/) })
+    .extend({ writeKey: z.string().regex(/^[^/#\s]+\/[^/#\s]+(?:#[^/#\s]+)?$/) })
     .strict(),
   "comment.watch.releaseWrite": commentWatchLeaseSchema,
   "comment.create": commentCreateInputSchema,

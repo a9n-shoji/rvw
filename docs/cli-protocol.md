@@ -1,4 +1,4 @@
-# CLI protocol v6
+# CLI protocol v7
 
 この文書はAgentと自動化の実装者向けです。初めて使う方は[利用ガイド](usage.md)で、PRの登録とSkillの準備を先に行ってください。
 
@@ -355,7 +355,9 @@ activation or verification by the superseded task fails with `WATCH_TASK_SUPERSE
 `comment watch-task verify` never changes ownership. The cursor remains only an event-stream position
 and never contains or grants consumer authority.
 `comment watch-task reserve-write` verifies the supplied task generation and acquires the normalized
-repository writer key in the same rvw SQLite transaction. The lease ID makes an exact retry
+head-branch writer key (`owner/repo#` plus `encodeURIComponent(headRefName)`) in the same rvw SQLite transaction.
+Repository identity is case-insensitive; branch identity is case-sensitive. Different branches can
+reserve concurrently. Legacy `owner/repo` reservations conflict with every branch of that repository. The lease ID makes an exact retry
 idempotent. Reservations survive activation of a newer generation, so the new task cannot overlap an
 older in-flight writer. `comment watch-task release-write` is scoped to the exact task, generation,
 and lease but deliberately does not require that generation to remain active; this lets superseded
@@ -371,8 +373,13 @@ thread read, it immediately creates
 A fresh resolved or missing thread is durably skipped before acknowledgement. Mixed batches delegate
 only their actionable operations, and an all-skipped batch emits no dispatchable acknowledgement.
 A retry of the same batch restores that post; a later batch for the same thread creates a new one and
-leaves the earlier outcome unchanged. It requires explicit
-startup authorization before an authenticated user's own PR can be fixed and pushed, and verifies the
+leaves the earlier outcome unchanged. Each returned post exposes `allowChanges` (default false).
+Human UI submissions may set it; Agent create/reply/edit inputs cannot grant it. The UI permission
+endpoint emits another `comment-posted` envelope with the same post ID, new sequence, and
+`kind: "permission-changed"`; creation events use `kind: "posted"`. Events carry `allowChanges` as
+historical routing context; a fresh post read remains authoritative before writes. Permission is
+never an instruction: determine intent from the body, and do not change anything unnecessarily.
+The Skill requires the triggering post's current permission before code or Artifact changes, and verifies the
 live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
 Another or unknown author remains code/GitHub read-only.
 
@@ -384,7 +391,10 @@ and acknowledgement failures have distinct nonzero driver exits. These helpers r
 processes and do not move Agent runtime or task state into rvw. Before an initial connection or
 reconnect, the driver drains eligible pending work left between a durable ingest and an interrupted
 acknowledgement. Auto-ack is capped by the subagent capacity reserved by the parent, and a short-period
-task-state pump drains same-PR follow-ups after lease release and retryable batches after their due time
+task-state pump drains per-PR change follow-ups after lease release and retryable batches after their due time.
+Investigations have a separate lane, independent of the same PR's change worker; when capacity is at
+least two, one slot is reserved for them. Change workers retain PR context across leases and use
+separate worktrees. One-slot runtimes explicitly cannot guarantee parallel investigations. Work resumes
 without waiting for another watch event or reconnect. Before spawning rvw, the driver atomically acquires
 one process-owner lock beside the canonical task-state path. A concurrent driver for that state exits
 without starting another watcher. The lock is released on graceful shutdown, and a later driver reclaims
@@ -392,7 +402,7 @@ it only when the recorded owner process no longer exists.
 The driver verifies shared authority before startup, reconnect, and pending claims. Writer reservation
 combines that authority check with shared-key acquisition in one rvw transaction; task-local
 `write_key` is only a recovery mirror. Completion, failure, and recovery release the shared lease
-before clearing that mirror. A prior generation's reservation continues blocking the same repository
+before clearing that mirror. A prior generation's reservation continues blocking the same write target
 until release. Acknowledgement writes carry their fence into the same rvw transaction. Legacy task
 state without a generation fails closed instead of claiming current ownership.
 
@@ -617,7 +627,7 @@ shares the topology geometry. These fields diagnose graph shape without treating
 reading order as a wrong Edge direction.
 
 Consumers branch on `code`, never on the display-oriented `message`, and ignore unknown warning
-codes. Future warning codes may be added to protocol v6 without changing the protocol version;
+codes. Future warning codes may be added to protocol v7 without changing the protocol version;
 consumers that require a particular feedback operation still require the `structure.preview`
 capability. Preview always returns a `warnings` array. Publish and update use the same warning object
 and code semantics but may omit the field when no warnings exist.
@@ -875,8 +885,8 @@ Structure roles, and Artifact briefs are session-local instructions to
 the single-Artifact producers, and its recommended entry and resulting URIs are returned as ordinary
 Agent output. It adds no Review Set, persistent group, Artifact kind, URI, database or API state, Viewer
 UI, protocol capability, or generic runtime sub-Skill invocation framework. Review composition itself adds
-no command schema or capability; the integrated protocol is version 6 because removing Structure grouping changes
-`structure.presentation`, as reflected in the capability list below.
+no command schema or capability. The integrated protocol is version 7 for per-post change permissions;
+Structure presentation retains the protocol-6 shape without Regions.
 
 The brief's subject, review question, purpose or behavior boundary, scope, inclusions, exclusions, and
 emphasis control what a producer investigates. `mustEstablish`, suggested origins, relationships,
@@ -948,7 +958,7 @@ current `walkthrough` object. This gives the Agent the explanation body and exac
 discussed without relying on rendered browser positions. If the Walkthrough is updated, the same
 comment URI subsequently returns the updated current object.
 
-`rvw protocol --json` returns `protocolVersion: 6`, the application version, and these capabilities:
+`rvw protocol --json` returns `protocolVersion: 7`, the application version, and these capabilities:
 
 ```text
 agent.transport
@@ -956,6 +966,7 @@ comment.create
 comment.list
 comment.watch
 comment.watchOwnership
+comment.changePermission
 comment.read
 comment.reply
 comment.edit
