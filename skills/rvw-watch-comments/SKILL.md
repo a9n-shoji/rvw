@@ -202,12 +202,15 @@ fresh `comment get` result as `thread`. A disappeared thread has `status: "skipp
 are durably marked skipped, create or restore no acknowledgement, and are excluded from the actionable
 `operations` and `events`. A mixed batch still acknowledges and delegates its unresolved operations.
 If every operation is skipped, the state completes the batch and auto-ack emits `batch-skipped`, never
-`batch-acknowledged`. If intake runs without auto-ack, invoke the same complete fast path once for the PR:
+`batch-acknowledged`. If intake runs without auto-ack, invoke the same complete fast path for an
+eligible pending entry, passing its `pullRequest` and `lane` unchanged. The lane is `investigate` or
+`change`; it reflects the triggering posts' permission and must not be chosen from the desired action:
 
 ```bash
 node '<SKILL_DIR>/scripts/auto-ack.mjs' \
   --state '<TASK_STATE_DB>' \
   --pull-request '<PR_URL>' \
+  --lane '<PENDING_ENTRY_LANE>' \
   --author-label '<CURRENT_AGENT_NAME>'
 ```
 
