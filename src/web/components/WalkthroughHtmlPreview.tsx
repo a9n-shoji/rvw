@@ -81,6 +81,9 @@ function themeCss(themePreference: ThemePreference, standalone: boolean): string
 
 function previewBaseCss(themePreference: ThemePreference, standalone: boolean): string {
   return `${themeCss(themePreference, standalone)}
+    @layer rvw-selection-defaults {
+      :root::selection { background-color: #b9dafa; color: #172b40; }
+    }
     ${standalone ? "" : `:where(html) { background: var(--rvw-bg); color: var(--rvw-fg); font: 15px/1.5 ui-sans-serif, sans-serif; } :where(a) { color: var(--rvw-accent); }`}
     ${standalone ? "" : ".rvw-preview-root { min-width: 0; }"}
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }

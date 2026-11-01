@@ -618,6 +618,8 @@ interface Walkthrough {
   時だけ同じlatest/fallback解決でcodeを開く。repository相対画像はWalkthroughのexact `sourceOid`からparent documentが取得し、
   許可された画像data URLへ変換してiframeへ渡す。外部画像、stylesheet、その他の外部resourceは拒否する。
 - 新規Walkthroughは本文全体を一つのstatic `html-preview`として作成する。既存Markdown / Mermaid表示を維持する。
+- HTML previewの文字選択には、背景色と文字色を組にした低優先度の既定色を提供する。
+  作者の`::selection`指定を優先し、nested textへ継承する。選択色を含む配色の自由は作者が保持する。
 - HTML要素とtext selectionはparser由来のsource lineに加え、fence開始行、DOM child path、文字選択の両端offsetを保存する。
   保存時に本文hashを照合してstaleな選択を拒否する。本文変更後は精密anchorをOutdatedとし、旧行commentの再配置は従来どおりとする。
   hover / text selectionでcomment actionを表示し、tableを含めtext selectionの両端をそのまま対象とし、cell / row / tableの選択menuは設けない。comment modeは設けない。
