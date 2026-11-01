@@ -9,6 +9,8 @@ export default defineConfig({
   testDir: "./test/e2e",
   timeout: 30_000,
   expect: { timeout: 8_000 },
+  // Tests mutate shared fixture state. CI shards whole files onto separate runners;
+  // keep each shard serial instead of sharing a server across parallel workers.
   fullyParallel: false,
   workers: 1,
   reporter: "list",

@@ -2551,6 +2551,8 @@ Quality:
 
 - API/CLI validationとmigrationがあり、Git commandへshell interpolationを使わない。
 - `pnpm install --frozen-lockfile`、check、unit/integration、E2E、build、package smokeが成功する。
+- CIはquality/unitと4つの独立したE2E shardを並行実行する。shard内は1 worker・file単位の順序を維持し、
+  required check `test` はqualityと全shardの成功時のみ通す。詳細・再実行方法は`ci.md`を参照。
 - Phase 1完了時点のpackageは`name: rvw`かつ`private: true`で、CIからnpm publishしない。
 - README、一次仕様、decisions、CLI protocol、5つのbundled Skillが同じ利用者モデルを説明する。
 
