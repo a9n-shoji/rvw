@@ -160,7 +160,7 @@ gh pr view <PR> --json \
 gh api graphql --hostname github.com # Pull Request IDからlatestOpinionatedReviewsを全page取得
 ```
 
-Phase 1の新規登録は`github.com`のopen/draft PRを対象とする。保存済みPRのsync、refresh、
+新規登録は`github.com`のOpen / Draft / Closed / Merged PRを対象とする。保存済みPRのsync、refresh、
 live確認、resetはClosed/Merged後もGitHub metadataを取得し、最後に成功した`state`と`isDraft`をcacheする。
 ローカル表示はPRの現在状態やnetwork接続に依存しない。
 `createdAt`と`updatedAt`はGitHub上のPR日時としてcacheする。既存DBで`createdAt`が未取得の行は
@@ -2138,7 +2138,7 @@ invariant検証を行う。refとSQLiteの不整合を検出した場合は部�
 ユーザー修正可能errorはcode、短いmessage、具体的suggestionsを返す。silent fallbackしない。
 
 - gh/git未導入・未認証
-- PR URL不正、未登録、closed/merged PRの新規登録
+- PR URL不正、未登録
 - base repository mismatch
 - object fetch失敗
 - local changes未commit、head未push
@@ -2525,7 +2525,7 @@ source of truthとする。
 
 Functional:
 
-- URLまたはcurrent branchからopen/draft PRを開き、登録済みPRはofflineでも状態badge付きで再表示できる。
+- URLまたはcurrent branchからOpen / Draft / Closed / Merged PRを開き、登録済みPRはofflineでも状態badge付きで再表示できる。
 - destination commit選択、PR全体diff、複数commit range、changed/all tree、全文、検索を利用できる。
 - `Pull Request.md`は常に最後に成功した同期の最新内容だけを表示する。
 - Agentがsource anchor付きWalkthroughをCLIで提示し、feedback後は同じIDのcurrent値を改善でき、人間が任意の
@@ -2600,3 +2600,11 @@ Manual acceptance:
 ### Static artifact assets
 
 Walkthrough remains the domain object. Migration 026 adds an owned BLOB asset table with cascading deletion; document/references/assets update atomically. Optional publish/update `assets` is bounded and MIME/signature checked. Omission preserves, explicit arrays replace; existing path bytes are immutable. The viewer obtains hash-checked assets through the existing PR security boundary, never arbitrary URLs. Standalone HTML keeps its document structure and CSS selectors. CSS-tree parses styles/declarations/resource values; only typed bundled URLs and internal SVG fragments are permitted. HTML uses full pane width and artifact-owned design, with font load layout refresh. Detailed limits, import protocol and lifecycle are in `static-artifacts.md`.
+
+### Walkthrough reading surface
+
+HTML中心のWalkthroughはpane幅を使い、内容の最大幅を1200pxとする。外側のpreview枠・常設toolbar・追加の内側paddingは設けない。
+著者の本文layoutを保ち、HTMLを必ず独立したvisual cardへ分割することは要求しない。comment操作は小さなcontextual iconとし、
+keyboard focusとtouchでも操作できる。本文textは文字選択cursor、linkはpointer cursorを使う。
+`rvw-ref:`だけは著者の一般的なlink装飾に埋もれない共通chipのchromeを適用し、通常linkと周囲のstyleは保持する。
+属性と疑似要素だけでcode linkを装飾し、保存したHTML comment anchorのDOM pathとtext offsetを変えない。

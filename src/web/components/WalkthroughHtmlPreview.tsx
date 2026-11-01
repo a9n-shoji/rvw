@@ -84,7 +84,8 @@ function previewBaseCss(themePreference: ThemePreference, standalone: boolean): 
     ${standalone ? "" : `:where(html) { background: var(--rvw-bg); color: var(--rvw-fg); font: 15px/1.5 ui-sans-serif, sans-serif; } :where(a) { color: var(--rvw-accent); }`}
     ${standalone ? "" : ".rvw-preview-root { min-width: 0; }"}
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
-    [data-rvw-comment-surface="true"] { cursor: default; }
+    p, h1, h2, h3, h4, h5, h6, li, dt, dd, blockquote, pre, td, th, figcaption { cursor: text; }
+    a, a * { cursor: pointer; }
     ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
     ::highlight(rvw-pane-find-left-current), ::highlight(rvw-pane-find-right-current) { background-color: light-dark(rgb(245 139 10 / 0.82), rgb(249 115 22 / 0.78)); color: light-dark(#17120a, #fff); }
   `;
@@ -594,6 +595,14 @@ export function WalkthroughHtmlPreview({
         const href = anchor.getAttribute("href")?.trim() ?? "";
         const openInRightPane = event.metaKey || event.ctrlKey;
         if (href.startsWith("rvw-ref:")) {
+          const selection = document.getSelection();
+          if (
+            event.detail > 0 &&
+            selection &&
+            !selection.isCollapsed &&
+            selection.containsNode(anchor, true)
+          )
+            return;
           const reference = references.get(href.slice("rvw-ref:".length));
           if (reference) onOpenReference(reference, openInRightPane);
           return;
@@ -756,9 +765,6 @@ export function WalkthroughHtmlPreview({
       data-rvw-navigation-start-line={fenceRange.startLine}
       data-rvw-navigation-end-line={fenceRange.endLine}
     >
-      <div className="walkthrough-html-preview-toolbar" data-pane-find-ignore>
-        <span>文字を選択、または要素にカーソルを合わせてコメント</span>
-      </div>
       <div
         className="walkthrough-html-preview-frame-shell"
         ref={frameShellRef}

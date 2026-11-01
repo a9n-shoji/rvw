@@ -181,6 +181,10 @@ fences and diagram bindings remain available for existing Markdown documents. Th
 compatible storage envelope; the reader sees the rendered HTML. Existing Markdown and Mermaid
 Walkthroughs remain supported. Preserve their format on updates unless conversion is requested.
 
+The host uses up to 1200px of content width without a surrounding preview card or injected inner padding.
+Do not add a second outer frame merely to imitate the host. Code-reference chip chrome belongs to rvw;
+author link labels and surrounding layout, and style ordinary links freely.
+
 Design the artifact for its content, readers, and explanatory purpose. rvw does not prescribe a
 report design system. The artifact owns typography, palette, spacing, grids, backgrounds, diagrams,
 visual hierarchy, and information density. An editorial layout, a dense comparison, or a dashboard

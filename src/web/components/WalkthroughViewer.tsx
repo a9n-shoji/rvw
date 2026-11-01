@@ -276,6 +276,8 @@ function WalkthroughMermaidDiagram({
             {sourceRange && (
               <button
                 className="button--quiet walkthrough-diagram-comment"
+                aria-label="図全体へコメント"
+                title="図全体へコメント"
                 onPointerDown={(event) => {
                   if (event.button !== 0) return;
                   event.preventDefault();
@@ -286,7 +288,6 @@ function WalkthroughMermaidDiagram({
                 }}
               >
                 <CommentIcon />
-                図全体へコメント
               </button>
             )}
             {expandButton}

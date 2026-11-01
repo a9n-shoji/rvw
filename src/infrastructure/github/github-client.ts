@@ -13,11 +13,7 @@ import { runProcess, runText } from "../process/run-process.js";
 export interface GitHubPort {
   doctor(): Promise<{ version: string; authenticated: boolean }>;
   getPullRequestStatuses(references: readonly string[]): Promise<GitHubPullRequestStatusResult[]>;
-  getPullRequest(
-    reference: string | undefined,
-    cwd: string,
-    options?: { allowClosed?: boolean },
-  ): Promise<GitHubPullRequest>;
+  getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest>;
   getAttachment(absoluteUrl: string): Promise<{ content: Buffer; byteLength: number }>;
 }
 
@@ -266,11 +262,7 @@ export class GitHubClient implements GitHubPort {
     });
   }
 
-  async getPullRequest(
-    reference: string | undefined,
-    cwd: string,
-    options: { allowClosed?: boolean } = {},
-  ): Promise<GitHubPullRequest> {
+  async getPullRequest(reference: string | undefined, cwd: string): Promise<GitHubPullRequest> {
     await this.assertAuthenticated();
     const fields = [
       "id",
@@ -312,12 +304,6 @@ export class GitHubClient implements GitHubPort {
       throw new RvwError("GITHUB_ERROR", "GitHub CLIのPull Request応答が不正です。", {
         details: parsed.error.flatten(),
       });
-    }
-    if (parsed.data.state !== "OPEN" && !options.allowClosed) {
-      throw new RvwError(
-        "GITHUB_PR_NOT_OPEN",
-        "ClosedまたはMerged Pull Requestは新規登録の対象外です。",
-      );
     }
     const identity = parsePullRequestUrl(parsed.data.url);
     return {

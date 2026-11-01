@@ -36,7 +36,7 @@ rvw open https://github.com/owner/repository/pull/123
 同じcloneから作ったworktreeでも使えます。forkからのPRを読む場合もbaseリポジトリを使います。
 rvwはコミットを取得して読み、作業ブランチをPRのブランチへ切り替えません。
 
-新規登録はgithub.comのOpen / Draft PRに対応します。GitHub EnterpriseとClosed / Merged PRの新規登録は未対応です。
+新規登録はgithub.comのOpen / Draft / Closed / Merged PRに対応します。GitHub Enterpriseは未対応です。
 登録後にClosed / Mergedになっても、保持したコードを表示し、GitHubと同期できます。
 
 ```bash

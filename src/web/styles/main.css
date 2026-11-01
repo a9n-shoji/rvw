@@ -2619,13 +2619,7 @@ diffs-container > [slot="header-metadata"] {
 
 .walkthrough-viewer {
   min-height: calc(100% - 40px);
-  background:
-    radial-gradient(
-      circle at 30% -5%,
-      color-mix(in srgb, var(--accent) 8%, transparent),
-      transparent 34rem
-    ),
-    var(--bg);
+  background: var(--panel);
 }
 .walkthrough-viewer-header {
   position: sticky;
@@ -2765,7 +2759,7 @@ diffs-container > [slot="header-metadata"] {
   min-width: 0;
 }
 .walkthrough-markdown {
-  width: min(940px, 100%);
+  width: min(1200px, 100%);
   min-width: 0;
   margin: 0 auto;
   padding: 38px clamp(26px, 4vw, 58px) 100px;
@@ -2774,7 +2768,7 @@ diffs-container > [slot="header-metadata"] {
 }
 .walkthrough-markdown:has(> .walkthrough-html-preview-shell:only-child) {
   width: 100%;
-  padding: 12px 0 100px;
+  padding: 0 0 80px;
 }
 .walkthrough-markdown > :first-child {
   margin-top: 0;
@@ -2846,35 +2840,37 @@ diffs-container > [slot="header-metadata"] {
   min-width: 520px;
 }
 .walkthrough-diagram-shell {
+  position: relative;
   margin: 22px 0 28px;
-  overflow: hidden;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--panel);
-  box-shadow: 0 4px 18px var(--shadow-small);
-}
-.walkthrough-diagram-shell.has-comment {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line-strong));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+  padding-top: 34px;
 }
 .walkthrough-diagram-toolbar {
+  position: absolute;
+  top: 0;
+  right: 0;
   display: flex;
-  min-height: 34px;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.03em;
+  gap: 6px;
 }
-.walkthrough-diagram-toolbar > span:nth-child(2) {
-  min-width: 0;
-  flex: 1;
-  text-align: right;
+.walkthrough-diagram-toolbar > span {
+  display: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .walkthrough-diagram-toolbar,
+  .walkthrough-comment-button,
+  .diff-header-comment-button {
+    opacity: 0;
+  }
+  .walkthrough-diagram-shell:hover .walkthrough-diagram-toolbar,
+  .walkthrough-diagram-shell:focus-within .walkthrough-diagram-toolbar,
+  .walkthrough-viewer-header:hover .walkthrough-comment-button,
+  .walkthrough-viewer-header:focus-within .walkthrough-comment-button,
+  .document-viewer:hover .diff-header-comment-button,
+  .document-viewer:focus-within .diff-header-comment-button,
+  .diff-header-comment-button[aria-pressed="true"],
+  .walkthrough-comment-button[aria-pressed="true"] {
+    opacity: 1;
+  }
 }
 .walkthrough-diagram-comment {
   display: inline-flex;
@@ -2952,32 +2948,13 @@ diffs-container > [slot="header-metadata"] {
   font-size: 12px;
 }
 .walkthrough-html-preview-shell {
-  margin: 22px 0 28px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 22px auto 28px;
   overflow: visible;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--panel);
-  box-shadow: 0 2px 8px var(--shadow-small);
 }
-.walkthrough-html-preview-toolbar {
-  border-radius: 12px 12px 0 0;
-  display: flex;
-  min-height: 34px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0;
-}
-.walkthrough-html-preview-toolbar > span:nth-child(2) {
-  min-width: 0;
-  flex: 1;
-  text-align: right;
+.walkthrough-markdown > .walkthrough-html-preview-shell:only-child {
+  margin-block: 0;
 }
 .walkthrough-html-preview-frame-shell {
   position: relative;
@@ -3005,19 +2982,16 @@ diffs-container > [slot="header-metadata"] {
   box-shadow: 0 3px 10px var(--shadow-medium);
 }
 .walkthrough-html-comment-action {
-  display: inline-flex;
-  min-height: 32px;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 5px;
   transform: translate(-50%, 0);
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-color: var(--accent);
   background: var(--panel);
-  color: var(--text);
-  font-size: 12px;
-  white-space: nowrap;
-  width: max-content;
+  color: var(--accent);
+  font-size: 10px;
 }
 .walkthrough-html-comment-action:hover {
   background: var(--accent-soft);
@@ -6518,4 +6492,12 @@ path.structure-edge-label-leader.selected,
 
 .main-view.two-pane .walkthrough-markdown:has(> .walkthrough-html-preview-shell:only-child) {
   padding-inline: 0;
+}
+@media (pointer: coarse) {
+  .walkthrough-html-comment-action,
+  .walkthrough-html-marker,
+  .walkthrough-diagram-comment {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }

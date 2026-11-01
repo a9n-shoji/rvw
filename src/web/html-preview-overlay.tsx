@@ -75,7 +75,6 @@ export function HtmlPreviewOverlay({
             onClick={() => onComment(action)}
           >
             <CommentIcon />
-            コメント
           </button>
         </>
       )}

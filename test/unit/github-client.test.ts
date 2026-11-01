@@ -345,3 +345,41 @@ describe("GitHubClient attachment fetching", () => {
     );
   });
 });
+
+describe("GitHubClient initial registration metadata", () => {
+  it.each(["OPEN", "CLOSED", "MERGED"])("accepts %s without a state override", async (state) => {
+    const metadata = {
+      id: "PR_test7",
+      author: { login: "reviewer" },
+      headRepository: null,
+      headRepositoryOwner: null,
+      number: 7,
+      url: pullRequestUrl,
+      title: "Read this change",
+      body: "Explanation",
+      createdAt: "2026-11-01T00:00:00Z",
+      updatedAt: "2026-11-01T01:00:00Z",
+      state,
+      isDraft: false,
+      baseRefName: "main",
+      baseRefOid: "a".repeat(40),
+      headRefName: "deleted-feature",
+      headRefOid: "b".repeat(40),
+    };
+    const runner: typeof runProcess = (_executable, args) =>
+      Promise.resolve(
+        jsonProcessResult(
+          args[0] === "pr" ? metadata : args[0] === "api" ? opinionatedReviewsPage([]) : {},
+        ),
+      );
+    await expect(
+      new GitHubClient(runner).getPullRequest(pullRequestUrl, "/repo"),
+    ).resolves.toMatchObject({
+      state,
+      title: metadata.title,
+      body: metadata.body,
+      headOid: metadata.headRefOid,
+      headRepositoryName: null,
+    });
+  });
+});

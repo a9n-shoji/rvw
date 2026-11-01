@@ -1,58 +1,60 @@
 .code-inline-reference {
-  display: inline-flex;
-  max-width: 100%;
-  align-items: center;
-  gap: 5px;
-  margin: 0 2px;
-  padding: 2px 6px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
-  border-radius: 5px;
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
-  color: var(--accent);
-  line-height: 1.35;
-  user-select: text;
-  vertical-align: baseline;
+  display: inline-flex !important;
+  max-width: 100% !important;
+  align-items: center !important;
+  gap: 5px !important;
+  margin: 0 2px !important;
+  padding: 2px 6px !important;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line)) !important;
+  border-radius: 5px !important;
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel)) !important;
+  color: var(--accent) !important;
+  line-height: 1.35 !important;
+  text-decoration: none !important;
+  cursor: pointer !important;
+  user-select: text !important;
+  vertical-align: baseline !important;
 }
 .code-inline-reference:hover {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+  border-color: var(--accent) !important;
+  background: var(--accent-soft) !important;
 }
 .code-inline-reference svg {
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
+  width: 13px !important;
+  height: 13px !important;
+  flex: 0 0 auto !important;
 }
 .code-inline-reference > span {
-  overflow: hidden;
-  font: 650 12px var(--mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: hidden !important;
+  font: 650 12px var(--mono) !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 .code-inline-reference small {
-  color: var(--muted);
-  font: 9px var(--mono);
-  white-space: nowrap;
+  color: var(--muted) !important;
+  font: 9px var(--mono) !important;
+  white-space: nowrap !important;
 }
 
 a.code-inline-reference {
-  font: 650 12px var(--mono);
-  text-decoration: none;
-  cursor: pointer;
+  font: 650 12px var(--mono) !important;
+  text-decoration: none !important;
+  cursor: pointer !important;
 }
 a.code-inline-reference::before {
-  content: "";
-  width: 13px;
-  height: 13px;
-  flex: 0 0 auto;
-  background: var(--rvw-ref-icon) center / contain no-repeat;
+  content: "" !important;
+  width: 13px !important;
+  height: 13px !important;
+  flex: 0 0 auto !important;
+  background: var(--rvw-ref-icon) center / contain no-repeat !important;
 }
 a.code-inline-reference::after {
-  content: attr(data-rvw-ref-location);
-  color: var(--muted);
-  font: 9px var(--mono);
-  white-space: nowrap;
+  content: attr(data-rvw-ref-location) !important;
+  color: var(--muted) !important;
+  font: 9px var(--mono) !important;
+  white-space: nowrap !important;
 }
 .code-inline-reference:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px !important;
 }

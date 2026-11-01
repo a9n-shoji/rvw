@@ -37,11 +37,13 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     "  .cards { display: grid; min-width: 900px; grid-template-columns: 1fr 1fr; gap: 12px; }",
     "  .card { padding: 16px; border: 1px solid var(--rvw-border); border-radius: 8px; }",
     "  .card:hover { border-color: var(--rvw-accent); }",
+    "  #authored a { color: rgb(170, 20, 90); border-radius: 0; text-decoration: underline; }",
     "</style>",
-    '<main class="cards">',
+    '<main id="authored" class="cards">',
     '  <section class="card" data-rvw-commentable>',
     "    <h2>Before</h2>",
     "    <p>各画面が認証を判断する</p>",
+    '    <a href="https://example.com/docs">通常のリンク</a>',
     "  </section>",
     '  <section class="card" data-rvw-commentable>',
     "    <h2>After</h2>",
@@ -74,6 +76,17 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   const frame = page.frameLocator(".walkthrough-html-preview-shell iframe");
   await expect(frame.getByRole("heading", { name: "Before" })).toBeVisible();
   await expect(frame.getByRole("heading", { name: "After" })).toBeVisible();
+  await expect(page.locator(".walkthrough-html-preview-toolbar")).toHaveCount(0);
+  await expect(shell).toHaveCSS("border-top-width", "0px");
+  await expect(shell).toHaveCSS("box-shadow", "none");
+  await expect(frame.locator(".rvw-preview-root")).toHaveCSS("padding-left", "0px");
+  await expect(frame.getByText("各画面が認証を判断する")).toHaveCSS("cursor", "text");
+  const initialViewport = page.viewportSize()!;
+  await page.setViewportSize({ width: 2000, height: 1000 });
+  await expect.poll(async () => (await iframe.boundingBox())?.width ?? 0).toBeGreaterThan(960);
+  expect((await iframe.boundingBox())!.width).toBeLessThanOrEqual(1200);
+  await page.setViewportSize(initialViewport);
+
   await expect(frame.getByRole("img", { name: "Order lifecycle" })).toHaveAttribute(
     "src",
     /^data:image\/svg\+xml;base64,/u,
@@ -101,6 +114,22 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
 
   const leftPane = page.getByRole("region", { name: "左のコードペイン" });
   const previewLink = frame.getByRole("link", { name: "AuthGateway に集約する" });
+  await expect(previewLink).toHaveCSS("cursor", "pointer");
+  await expect(previewLink).toHaveClass(/code-inline-reference/u);
+  await expect(previewLink).toHaveAttribute("data-rvw-ref-location", /^L\d/u);
+  await expect(previewLink).toHaveCSS("border-radius", "5px");
+  await expect(previewLink).toHaveCSS("text-decoration-line", "none");
+  await expect(frame.getByRole("link", { name: "通常のリンク" })).toHaveCSS(
+    "color",
+    "rgb(170, 20, 90)",
+  );
+  await expect(frame.getByRole("link", { name: "通常のリンク" })).not.toHaveClass(
+    /code-inline-reference/u,
+  );
+  // Decoration must not insert nodes and invalidate stored HTML comment paths.
+  expect(await previewLink.evaluate((element) => element.children.length)).toBe(0);
+  await previewLink.focus();
+  await expect(previewLink).toHaveCSS("outline-style", "solid");
   const previewControl = frame.getByRole("button", { name: "Preview control" });
   await previewControl.click();
   await expect(previewControl).toBeFocused();
@@ -142,7 +171,7 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await page.keyboard.press("Control+Shift+F");
   await expect(page.getByRole("textbox", { name: "全文検索" })).toBeFocused();
 
-  await previewLink.click();
+  await previewLink.press("Enter");
   await expect(
     page.getByRole("tab", { name: "src/application/orders/create-order.ts" }),
   ).toHaveAttribute("aria-selected", "true");
@@ -160,6 +189,9 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   });
   const commentAction = page.locator(".walkthrough-html-comment-action");
   await expect(commentAction).toHaveAccessibleName("選択したテキストへコメント");
+  await expect(commentAction).toHaveText("");
+  await previewLink.dispatchEvent("click", { detail: 1 });
+  await expect(page.getByRole("tab", { name: title })).toHaveAttribute("aria-selected", "true");
   await previewLink.evaluate((element) => {
     element.ownerDocument.getSelection()?.removeAllRanges();
   });
@@ -237,6 +269,13 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
   await frame.getByRole("heading", { name: "Before" }).hover();
   await expect(commentAction).toBeVisible();
+  await previewLink.click({ modifiers: ["ControlOrMeta"] });
+  await expect(
+    page
+      .locator('.document-pane[data-pane="right"]')
+      .getByRole("tab", { name: "src/application/orders/create-order.ts" }),
+  ).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: title })).toHaveAttribute("aria-selected", "true");
 });
 
 test("never creates a frame or network request for rejected authored HTML", async ({

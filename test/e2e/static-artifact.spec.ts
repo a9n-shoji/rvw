@@ -152,7 +152,7 @@ for (const colorScheme of ["light", "dark"] as const) {
     await assertDesign();
     await frame
       .getByRole("link", { name: /Inspect the implementation/u })
-      .click({ modifiers: ["Control"] });
+      .click({ modifiers: ["ControlOrMeta"] });
     await expect(page.locator(".document-pane")).toHaveCount(2);
     await assertDesign();
     await page.screenshot({ path: testInfo.outputPath("editorial-split.png") });

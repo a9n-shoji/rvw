@@ -905,9 +905,7 @@ export class RvwService {
       }
     }
 
-    const github = await this.github.getPullRequest(reference, repository.worktreePath, {
-      allowClosed: stored !== null,
-    });
+    const github = await this.github.getPullRequest(reference, repository.worktreePath);
     const existing = this.database.findPullRequestByIdentity(
       github.owner,
       github.repository,
@@ -1142,9 +1140,7 @@ export class RvwService {
   async refreshPullRequest(id: string): Promise<SyncResult> {
     const current = this.getPullRequest(id);
     const repository = await this.repositoryFor(current);
-    const github = await this.github.getPullRequest(current.url, repository.worktreePath, {
-      allowClosed: true,
-    });
+    const github = await this.github.getPullRequest(current.url, repository.worktreePath);
     const pullRequest = await this.synchronizeGithub(github, repository, []);
     return { ...(await this.getPullRequestView(pullRequest.id)), commentUpdatesApplied: 0 };
   }
@@ -1189,9 +1185,7 @@ export class RvwService {
         },
       );
     }
-    const github = await this.github.getPullRequest(current.url, repository.worktreePath, {
-      allowClosed: true,
-    });
+    const github = await this.github.getPullRequest(current.url, repository.worktreePath);
     const localHead = await this.git.headState(repository.worktreePath);
     if (localHead.branch === github.headRefName && localHead.oid !== github.headOid) {
       const remoteUrl = await this.git.assertBaseRepository(
@@ -1808,7 +1802,6 @@ export class RvwService {
       ? await this.github.getPullRequest(
           result.pullRequest.url,
           result.pullRequest.localRepositoryPath,
-          { allowClosed: true },
         )
       : null;
     const staleAgainstGitHub = live
@@ -3465,7 +3458,6 @@ export class RvwService {
     const github = await this.github.getPullRequest(
       preview.pullRequest.url,
       repository.worktreePath,
-      { allowClosed: true },
     );
     const remoteUrl = await this.git.assertBaseRepository(
       repository.worktreePath,

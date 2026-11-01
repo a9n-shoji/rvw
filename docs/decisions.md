@@ -3961,3 +3961,28 @@ stale hints cannot select removed files. Preserve file order and one worker per 
 Split quality and unit/integration into independent jobs; require both plus all E2E shards at the
 existing `test` gate. Download only Chromium's headless shell. More runner setup work is acceptable
 for shorter feedback on this public repository; no tests or platform/security gates are removed.
+
+## 2026-11-01: Allow initial registration of closed and merged PRs
+
+Post-merge walkthroughs and retrospective reading need the same registration path as active reviews.
+Remove the open-only GitHub metadata guard and its allowClosed option; preserve the actual GitHub
+state on initial registration. Existing cached opens, refresh behavior, comparison-base semantics,
+and the default closed/merged list filter remain unchanged. This supersedes the Phase 1 open/draft-only
+registration restriction.
+
+## 2026-11-01: Render Walkthrough HTML as a document surface
+
+A full HTML Walkthrough is a reading surface, not a card embedded inside another document card.
+Use the pane width with a 1200px content maximum, remove the preview frame, toolbar and injected
+inner padding, and leave authored layout intact. Mixed Markdown/HTML remains supported. Keep the
+sandbox and source-line comment/reference contract unchanged; a visual is not a separate domain
+entity or mandatory authoring unit. Text uses a selection cursor, while links retain their action
+cursor. Comment affordances are compact and contextual, with keyboard focus and touch access.
+
+## 2026-11-01: Share code reference chip styling across Markdown and HTML
+
+Recognized rvw-ref anchors in sandboxed HTML receive the same chip CSS as Markdown references,
+with bundled file icons, source location labels and focus affordances. Ordinary links and document
+layout remain authored. Decorate attributes and pseudo-elements only in the parent-controlled load path so
+selection comments and Pane Find keep their source mapping. No authored scripts or extra network
+resources are enabled.

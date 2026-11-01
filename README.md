@@ -133,7 +133,7 @@ rvw-watch-comments Skillを使って、rvwの新しいコメントと返信を�
 - **完全ローカル管理**: コメント、返信、生成された Walkthrough / Structure はローカルに保存されます。**GitHub上のPRには一切投稿・送信されません**。Approve や Merge 等は通常通り GitHub 上で行ってください。
 - **参照の検証**: rvw は指定コミット・ファイル・行が存在することのみを検証します。Agentが生成した解説自体の妥当性は保証しません。
 - **接続要件**: 初回取得・同期時のみ GitHub への接続が必要です。取得済みのPRはオフラインでも表示可能です。
-- **未対応環境**: GitHub Enterprise、および新規登録時点ですでに Closed / Merged になっているPRには非対応です（登録済みPRのクローズ追従は可能）。
+- **未対応環境**: GitHub Enterpriseには非対応です。github.comのPRはOpen / Draft / Closed / Mergedのいずれも登録できます。
 - **変更操作の非保持**: rvw 単独でコード編集、テスト実行、Git コミット等を行う機能はありません。
 
 ---

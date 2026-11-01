@@ -92,7 +92,7 @@ for (const width of [1440, 900, 640]) {
       expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual(width);
       await composer.getByRole("textbox").press("Escape");
       await expect(composer).toHaveCount(0);
-      await frame.getByRole("link").click({ modifiers: ["Control"] });
+      await frame.getByRole("link").click({ modifiers: ["ControlOrMeta"] });
       await expect(page.locator(".document-pane")).toHaveCount(2);
       await expect(page.locator('.document-pane[data-pane="right"] diffs-container')).toBeVisible();
       await page.screenshot({ path: testInfo.outputPath("split.png") });
