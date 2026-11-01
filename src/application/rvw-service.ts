@@ -1,3 +1,8 @@
+import {
+  validateWalkthroughAssets,
+  type WalkthroughAssetInput,
+} from "../shared/walkthrough-assets.js";
+import type { HtmlCommentAnchor } from "../domain/models.js";
 import { GitCodeNavigation } from "../infrastructure/navigation/git-code-navigation.js";
 import type { DefinitionResult } from "../domain/code-navigation.js";
 import { createHash } from "node:crypto";
@@ -121,6 +126,7 @@ import {
 } from "../shared/image-assets.js";
 import {
   analyzeWalkthroughHtmlPreview,
+  walkthroughHtmlPreviewSourceRanges,
   MAX_WALKTHROUGH_HTML_IMAGES,
   type HtmlPreviewAnalysis,
 } from "../shared/walkthrough-html.js";
@@ -268,6 +274,7 @@ export interface CommentWatchContext {
 }
 
 export interface WalkthroughContentRequest {
+  assets?: WalkthroughAssetInput[];
   sourceOid: string;
   title: string;
   body: string;
@@ -342,6 +349,8 @@ export type CommentTargetRequest =
   | {
       kind: "walkthrough";
       walkthroughId: string;
+      htmlAnchor?: HtmlCommentAnchor | undefined;
+      expectedDocumentHash?: string | undefined;
       startLine?: number | null;
       endLine?: number | null;
     }
@@ -1615,6 +1624,30 @@ export class RvwService {
       if (!walkthrough || walkthrough.pullRequestId !== pullRequest.id) {
         throw new RvwError("INVALID_INPUT", "このPRのWalkthroughが見つかりません。");
       }
+      if (
+        target.htmlAnchor &&
+        (target.expectedDocumentHash !== hashDocument(walkthrough.body) ||
+          target.startLine == null ||
+          target.endLine == null)
+      ) {
+        throw new RvwError(
+          "INVALID_INPUT",
+          "Walkthroughが更新されています。表示を更新して選択し直してください。",
+        );
+      }
+      if (
+        target.htmlAnchor &&
+        !walkthroughHtmlPreviewSourceRanges(walkthrough.body).some(
+          (range) =>
+            range.startLine - 1 === target.htmlAnchor?.fenceStartLine &&
+            target.startLine != null &&
+            target.endLine != null &&
+            target.startLine >= range.startLine &&
+            target.endLine <= range.endLine,
+        )
+      ) {
+        throw new RvwError("INVALID_INPUT", "HTMLコメントの対象範囲が不正です。");
+      }
       const startLine = target.startLine ?? null;
       const endLine = target.endLine ?? null;
       assertLinePair(startLine, endLine);
@@ -1630,6 +1663,7 @@ export class RvwService {
         kind: target.kind,
         walkthroughId: target.walkthroughId,
         walkthroughTitle: walkthrough.title,
+        ...(target.htmlAnchor ? { htmlAnchor: target.htmlAnchor } : {}),
         sourceDocumentHash: quotedText === null ? null : hashDocument(walkthrough.body),
         quotedText,
         startLine,
@@ -2733,6 +2767,7 @@ export class RvwService {
   private async validateWalkthroughContent(
     pullRequest: PullRequest,
     input: WalkthroughContentRequest,
+    existing?: Walkthrough,
   ): Promise<
     Omit<WalkthroughContentRequest, "diagramBindings"> & {
       diagramBindings: Record<string, string>;
@@ -2762,7 +2797,43 @@ export class RvwService {
       );
     }
     assertAuthorLabel(input.authorLabel);
+    const supplied =
+      input.assets === undefined ? undefined : validateWalkthroughAssets(input.assets);
+    const assets = supplied ?? existing?.assets ?? [];
+    for (const asset of supplied ?? []) {
+      const previous = existing?.assets?.find((candidate) => candidate.path === asset.path);
+      if (previous && previous.sha256 !== asset.sha256)
+        throw new RvwError(
+          "INVALID_INPUT",
+          `Asset paths are immutable; use a new path for changed bytes: ${asset.path}`,
+        );
+    }
     const markdown = analyzeReferenceMarkdown(input.body, { htmlPreviews: true });
+    for (const html of markdown.htmlPreviews) {
+      for (const path of html.repositoryImages) {
+        const bundled = assets.find((candidate) => candidate.path === path);
+        if (!bundled && existing?.assets?.some((asset) => asset.path === path))
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Missing bundled image still referenced by the document: ${path}`,
+          );
+        if (bundled && !bundled.mediaType.startsWith("image/"))
+          throw new RvwError("INVALID_INPUT", `Image references a non-image asset: ${path}`);
+      }
+      for (const reference of html.assetReferences) {
+        const asset = assets.find((candidate) => candidate.path === reference.path);
+        if (
+          !asset ||
+          (reference.kind === "font"
+            ? asset.mediaType !== "font/woff2"
+            : !asset.mediaType.startsWith("image/"))
+        )
+          throw new RvwError(
+            "INVALID_INPUT",
+            `Missing or incompatible bundled ${reference.kind}: ${reference.path}`,
+          );
+      }
+    }
     const diagramBindings = input.diagramBindings ?? {};
     const referenceIds = new Set(input.references.map((reference) => reference.id));
     for (const [nodeId, referenceId] of Object.entries(diagramBindings)) {
@@ -2794,6 +2865,7 @@ export class RvwService {
       sourceOid: input.sourceOid,
       title,
       body: input.body,
+      ...(input.assets === undefined ? {} : { assets: input.assets }),
       ...(input.authorLabel === undefined ? {} : { authorLabel: input.authorLabel }),
       diagramBindings,
       references: input.references,
@@ -2842,13 +2914,27 @@ export class RvwService {
 
   async updateWalkthrough(uri: string, input: WalkthroughUpdateRequest): Promise<Walkthrough> {
     const { pullRequest, walkthrough } = this.getWalkthroughByUri(uri);
-    const content = await this.validateWalkthroughContent(pullRequest, {
-      ...input,
-      authorLabel: input.authorLabel === undefined ? walkthrough.authorLabel : input.authorLabel,
-    });
+    const content = await this.validateWalkthroughContent(
+      pullRequest,
+      {
+        ...input,
+        authorLabel: input.authorLabel === undefined ? walkthrough.authorLabel : input.authorLabel,
+      },
+      walkthrough,
+    );
     return await this.writeWithRetainedCommit(pullRequest, content.sourceOid, "Walkthrough", () =>
       this.database.updateWalkthrough(walkthrough.id, content),
     );
+  }
+
+  getWalkthroughAsset(pullRequestId: string, walkthroughId: string, path: string, hash: string) {
+    this.getWalkthrough(pullRequestId, walkthroughId);
+    const asset = this.database.getWalkthroughAsset(walkthroughId, path);
+    if (!asset || asset.sha256 !== hash)
+      throw new RvwError("NOT_FOUND", "Bundled asset not found in this document version.", {
+        status: 404,
+      });
+    return asset;
   }
 
   getWalkthroughDeletePreview(uri: string): WalkthroughDeletePreview {
@@ -3036,6 +3122,12 @@ export class RvwService {
     }
     const walkthrough = this.database.getWalkthrough(comment.target.walkthroughId);
     if (!walkthrough || walkthrough.pullRequestId !== comment.pullRequestId) {
+      return { outdated: true, range: null, path: null };
+    }
+    if (
+      comment.target.htmlAnchor &&
+      comment.target.sourceDocumentHash !== hashDocument(walkthrough.body)
+    ) {
       return { outdated: true, range: null, path: null };
     }
     return { ...placeMutableDocumentComment(comment.target, walkthrough.body), path: null };

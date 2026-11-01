@@ -1,3 +1,4 @@
+import { htmlCommentAnchorSchema } from "../shared/html-comment-anchor.js";
 import { z } from "zod";
 import {
   CONTENT_FINGERPRINT_PATTERN,
@@ -17,6 +18,11 @@ export const commentTargetSchema = z.union([
   z.object({
     kind: z.literal("walkthrough"),
     walkthroughId: z.uuid(),
+    htmlAnchor: htmlCommentAnchorSchema.optional(),
+    expectedDocumentHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     startLine: nullableLine.optional().default(null),
     endLine: nullableLine.optional().default(null),
   }),

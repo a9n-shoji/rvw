@@ -72,6 +72,45 @@ function registerPullRequest(
 }
 
 describe("local HTTP security", () => {
+  it("serves only PR-owned, hash-matching bundled assets with restrictive headers", async () => {
+    const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
+    const service = new RvwService(database, new GitClient(), github);
+    const pr = registerPullRequest(database);
+    const otherPr = registerPullRequest(database, { owner: "other", number: 8 });
+    const walkthrough = database.createWalkthrough({
+      pullRequestId: pr,
+      sourceOid: "b".repeat(40),
+      title: "Artifact",
+      body: "Body",
+      diagramBindings: {},
+      references: [],
+      assets: [{ path: "pixel.png", mediaType: "image/png", base64: png.toString("base64") }],
+    });
+    const hash = walkthrough.assets![0]!.sha256;
+    const app = createApp(service, {
+      security: { expectedOrigin: "http://127.0.0.1:4321", expectedHost: "127.0.0.1:4321" },
+    });
+    const url = `http://127.0.0.1:4321/api/pull-requests/${pr}/walkthroughs/${walkthrough.id}/asset?path=pixel.png&sha256=${hash}`;
+    const response = await app.request(url, { headers: { host: "127.0.0.1:4321" } });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("content-security-policy")).toContain("sandbox");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array(png));
+    expect(
+      (await app.request(url.replace(hash, "stale"), { headers: { host: "127.0.0.1:4321" } }))
+        .status,
+    ).toBe(404);
+    expect(
+      (await app.request(url.replace(pr, otherPr), { headers: { host: "127.0.0.1:4321" } })).status,
+    ).toBe(404);
+    expect(
+      (await app.request(url, { headers: { host: "127.0.0.1:4321", origin: "https://evil.test" } }))
+        .status,
+    ).toBe(403);
+    database.close();
+  });
+
   it("resolves a code reference placement through the local API", async () => {
     const database = new RvwDatabase({ filePath: ":memory:", migrationsDirectory: "./migrations" });
     const service = new RvwService(database, new GitClient(), github);

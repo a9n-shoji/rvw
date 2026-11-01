@@ -58,3 +58,16 @@ export function FileEntryIcon({ path = "", kind }: { path?: string; kind: TreeEn
 export function FolderIcon({ expanded }: { expanded: boolean }) {
   return <TrustedSvgIcon icon={resolveFolderIcon(expanded)} />;
 }
+
+/** Reuse the bundled file icon in sandbox previews without adding DOM nodes. */
+export function fileIconDataUrl(path: string, dark: boolean): string {
+  const icon = resolveFileIcon(path, "file");
+  const source = svgSourceByName.get(icon.svgName);
+  if (!source) throw new Error(`File icon is missing: ${path}`);
+  const theme = dark ? "dark" : "light";
+  const openingTagEnd = source.indexOf(">") + 1;
+  if (openingTagEnd === 0) throw new Error(`File icon has no opening tag: ${path}`);
+  // Insert a theme stylesheet after the opening SVG tag; this is not HTML escaping.
+  const colored = `${source.slice(0, openingTagEnd)}<style>svg { color: ${icon.foreground[theme]}; } .bg { fill: ${icon.background[theme]}; }</style>${source.slice(openingTagEnd)}`;
+  return `data:image/svg+xml,${encodeURIComponent(colored)}`;
+}

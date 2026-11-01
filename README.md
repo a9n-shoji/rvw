@@ -182,3 +182,13 @@ PRの閲覧やコメントは引き続き利用できます。[操作と独自Sk
 - [アーキテクチャ設計・実装仕様](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/docs/architecture.md)
 - [コントリビューション](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/CONTRIBUTING.md) / [セキュリティ](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/SECURITY.md)
 - [ライセンス (MIT)](https://github.com/a9n-shoji/rvw/blob/166871b5fbd78f258611553ca7c8acc0101737e2/LICENSE)
+
+### HTMLのウォークスルー
+
+新規作成用の`rvw-walkthrough` Skillは本文全体を静的HTML/CSSで作成します。既存のMarkdown・Mermaidの閲覧も引き続き利用できます。コードリンクは通常クリック、Cmd/Ctrl＋クリックで右ペインに開けます。
+
+文章をドラッグ選択するとコメントボタンが現れます。選択範囲はセルや行をまたいでもそのままコメント対象になります。要素はホバーでもコメントでき、表の対象種別を選ぶ操作は不要です。コメントボタンへのホバーまたはフォーカスで対象を枠表示します。モード切り替えは不要です。
+
+HTMLコメントは選択した文字範囲・要素を保存します。本文更新後は誤った位置への再配置を避けるためOutdatedとして残ります。既存の行コメントは従来の再配置規則を維持します。
+
+HTML Walkthroughの配色・文字組み・レイアウトは成果物側で自由に設計できます。スタンドアロンHTMLと同梱画像・WOFF2は`--html` / `--assets-dir`で取り込めます。Gitへのアセットコミットや外部CDNは不要です。詳しくは[Static Artifactの取り込み](https://github.com/a9n-shoji/rvw/blob/main/docs/static-artifacts.md)を参照してください。

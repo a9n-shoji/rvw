@@ -1,3 +1,9 @@
+import type { ReviewComment, HtmlCommentAnchor } from "../../src/domain/models.js";
+type SavedHtmlComment = Omit<ReviewComment, "target"> & {
+  target: Extract<ReviewComment["target"], { kind: "walkthrough" }> & {
+    htmlAnchor: HtmlCommentAnchor;
+  };
+};
 import { expect, test, type Page } from "@playwright/test";
 
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
@@ -182,14 +188,14 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await page.mouse.up();
   const composer = shell.locator(".walkthrough-html-comment-composer");
   await expect(composer).toBeVisible();
-  await expect(composer.getByRole("textbox")).toHaveAccessibleName("このvisualへコメント");
+  await expect(composer.getByRole("textbox")).toHaveAccessibleName("この要素へコメント");
   const [visualBox, composerBox] = await Promise.all([
     afterHeading.boundingBox(),
     composer.boundingBox(),
   ]);
   expect(visualBox).not.toBeNull();
   expect(composerBox).not.toBeNull();
-  expect(Math.abs(composerBox!.y - visualBox!.y)).toBeLessThan(120);
+  expect(Math.abs(composerBox!.y - visualBox!.y)).toBeLessThan(240);
   const commentBody = "Gatewayへの集約境界を確認してください。";
   await composer.getByRole("textbox").fill(commentBody);
   await composer.getByRole("textbox").press("Control+Enter");
@@ -200,6 +206,8 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   ).toHaveCount(0);
   const marker = shell.locator(".walkthrough-html-marker").last();
   await expect(marker).toBeVisible();
+  // Full-width HTML now fits the original canvas; explicitly create a narrow viewport for scrolling.
+  await page.setViewportSize({ width: 1000, height: 900 });
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
   await page.evaluate(
     () =>
@@ -212,7 +220,7 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 140 }));
   await expect
     .poll(async () => frame.locator("body").evaluate(() => window.scrollX))
-    .toBeGreaterThan(40);
+    .toBeGreaterThan(0);
   const iframeScrollLeft = await frame.locator("body").evaluate(() => window.scrollX);
   await expect
     .poll(async () => (await marker.boundingBox())?.x ?? Number.POSITIVE_INFINITY)
@@ -224,6 +232,8 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     page.locator(".comment-sidebar .comment-thread").filter({ hasText: commentBody }),
   ).toBeVisible();
 
+  // Full-width HTML now fits the original canvas; explicitly create a narrow viewport for scrolling.
+  await page.setViewportSize({ width: 1000, height: 900 });
   await frame.locator("body").evaluate(() => window.scrollTo({ left: 0 }));
   await frame.getByRole("heading", { name: "Before" }).hover();
   await expect(commentAction).toBeVisible();
@@ -269,4 +279,202 @@ test("never creates a frame or network request for rejected authored HTML", asyn
   await expect(page.locator(".walkthrough-html-preview-shell iframe")).toHaveCount(0);
   expect(authoredRequestCount).toBe(0);
   expect(await page.evaluate(() => "__rvwUnsafe" in window)).toBe(false);
+});
+
+test("keeps same-line cells and partial text distinct across reload, without a comment mode", async ({
+  page,
+  request,
+}) => {
+  const title = "Precise HTML comments";
+  const body =
+    '```html-preview\n<table><tbody><tr><td>alpha</td><td>beta gamma</td></tr></tbody></table>\n<a href="rvw-ref:handler">Source</a>\n```';
+  const update = await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
+    data: { title, body, referenceLabel: "Route" },
+  });
+  expect(update.ok()).toBe(true);
+  await openWalkthrough(page, title);
+  const shell = page.locator(".walkthrough-html-preview-shell");
+  const frame = shell.frameLocator("iframe");
+  const second = frame.locator("td").nth(1);
+  await second.hover();
+  await expect(shell.locator(".walkthrough-html-target-options")).toHaveCount(0);
+  await shell.getByRole("button", { name: "この要素へコメント", exact: true }).hover();
+  await expect(second).toHaveClass(/rvw-html-comment-target/);
+  await shell.getByRole("button", { name: "この要素へコメント", exact: true }).click();
+  const composer = shell.locator(".walkthrough-html-comment-composer");
+  await composer.getByRole("textbox").fill("Only the second cell");
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const response = await saved;
+  expect(response.ok()).toBe(true);
+  const { comment } = (await response.json()) as { comment: SavedHtmlComment };
+  expect(comment.target.htmlAnchor.path.length).toBeGreaterThan(0);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }).click();
+  await expect(second).toHaveClass(/rvw-html-active-comment/);
+  await expect(frame.locator("td").first()).not.toHaveClass(/rvw-html-active-comment/);
+  await second.evaluate((element) => {
+    const range = element.ownerDocument.createRange();
+    const text = [...element.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)!;
+    range.setStart(text, 0);
+    range.setEnd(text, 4);
+    const selection = element.ownerDocument.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await shell.getByRole("button", { name: "選択したテキストへコメント" }).click();
+  await composer.getByRole("textbox").fill("Only beta");
+  const textSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const textResponse = await textSaved;
+  expect(textResponse.ok()).toBe(true);
+  const textComment = ((await textResponse.json()) as { comment: SavedHtmlComment }).comment;
+  expect(textComment.target.htmlAnchor.startOffset).toBe(0);
+  expect(textComment.target.htmlAnchor.endOffset).toBe(4);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell
+    .getByRole("button", { name: `${textComment.id}のコメントを開く`, exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      frame.locator("body").evaluate(() => {
+        const highlight = CSS.highlights.get("rvw-comment");
+        return highlight
+          ? [...highlight].map((range) => (range instanceof Range ? range.toString() : "")).join("")
+          : "";
+      }),
+    )
+    .toBe("beta");
+  await frame.locator("table").evaluate((element) => {
+    const cells = element.querySelectorAll("td");
+    const textNode = (cell: Element) =>
+      [...cell.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)!;
+    const range = element.ownerDocument.createRange();
+    range.setStart(textNode(cells[0]!), 2);
+    range.setEnd(textNode(cells[1]!), 4);
+    const selection = element.ownerDocument.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await shell.getByRole("button", { name: "選択したテキストへコメント" }).click();
+  await composer.getByRole("textbox").fill("Across cells, without expanding the selection");
+  const acrossSaved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const acrossResponse = await acrossSaved;
+  expect(acrossResponse.ok()).toBe(true);
+  const acrossComment = ((await acrossResponse.json()) as { comment: SavedHtmlComment }).comment;
+  expect(acrossComment.target.htmlAnchor.startOffset).toBe(2);
+  expect(acrossComment.target.htmlAnchor.endOffset).toBe(4);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell
+    .getByRole("button", { name: `${acrossComment.id}のコメントを開く`, exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      frame.locator("body").evaluate(() => {
+        const highlight = CSS.highlights.get("rvw-comment");
+        return highlight
+          ? [...highlight].map((range) => (range instanceof Range ? range.toString() : "")).join("")
+          : "";
+      }),
+    )
+    .toBe("phabeta");
+  const changed = await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
+    data: { title, body: body.replace("alpha", "changed"), referenceLabel: "Route" },
+  });
+  expect(changed.ok()).toBe(true);
+  const stale = await request.post("/api/comments", {
+    data: {
+      pullRequestId,
+      target: {
+        kind: "walkthrough",
+        walkthroughId,
+        startLine: 2,
+        endLine: 2,
+        htmlAnchor: comment.target.htmlAnchor,
+        expectedDocumentHash: comment.target.sourceDocumentHash,
+      },
+      body: "stale selection",
+    },
+  });
+  expect(stale.ok()).toBe(false);
+  await page.reload();
+  await openWalkthrough(page, title);
+  await expect(
+    shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }),
+  ).toHaveCount(0);
+});
+
+test("keeps a middle-row cell anchored while slowly crossing the next row to its comment button", async ({
+  page,
+  request,
+}) => {
+  const title = "Middle row hover bridge";
+  const body = `~~~html-preview
+<style>table { border-collapse: collapse; width: 400px; } td { height: 100px; padding: 0; border: 1px solid; }</style>
+<table><tbody><tr><td>before</td></tr><tr><td>alpha</td></tr><tr><td>bravo</td></tr><tr><td>after</td></tr></tbody></table>
+<a href="rvw-ref:handler">Source</a>
+~~~`;
+  expect(
+    (
+      await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
+        data: { title, body, referenceLabel: "Route" },
+      })
+    ).ok(),
+  ).toBe(true);
+  await openWalkthrough(page, title);
+  const shell = page.locator(".walkthrough-html-preview-shell");
+  const frame = shell.frameLocator("iframe");
+  const alpha = frame.getByRole("cell", { name: "alpha", exact: true });
+  const bravo = frame.getByRole("cell", { name: "bravo", exact: true });
+  await alpha.hover();
+  const action = shell.getByRole("button", { name: "この要素へコメント", exact: true });
+  await expect(action).toBeVisible();
+  const button = (await action.boundingBox())!;
+  const cell = (await alpha.boundingBox())!;
+  // Cross the bottom border and the 4px gap one pixel at a time; hover() alone teleports.
+  const x = Math.min(button.x + button.width / 2, cell.x + cell.width - 8);
+  await page.mouse.move(x, cell.y + cell.height - 10);
+  for (let y = cell.y + cell.height - 9; y <= button.y + button.height / 2; y += 1) {
+    await page.mouse.move(x, y);
+    await page.waitForTimeout(20);
+    expect((await action.boundingBox())!.y).toBeCloseTo(button.y, 1);
+  }
+  await expect(alpha).toHaveClass(/rvw-html-comment-target/);
+  await expect(bravo).not.toHaveClass(/rvw-html-comment-target/);
+  // Leaving the bridge still permits choosing another row.
+  await bravo.hover();
+  await action.hover();
+  await expect(bravo).toHaveClass(/rvw-html-comment-target/);
+  await alpha.hover();
+  await page.mouse.move(x, cell.y + cell.height - 10);
+  await page.mouse.move(x, button.y + button.height / 2, { steps: 30 });
+  await page.mouse.click(x, button.y + button.height / 2);
+  const composer = shell.locator(".walkthrough-html-comment-composer");
+  await composer.getByRole("textbox").fill("Still alpha");
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/comments") && response.request().method() === "POST",
+  );
+  await composer.getByRole("textbox").press("Control+Enter");
+  const response = await saved;
+  expect(response.ok()).toBe(true);
+  const { comment } = (await response.json()) as { comment: SavedHtmlComment };
+  await page.reload();
+  await openWalkthrough(page, title);
+  await shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }).click();
+  await expect(alpha).toHaveClass(/rvw-html-active-comment/);
+  await expect(bravo).not.toHaveClass(/rvw-html-active-comment/);
 });

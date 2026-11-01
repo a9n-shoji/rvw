@@ -7,6 +7,9 @@ export interface HtmlPreviewOverlayAction {
   left: number;
   top: number;
   label: string;
+  composerTop?: number | undefined;
+  onPreview?: () => void;
+  onPreviewEnd?: () => void;
 }
 
 export interface HtmlPreviewOverlayMarker {
@@ -58,17 +61,23 @@ export function HtmlPreviewOverlay({
         </button>
       ))}
       {action && (
-        <button
-          className="walkthrough-html-comment-action"
-          style={{ left: action.left, top: action.top }}
-          aria-label={action.label}
-          title={action.label}
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={() => onComment(action)}
-        >
-          <CommentIcon />
-          コメント
-        </button>
+        <>
+          <button
+            className="walkthrough-html-comment-action"
+            style={{ left: action.left, top: action.top }}
+            aria-label={action.label}
+            title={action.label}
+            onPointerDown={(event) => event.preventDefault()}
+            onMouseEnter={action.onPreview}
+            onMouseLeave={action.onPreviewEnd}
+            onFocus={action.onPreview}
+            onBlur={action.onPreviewEnd}
+            onClick={() => onComment(action)}
+          >
+            <CommentIcon />
+            コメント
+          </button>
+        </>
       )}
       {composer && composerAnchor && (
         <div

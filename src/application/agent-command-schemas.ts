@@ -1,3 +1,8 @@
+import {
+  walkthroughAssetInputSchema,
+  MAX_WALKTHROUGH_ASSETS,
+} from "../shared/walkthrough-assets.js";
+import { htmlCommentAnchorSchema } from "../shared/html-comment-anchor.js";
 import { z } from "zod";
 import { STRUCTURE_NODE_NOTATIONS } from "../domain/models.js";
 import {
@@ -60,6 +65,11 @@ export const commentTargetInputSchema = z
       .object({
         kind: z.literal("walkthrough"),
         walkthroughId: z.uuid(),
+        htmlAnchor: htmlCommentAnchorSchema.optional(),
+        expectedDocumentHash: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
         startLine: nullableCommentLine,
         endLine: nullableCommentLine,
       })
@@ -226,6 +236,7 @@ export const pullRequestSyncInputSchema = z
 
 const walkthroughContentInputSchema = z
   .object({
+    assets: z.array(walkthroughAssetInputSchema).max(MAX_WALKTHROUGH_ASSETS).optional(),
     sourceOid: z.string().regex(GIT_OBJECT_ID_PATTERN),
     title: z.string().min(1).max(MAX_WALKTHROUGH_TITLE_CHARACTERS),
     body: z

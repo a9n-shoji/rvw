@@ -224,6 +224,7 @@ describe("CLI protocol discovery", () => {
         "walkthrough.update",
         "walkthrough.delete",
         "walkthrough.htmlPreview",
+        "walkthrough.staticAssets",
       ],
     });
     expect(
@@ -966,6 +967,48 @@ describe("CLI protocol discovery", () => {
       ok: false,
       error: { code: "INVALID_INPUT", message: "入力がCLI schemaに適合しません。" },
     });
+  });
+
+  it("imports standalone HTML and a local bundle through the publish command", async () => {
+    const publishWalkthrough = vi.fn().mockResolvedValue({ ref: "rvw://walkthrough/example" });
+    const { runtime } = mockRuntime({ publishWalkthrough });
+    captureStdout();
+    provideStdin({
+      pullRequest: pullRequest.url,
+      sourceOid: "b".repeat(40),
+      title: "Editorial",
+      references: [
+        {
+          id: "handler",
+          label: "Handler",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "walkthrough",
+      "publish",
+      "--html",
+      "test/fixtures/static-artifact/editorial.html",
+      "--assets-dir",
+      "test/fixtures/static-artifact/assets",
+      "--stdin",
+      "--json",
+    ]);
+    const published = publishWalkthrough.mock.calls[0]?.[0] as {
+      body: string;
+      assets: Array<{ path: string; mediaType: string }>;
+    };
+    expect(published.body).toContain("<!doctype html>");
+    expect(published.assets.map(({ path, mediaType }) => ({ path, mediaType }))).toEqual([
+      { path: "assets/editorial.woff2", mediaType: "font/woff2" },
+      { path: "assets/pixel.png", mediaType: "image/png" },
+    ]);
   });
 
   it("passes a complete Walkthrough replacement from stdin to the service", async () => {

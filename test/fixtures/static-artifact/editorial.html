@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Boundary Review</title>
+    <style>
+      @font-face {
+        font-family: Editorial;
+        src: url(assets/editorial.woff2) format("woff2");
+        font-weight: 400;
+        font-display: block;
+      }
+      html {
+        --accent: #ad354e;
+        background: #f5ebd5;
+        color: #302a52;
+        font-family: Editorial, serif;
+      }
+      body {
+        margin: 0;
+        font-family: Editorial, serif;
+        font-size: 19px;
+        line-height: 1.65;
+      }
+      main {
+        padding: clamp(18px, 4vw, 64px);
+      }
+      h1 {
+        font-size: clamp(28px, 4vw, 58px);
+        font-weight: 400;
+        letter-spacing: -0.04em;
+        line-height: 1.05;
+        margin: 0 0 32px;
+      }
+      .eyebrow {
+        color: #ad354e;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+      }
+      .dashboard {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+        gap: 18px;
+      }
+      .metric {
+        border-top: 3px solid var(--accent);
+        padding: 12px 0;
+      }
+      .metric strong {
+        display: block;
+        font-size: 42px;
+        font-weight: 400;
+      }
+      .banner {
+        background-image: url(assets/pixel.png);
+        min-height: 24px;
+      }
+      figure {
+        margin: 24px 0;
+      }
+      img {
+        width: 48px;
+        height: 48px;
+        image-rendering: pixelated;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="eyebrow">Engineering / Review 07</p>
+      <h1>A boundary, not a bottleneck.</h1>
+      <p id="claim">The gateway validates once before forwarding the request.</p>
+      <p><a href="rvw-ref:handler">Inspect the implementation</a></p>
+      <div class="dashboard">
+        <section class="metric"><strong>01</strong>Authentication boundary</section>
+        <section class="metric"><strong>03</strong>Downstream consumers</section>
+        <section class="metric"><strong>0</strong>Duplicate validations</section>
+      </div>
+      <div class="banner" aria-label="Bundled texture"></div>
+      <figure>
+        <img src="assets/pixel.png" alt="Bundled sample" />
+        <figcaption>Local asset, no CDN.</figcaption>
+      </figure>
+      <svg viewBox="0 0 600 70" aria-label="Request passes through one gateway">
+        <path d="M20 35 H580" stroke="#ad354e" stroke-width="3" />
+        <circle cx="300" cy="35" r="24" fill="#302a52" />
+      </svg>
+    </main>
+  </body>
+</html>

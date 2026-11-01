@@ -1,3 +1,8 @@
+import type { WalkthroughAssetMetadata } from "../../shared/walkthrough-assets.js";
+import codeReferenceCss from "../styles/code-reference.css?inline";
+import { codeReferenceLineLabel, codeReferenceLocation } from "./CodeReferenceLink.js";
+import { fileIconDataUrl } from "./FileIcon.js";
+import { htmlNodePath, resolveHtmlAnchor } from "../html-comment-anchor.js";
 import {
   useCallback,
   useEffect,
@@ -40,7 +45,7 @@ const previewContentSecurityPolicy = [
   "script-src 'none'",
   "style-src 'unsafe-inline'",
   "img-src data:",
-  "font-src 'none'",
+  "font-src data:",
   "connect-src 'none'",
   "media-src 'none'",
   "object-src 'none'",
@@ -50,41 +55,34 @@ const previewContentSecurityPolicy = [
   "form-action 'none'",
 ].join("; ");
 
-function themeCss(themePreference: ThemePreference): string {
+function themeCss(themePreference: ThemePreference, standalone: boolean): string {
   const dark = `
-    --rvw-bg: #161b22;
-    --rvw-fg: #e6edf3;
-    --rvw-muted: #8b949e;
-    --rvw-border: #30363d;
-    --rvw-accent: #58a6ff;
-    --rvw-panel: #21262d;
-    --rvw-highlight: #d29922;
-    color-scheme: dark;`;
+    --rvw-bg: #262624;
+    --rvw-fg: #ecebe5;
+    --rvw-muted: #b5b3aa;
+    --rvw-border: #45453f;
+    --rvw-accent: #a9c7e8;
+    --rvw-panel: #30302d;
+    --rvw-highlight: #d6aa81;
+    ${standalone ? "" : "color-scheme: dark;"}`;
   const light = `
-    --rvw-bg: #ffffff;
-    --rvw-fg: #1f2328;
-    --rvw-muted: #57606a;
-    --rvw-border: #d8dee4;
-    --rvw-accent: #0969da;
-    --rvw-panel: #f6f8fa;
-    --rvw-highlight: #9a6700;
-    color-scheme: light;`;
-  if (themePreference === "dark") return `:root {${dark}}`;
-  if (themePreference === "light") return `:root {${light}}`;
-  return `:root {${light} color-scheme: light dark;} @media (prefers-color-scheme: dark) { :root {${dark}} }`;
+    --rvw-bg: #fffefb;
+    --rvw-fg: #30302b;
+    --rvw-muted: #6b6a61;
+    --rvw-border: #e5e3da;
+    --rvw-accent: #37658c;
+    --rvw-panel: #f5f4ee;
+    --rvw-highlight: #a66a43;
+    ${standalone ? "" : "color-scheme: light;"}`;
+  if (themePreference === "dark") return `:where(:root) {${dark}}`;
+  if (themePreference === "light") return `:where(:root) {${light}}`;
+  return `:where(:root) {${light}} @media (prefers-color-scheme: dark) { :where(:root) {${dark}} }`;
 }
 
-function previewBaseCss(themePreference: ThemePreference): string {
-  return `${themeCss(themePreference)}
-    *, *::before, *::after { box-sizing: border-box; }
-    html { background: transparent; }
-    body { margin: 0; overflow-x: auto; overflow-y: hidden; background: var(--rvw-bg); color: var(--rvw-fg); }
-    body, button, input, select, textarea { font: 14px/1.5 var(--rvw-font-sans, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif); }
-    code, kbd, pre { font-family: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); }
-    img, svg { max-width: 100%; }
-    a { color: var(--rvw-accent); cursor: pointer; }
-    button, input, select, textarea { color: inherit; }
-    .rvw-preview-root { min-width: 0; padding: 16px; }
+function previewBaseCss(themePreference: ThemePreference, standalone: boolean): string {
+  return `${themeCss(themePreference, standalone)}
+    ${standalone ? "" : `:where(html) { background: var(--rvw-bg); color: var(--rvw-fg); font: 15px/1.5 ui-sans-serif, sans-serif; } :where(a) { color: var(--rvw-accent); }`}
+    ${standalone ? "" : ".rvw-preview-root { min-width: 0; }"}
     .rvw-html-image-placeholder { display: grid; min-height: 96px; place-items: center; padding: 16px; border: 1px dashed var(--rvw-border); border-radius: 6px; background: var(--rvw-panel); color: var(--rvw-muted); text-align: center; }
     [data-rvw-comment-surface="true"] { cursor: default; }
     ::highlight(rvw-pane-find-left-match), ::highlight(rvw-pane-find-right-match) { background-color: light-dark(rgb(234 179 8 / 0.42), rgb(250 204 21 / 0.38)); }
@@ -93,18 +91,22 @@ function previewBaseCss(themePreference: ThemePreference): string {
 }
 
 const previewCommentCss = `
+  ::highlight(rvw-comment) { background: color-mix(in srgb, var(--rvw-highlight) 28%, transparent); }
+  .rvw-html-comment-target,
   .rvw-html-active-comment {
-    outline: 3px solid var(--rvw-highlight) !important;
-    outline-offset: 3px !important;
+    outline: 2px solid var(--rvw-highlight) !important;
+    outline-offset: 2px !important;
   }
 `;
 
-function srcdoc(html: string, themePreference: ThemePreference): string {
-  return `<meta http-equiv="Content-Security-Policy" content="${previewContentSecurityPolicy}">
-<meta name="color-scheme" content="light dark">
-<style>${previewBaseCss(themePreference)}</style>
-<div class="rvw-preview-root" data-pane-find-text>${html}</div>
-<style>${previewCommentCss}</style>`;
+function srcdoc(html: string, themePreference: ThemePreference, standalone: boolean): string {
+  const security = `<meta http-equiv="Content-Security-Policy" content="${previewContentSecurityPolicy}"><style>${previewBaseCss(themePreference, standalone)}</style>`;
+  const interaction = `<style>.code-inline-reference { --accent: var(--rvw-accent); --line: var(--rvw-border); --panel: var(--rvw-bg); --muted: var(--rvw-muted); --mono: var(--rvw-font-mono, "SFMono-Regular", Consolas, monospace); --accent-soft: color-mix(in srgb, var(--rvw-accent) 12%, var(--rvw-bg)); } ${codeReferenceCss} ${previewCommentCss}</style>`;
+  if (standalone)
+    return html
+      .replace(/<head([^>]*)>/u, `<head$1>${security}`)
+      .replace(/<\/body>/u, `${interaction}</body>`);
+  return `${security}<style>:where(body) { margin: 0; }</style><div class="rvw-preview-root" data-pane-find-text>${html}</div>${interaction}`;
 }
 
 function rangeFromElement(element: Element | null): MarkdownSourceRange | null {
@@ -215,6 +217,8 @@ async function resolveImages(
 }
 
 export function WalkthroughHtmlPreview({
+  walkthroughId,
+  assets,
   source,
   fenceRange,
   pullRequestId,
@@ -230,6 +234,8 @@ export function WalkthroughHtmlPreview({
   onCommentRange,
   onActivateComment,
 }: {
+  walkthroughId: string;
+  assets: WalkthroughAssetMetadata[];
   source: string;
   fenceRange: MarkdownSourceRange;
   pullRequestId: string;
@@ -249,6 +255,11 @@ export function WalkthroughHtmlPreview({
   const frameShellRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const textRangesRef = useRef(new WeakMap<Text, MarkdownSourceRange>());
+  const assetsRef = useRef(assets);
+  assetsRef.current = assets;
+  const assetVersion = assets.map((asset) => `${asset.path}:${asset.sha256}`).join("|");
+  const [loadedAssetVersion, setLoadedAssetVersion] = useState("");
+  const [assetError, setAssetError] = useState<string | null>(null);
   const [resolvedImages, setResolvedImages] = useState<Map<string, string | null>>(new Map());
   const [frameHeight, setFrameHeight] = useState(minimumFrameHeight);
   const [overlayAction, setOverlayAction] = useState<HtmlPreviewOverlayAction | null>(null);
@@ -271,22 +282,49 @@ export function WalkthroughHtmlPreview({
 
   useEffect(() => {
     const controller = new AbortController();
+    setAssetError(null);
+    setLoadedAssetVersion("");
     setResolvedImages(new Map());
-    if (authoredRepositoryImages.length > 0) {
-      void resolveImages(
+    const load = async (): Promise<void> => {
+      const manifest = assetsRef.current;
+      const images = await resolveImages(
         pullRequestId,
         sourceOid,
-        authoredRepositoryImages,
+        authoredRepositoryImages.filter((path) => !manifest.some((asset) => asset.path === path)),
         controller.signal,
-      ).then(
-        (images) => {
-          if (!controller.signal.aborted) setResolvedImages(images);
-        },
-        () => undefined,
       );
-    }
+      for (const asset of manifest) {
+        const response = await fetch(
+          `/api/pull-requests/${encodeURIComponent(pullRequestId)}/walkthroughs/${encodeURIComponent(walkthroughId)}/asset?${new URLSearchParams({ path: asset.path, sha256: asset.sha256 })}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error(`Bundled asset unavailable: ${asset.path}`);
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (bytes.length !== asset.byteLength)
+          throw new Error(`Bundled asset length mismatch: ${asset.path}`);
+        const digest = await window.crypto.subtle.digest("SHA-256", bytes);
+        const hash = [...new Uint8Array(digest)]
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("");
+        if (
+          hash !== asset.sha256 ||
+          response.headers.get("content-type")?.split(";", 1)[0] !== asset.mediaType
+        )
+          throw new Error(`Bundled asset integrity mismatch: ${asset.path}`);
+        images.set(asset.path, bytesToDataUrl(bytes, asset.mediaType));
+      }
+      if (!controller.signal.aborted) {
+        setAssetError(null);
+        setLoadedAssetVersion(assetVersion);
+        setResolvedImages(images);
+      }
+    };
+    void load().catch((error: unknown) => {
+      if (!controller.signal.aborted)
+        setAssetError(error instanceof Error ? error.message : "Bundled assets unavailable.");
+    });
     return () => controller.abort();
-  }, [authoredRepositoryImages, pullRequestId, sourceOid]);
+  }, [assetVersion, walkthroughId, authoredRepositoryImages, pullRequestId, sourceOid]);
 
   const updateLayout = useCallback((): void => {
     const iframe = iframeRef.current;
@@ -304,24 +342,40 @@ export function WalkthroughHtmlPreview({
       document.body.style.overflowY = contentHeight > maximumFrameHeight ? "auto" : "hidden";
     const iframeRect = iframe.getBoundingClientRect();
     const frameShellRect = frameShell.getBoundingClientRect();
+    const occupied: Array<{ left: number; top: number }> = [];
     setMarkers(
       placedComments.flatMap(({ comment, placement }) => {
         if (placement.outdated || !placement.range) return [];
-        const element = bestElementForRange(document, placement.range);
+        const anchor =
+          comment.target.kind === "walkthrough" ? comment.target.htmlAnchor : undefined;
+        if (anchor && anchor.fenceStartLine !== fenceRange.startLine) return [];
+        const element = anchor
+          ? resolveHtmlAnchor(document, anchor)
+          : bestElementForRange(document, placement.range);
         if (!element) return [];
         const rect = element.getBoundingClientRect();
+        const left = iframeRect.left - frameShellRect.left + rect.right;
+        let top = iframeRect.top - frameShellRect.top + rect.top;
+        while (
+          occupied.some(
+            (position) => Math.abs(position.left - left) < 28 && Math.abs(position.top - top) < 28,
+          )
+        ) {
+          top += 28;
+        }
+        occupied.push({ left, top });
         return [
           {
             id: comment.id,
-            left: iframeRect.left - frameShellRect.left + rect.right,
-            top: iframeRect.top - frameShellRect.top + rect.top,
+            left,
+            top,
             active: comment.id === activeCommentId,
             label: `${comment.id}のコメントを開く`,
           },
         ];
       }),
     );
-  }, [activeCommentId, placedComments]);
+  }, [activeCommentId, placedComments, fenceRange.startLine]);
 
   useLayoutEffect(() => {
     updateLayout();
@@ -337,6 +391,22 @@ export function WalkthroughHtmlPreview({
       detachDocument();
       const document = iframe.contentDocument;
       if (!document) return;
+      if (rendered.value?.standalone) {
+        document.body.classList.add("rvw-preview-root");
+        document.body.setAttribute("data-pane-find-text", "");
+      }
+      // Decorate attributes only: saved DOM paths and text offsets must remain unchanged.
+      for (const link of document.querySelectorAll<HTMLAnchorElement>('a[href^="rvw-ref:"]')) {
+        const reference = references.get(link.getAttribute("href")!.slice("rvw-ref:".length));
+        if (!reference) continue;
+        link.classList.add("code-inline-reference");
+        link.title = codeReferenceLocation(reference);
+        link.dataset.rvwRefLocation = codeReferenceLineLabel(reference) ?? "File";
+        link.style.setProperty(
+          "--rvw-ref-icon",
+          `url("${fileIconDataUrl(reference.path, document.defaultView!.getComputedStyle(document.documentElement).colorScheme === "dark")}")`,
+        );
+      }
       const textRanges = new WeakMap<Text, MarkdownSourceRange>();
       const commentWalker = document.createTreeWalker(document, NodeFilter.SHOW_COMMENT);
       let comment = commentWalker.nextNode();
@@ -354,7 +424,7 @@ export function WalkthroughHtmlPreview({
       textRangesRef.current = textRanges;
 
       const actionLeft = (desired: number): number =>
-        Math.max(48, Math.min(frameShell.clientWidth - 48, desired));
+        Math.max(96, Math.min(frameShell.clientWidth - 96, desired));
 
       const selectionRange = (): { range: MarkdownSourceRange; rect: DOMRect } | null => {
         const selection = document.getSelection();
@@ -367,6 +437,10 @@ export function WalkthroughHtmlPreview({
           return null;
         }
         const domRange = selection.getRangeAt(0);
+        const root = document.querySelector(".rvw-preview-root");
+        const path = root && htmlNodePath(root, domRange.startContainer);
+        const endPath = root && htmlNodePath(root, domRange.endContainer);
+        if (!path || !endPath) return null;
         const textWalker = document.createTreeWalker(document, NodeFilter.SHOW_TEXT);
         const ranges: MarkdownSourceRange[] = [];
         let text = textWalker.nextNode();
@@ -388,6 +462,13 @@ export function WalkthroughHtmlPreview({
         if (ranges.length === 0) return null;
         return {
           range: {
+            htmlAnchor: {
+              fenceStartLine: fenceRange.startLine,
+              path,
+              startOffset: domRange.startOffset,
+              endPath,
+              endOffset: domRange.endOffset,
+            },
             startLine: Math.min(...ranges.map((range) => range.startLine)),
             endLine: Math.max(...ranges.map((range) => range.endLine)),
           },
@@ -395,7 +476,10 @@ export function WalkthroughHtmlPreview({
         };
       };
 
+      let hoverTarget: { surface: Element; x: number; y: number } | null = null;
+
       const setSelectionAction = (): void => {
+        hoverTarget = null;
         const selected = selectionRange();
         if (!selected) {
           setOverlayAction(null);
@@ -413,23 +497,69 @@ export function WalkthroughHtmlPreview({
         });
       };
 
+      const elementRange = (element: Element | null): MarkdownSourceRange | null => {
+        const mapped = rangeFromElement(element);
+        const root = document.querySelector(".rvw-preview-root");
+        const path = element && root && htmlNodePath(root, element);
+        return mapped && path
+          ? { ...mapped, htmlAnchor: { fenceStartLine: fenceRange.startLine, path } }
+          : null;
+      };
+      const clearPreview = (): void => {
+        for (const element of document.querySelectorAll(".rvw-html-comment-target")) {
+          element.classList.remove("rvw-html-comment-target");
+        }
+      };
+      const preview = (element: Element): void => {
+        clearPreview();
+        element.classList.add("rvw-html-comment-target");
+      };
       const onPointerMove = (event: PointerEvent): void => {
-        if (document.getSelection()?.toString().trim()) return;
-        const target = eventElement(event.target);
-        const surface = target?.closest("[data-rvw-comment-surface='true']") ?? null;
-        const range = rangeFromElement(surface);
-        if (!surface || !range) {
-          setOverlayAction(null);
+        clearPreview();
+        if (document.getSelection()?.toString().trim()) {
+          hoverTarget = null;
           return;
         }
-        const rect = surface.getBoundingClientRect();
+        const target = eventElement(event.target);
+        const surface =
+          target?.closest("[data-rvw-commentable]") ??
+          target?.closest("[data-rvw-comment-surface='true']") ??
+          null;
         const iframeRect = iframe.getBoundingClientRect();
+        if (hoverTarget && surface !== hoverTarget.surface) {
+          const button = frameShell.querySelector(".walkthrough-html-comment-action");
+          const rect = button?.getBoundingClientRect();
+          if (rect) {
+            // Bridge the last point on the surface to the real overlay bounds. Adjacent
+            // cells can occupy this route too; they must not steal the action mid-move.
+            const x = iframeRect.left + event.clientX;
+            const y = iframeRect.top + event.clientY;
+            const originX = iframeRect.left + hoverTarget.x;
+            const originY = iframeRect.top + hoverTarget.y;
+            if (
+              x >= Math.min(originX, rect.left) - 4 &&
+              x <= Math.max(originX, rect.right) + 4 &&
+              y >= Math.min(originY, rect.top) - 4 &&
+              y <= Math.max(originY, rect.bottom) + 4
+            )
+              return;
+          }
+        }
+        hoverTarget = null;
+        const range = elementRange(surface);
+        // Keep the action reachable while crossing the gap from its surface to the overlay.
+        if (!surface || !range) return;
+        hoverTarget = { surface, x: event.clientX, y: event.clientY };
+        const rect = surface.getBoundingClientRect();
         const frameShellRect = frameShell.getBoundingClientRect();
         setOverlayAction({
           range,
           left: actionLeft(iframeRect.left - frameShellRect.left + rect.right),
-          top: iframeRect.top - frameShellRect.top + rect.top,
-          label: "このvisualへコメント",
+          top: iframeRect.top - frameShellRect.top + rect.bottom + 4,
+          label: "この要素へコメント",
+          composerTop: iframeRect.top - frameShellRect.top + rect.bottom,
+          onPreview: () => preview(surface),
+          onPreviewEnd: clearPreview,
         });
       };
 
@@ -488,6 +618,7 @@ export function WalkthroughHtmlPreview({
       document.addEventListener("toggle", updateLayout, true);
       let layoutFrame: number | null = null;
       const scheduleLayout = (): void => {
+        hoverTarget = null;
         if (layoutFrame !== null) return;
         layoutFrame = window.requestAnimationFrame(() => {
           layoutFrame = null;
@@ -506,7 +637,18 @@ export function WalkthroughHtmlPreview({
       const hostResizeObserver = new ResizeObserver(updateLayout);
       hostResizeObserver.observe(host);
       updateLayout();
+      void document.fonts.ready.then(() => {
+        if (iframe.contentDocument === document) updateLayout();
+      });
+      const fontError = (): void => {
+        if (iframe.contentDocument === document)
+          setAssetError("A bundled font could not be decoded. Supply a valid WOFF2 font.");
+      };
+      document.fonts.addEventListener("loadingdone", updateLayout);
+      document.fonts.addEventListener("loadingerror", fontError);
       detachDocument = () => {
+        document.fonts.removeEventListener("loadingerror", fontError);
+        document.fonts.removeEventListener("loadingdone", updateLayout);
         document.removeEventListener("selectionchange", setSelectionAction);
         document.removeEventListener("pointerup", setSelectionAction);
         document.removeEventListener("pointermove", onPointerMove);
@@ -529,11 +671,21 @@ export function WalkthroughHtmlPreview({
       iframe.removeEventListener("load", onLoad);
       detachDocument();
     };
-  }, [onOpenReference, onOpenRepositoryLink, references, rendered.value, sourceOid, updateLayout]);
+  }, [
+    onOpenReference,
+    onOpenRepositoryLink,
+    references,
+    rendered.value,
+    sourceOid,
+    updateLayout,
+    fenceRange.startLine,
+  ]);
 
   useEffect(() => {
     const document = iframeRef.current?.contentDocument;
     if (!document) return;
+    const frameWindow = document.defaultView;
+    frameWindow?.CSS?.highlights?.delete("rvw-comment");
     for (const element of document.querySelectorAll(".rvw-html-active-comment")) {
       element.classList.remove("rvw-html-active-comment");
     }
@@ -542,13 +694,27 @@ export function WalkthroughHtmlPreview({
         comment.id === activeCommentId && !placement.outdated && placement.range,
     )?.placement;
     if (!activePlacement?.range) return;
-    const element = bestElementForRange(document, activePlacement.range);
+    const activeComment = placedComments.find(
+      ({ comment }) => comment.id === activeCommentId,
+    )?.comment;
+    const anchor =
+      activeComment?.target.kind === "walkthrough" ? activeComment.target.htmlAnchor : undefined;
+    if (anchor && anchor.fenceStartLine !== fenceRange.startLine) return;
+    const element = anchor
+      ? resolveHtmlAnchor(document, anchor)
+      : bestElementForRange(document, activePlacement.range);
     if (!element) return;
+    if ("startContainer" in element) {
+      if (frameWindow?.Highlight)
+        frameWindow.CSS.highlights.set("rvw-comment", new frameWindow.Highlight(element));
+      element.startContainer.parentElement?.scrollIntoView({ block: "nearest" });
+      return;
+    }
     element.classList.add("rvw-html-active-comment");
     hostRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     element.scrollIntoView({ block: "center", inline: "nearest" });
     updateLayout();
-  }, [activeCommentId, placedComments, updateLayout]);
+  }, [activeCommentId, placedComments, updateLayout, fenceRange.startLine]);
 
   useEffect(() => {
     if (navigationLine === null) return;
@@ -563,6 +729,12 @@ export function WalkthroughHtmlPreview({
     element.scrollIntoView({ block: "center", inline: "nearest" });
   }, [navigationLine, rendered.value]);
 
+  if (assetError)
+    return (
+      <div role="alert" className="walkthrough-html-preview-error">
+        {assetError}
+      </div>
+    );
   if (rendered.error) {
     return (
       <div className="walkthrough-html-preview-error" role="alert">
@@ -571,6 +743,12 @@ export function WalkthroughHtmlPreview({
     );
   }
 
+  if (assets.length > 0 && loadedAssetVersion !== assetVersion)
+    return (
+      <div className="walkthrough-html-preview-shell" role="status">
+        アセットを読み込んでいます…
+      </div>
+    );
   return (
     <div
       className="walkthrough-html-preview-shell"
@@ -579,8 +757,7 @@ export function WalkthroughHtmlPreview({
       data-rvw-navigation-end-line={fenceRange.endLine}
     >
       <div className="walkthrough-html-preview-toolbar" data-pane-find-ignore>
-        <span>HTML preview</span>
-        <span>textまたはvisualを選択してコメント</span>
+        <span>文字を選択、または要素にカーソルを合わせてコメント</span>
       </div>
       <div
         className="walkthrough-html-preview-frame-shell"
@@ -592,7 +769,11 @@ export function WalkthroughHtmlPreview({
           title={`Walkthrough HTML preview L${fenceRange.startLine}`}
           data-pane-find-child-document
           sandbox="allow-same-origin"
-          srcDoc={srcdoc(rendered.value?.html ?? "", themePreference)}
+          srcDoc={srcdoc(
+            rendered.value?.html ?? "",
+            themePreference,
+            rendered.value?.standalone ?? false,
+          )}
           style={{ height: frameHeight }}
         />
         <HtmlPreviewOverlay
@@ -601,6 +782,7 @@ export function WalkthroughHtmlPreview({
           composer={composerAnchor ? commentComposer(composerAnchor.label) : null}
           composerAnchor={composerAnchor}
           onComment={(action) => {
+            action.onPreviewEnd?.();
             iframeRef.current?.contentDocument?.getSelection()?.removeAllRanges();
             setOverlayAction(null);
             const hostWidth = hostRef.current?.clientWidth ?? 0;
@@ -610,7 +792,7 @@ export function WalkthroughHtmlPreview({
               hostWidth > 0
                 ? Math.max(12 + halfWidth, Math.min(hostWidth - 12 - halfWidth, action.left))
                 : action.left;
-            setComposerAnchor({ ...action, left });
+            setComposerAnchor({ ...action, left, top: action.composerTop ?? action.top });
             onCommentRange(action.range);
           }}
           onActivateComment={onActivateComment}

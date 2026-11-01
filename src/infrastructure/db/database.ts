@@ -1,3 +1,9 @@
+import {
+  validateWalkthroughAssets,
+  type WalkthroughAssetInput,
+  type WalkthroughAssetMetadata,
+} from "../../shared/walkthrough-assets.js";
+import { htmlCommentAnchorSchema } from "../../shared/html-comment-anchor.js";
 import { createHash, randomUUID } from "node:crypto";
 import { STRUCTURE_NODE_NOTATIONS } from "../../domain/models.js";
 import {
@@ -580,6 +586,7 @@ export interface CommentUpdateInput {
 }
 
 export interface NewWalkthroughInput {
+  assets?: WalkthroughAssetInput[];
   pullRequestId: string;
   sourceOid: string;
   title: string;
@@ -1909,11 +1916,63 @@ export class RvwDatabase {
     });
   }
 
+  getWalkthroughAsset(
+    id: string,
+    path: string,
+  ): { mediaType: string; sha256: string; content: Uint8Array } | null {
+    const row = this.database
+      .prepare(
+        "SELECT media_type, sha256, content FROM walkthrough_assets WHERE walkthrough_id = ? AND path = ?",
+      )
+      .get(id, path) as DbRow | undefined;
+    return row
+      ? {
+          mediaType: stringValue(row, "media_type"),
+          sha256: stringValue(row, "sha256"),
+          content: row.content as Uint8Array,
+        }
+      : null;
+  }
+
+  listWalkthroughAssets(id: string): WalkthroughAssetMetadata[] {
+    // Also permits reading legacy schemas during migration verification.
+    if (
+      !this.database
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'walkthrough_assets'")
+        .get()
+    )
+      return [];
+    return (
+      this.database
+        .prepare(
+          "SELECT path, media_type, byte_length, sha256 FROM walkthrough_assets WHERE walkthrough_id = ? ORDER BY path",
+        )
+        .all(id) as DbRow[]
+    ).map((row) => ({
+      path: stringValue(row, "path"),
+      mediaType: stringValue(row, "media_type"),
+      byteLength: numberValue(row, "byte_length"),
+      sha256: stringValue(row, "sha256"),
+    }));
+  }
+
+  private replaceWalkthroughAssets(id: string, inputs: WalkthroughAssetInput[] | undefined): void {
+    if (inputs === undefined) return;
+    const assets = validateWalkthroughAssets(inputs);
+    this.database.prepare("DELETE FROM walkthrough_assets WHERE walkthrough_id = ?").run(id);
+    const insert = this.database.prepare(
+      "INSERT INTO walkthrough_assets(walkthrough_id, path, media_type, byte_length, sha256, content) VALUES (?, ?, ?, ?, ?, ?)",
+    );
+    for (const asset of assets)
+      insert.run(id, asset.path, asset.mediaType, asset.byteLength, asset.sha256, asset.bytes);
+  }
+
   private mapWalkthrough(row: DbRow): Walkthrough {
     const id = stringValue(row, "id");
     return {
       id,
       ref: formatWalkthroughUri(id),
+      assets: this.listWalkthroughAssets(id),
       pullRequestId: stringValue(row, "pull_request_id"),
       sourceOid: stringValue(row, "source_oid"),
       title: stringValue(row, "title"),
@@ -2007,6 +2066,7 @@ export class RvwDatabase {
           now,
         );
       this.insertCodeReferences("walkthrough", id, input.references);
+      this.replaceWalkthroughAssets(id, input.assets);
       this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
@@ -2040,6 +2100,7 @@ export class RvwDatabase {
       }
       this.database.prepare("DELETE FROM walkthrough_references WHERE walkthrough_id = ?").run(id);
       this.insertCodeReferences("walkthrough", id, input.references);
+      this.replaceWalkthroughAssets(id, input.assets);
       this.incrementDomainRevisions(["walkthroughs"]);
     });
     const walkthrough = this.getWalkthrough(id);
@@ -2152,8 +2213,8 @@ export class RvwDatabase {
         .prepare(
           `INSERT INTO comment_targets(
             comment_id, target_kind, walkthrough_id, source_document_hash, quoted_text,
-            start_line, end_line
-          ) VALUES (?, 'walkthrough', ?, ?, ?, ?, ?)`,
+            start_line, end_line${target.htmlAnchor ? ", html_anchor" : ""}
+          ) VALUES (?, 'walkthrough', ?, ?, ?, ?, ?${target.htmlAnchor ? ", ?" : ""})`,
         )
         .run(
           commentId,
@@ -2162,6 +2223,7 @@ export class RvwDatabase {
           target.quotedText,
           target.startLine,
           target.endLine,
+          ...(target.htmlAnchor ? [JSON.stringify(target.htmlAnchor)] : []),
         );
       return;
     }
@@ -2202,6 +2264,13 @@ export class RvwDatabase {
         kind: "walkthrough",
         walkthroughId: stringValue(row, "walkthrough_id"),
         walkthroughTitle: stringValue(row, "walkthrough_title"),
+        ...(row.html_anchor !== undefined && nullableString(row, "html_anchor")
+          ? {
+              htmlAnchor: htmlCommentAnchorSchema.parse(
+                JSON.parse(stringValue(row, "html_anchor")),
+              ),
+            }
+          : {}),
         sourceDocumentHash: nullableString(row, "source_document_hash"),
         quotedText: nullableString(row, "quoted_text"),
         startLine: nullableNumber(row, "start_line"),
@@ -2246,8 +2315,7 @@ export class RvwDatabase {
   getComment(id: string): ReviewComment | null {
     const row = this.database
       .prepare(
-        `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
-          t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+        `SELECT c.*, t.*,
           w.title AS walkthrough_title
         FROM comments c
         JOIN comment_targets t ON t.comment_id = c.id
@@ -2341,8 +2409,7 @@ export class RvwDatabase {
     return (
       this.database
         .prepare(
-          `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
-            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+          `SELECT c.*, t.*,
             w.title AS walkthrough_title
           FROM comments c
           JOIN comment_targets t ON t.comment_id = c.id
@@ -2371,8 +2438,7 @@ export class RvwDatabase {
     const comments = (
       this.database
         .prepare(
-          `SELECT c.*, t.target_kind, t.document_kind, t.source_oid, t.file_path,
-            t.source_document_hash, t.quoted_text, t.walkthrough_id, t.start_line, t.end_line,
+          `SELECT c.*, t.*,
             w.title AS walkthrough_title,
             root.id AS root_id, root.body AS root_body,
             root.related_commit_oid AS root_related_commit_oid,

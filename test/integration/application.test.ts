@@ -1,6 +1,7 @@
+import { hashDocument } from "../../src/domain/pr-markdown.js";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -1214,6 +1215,161 @@ describe("RvwService commit workflow", () => {
     });
     expect(secondPage.comments.map(({ comment }) => comment.ref)).toEqual([unresolvedComment.ref]);
     expect(secondPage.page.hasMore).toBe(false);
+  });
+
+  it("persists bundled artifact assets atomically across reopen, update and deletion", async () => {
+    const { repository, firstHead, service, database, dbFile } = setup("rvw-artifact-assets-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const input = {
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "Editorial",
+      body: `~~~html-preview\n${readFileSync("test/fixtures/static-artifact/editorial.html", "utf8")}\n~~~`,
+      references: [
+        {
+          id: "handler",
+          label: "Handler",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+      assets: [
+        {
+          path: "assets/editorial.woff2",
+          mediaType: "font/woff2" as const,
+          base64: readFileSync("test/fixtures/static-artifact/assets/editorial.woff2").toString(
+            "base64",
+          ),
+        },
+        {
+          path: "assets/pixel.png",
+          mediaType: "image/png" as const,
+          base64: readFileSync("test/fixtures/static-artifact/assets/pixel.png").toString("base64"),
+        },
+      ],
+    };
+    const saved = await service.publishWalkthrough(input);
+    expect(saved.assets).toHaveLength(2);
+    const reopened = new RvwDatabase({ filePath: dbFile, migrationsDirectory: "./migrations" });
+    databases.push(reopened);
+    expect(reopened.getWalkthrough(saved.id)?.assets).toEqual(saved.assets);
+    const asset = saved.assets!.find((item) => item.path === "assets/editorial.woff2")!;
+    expect(
+      Buffer.from(
+        service.getWalkthroughAsset(opened.pullRequest.id, saved.id, asset.path, asset.sha256)
+          .content,
+      ).toString("base64"),
+    ).toBe(input.assets[0]!.base64);
+    expect(() =>
+      service.getWalkthroughAsset(opened.pullRequest.id, saved.id, asset.path, "stale"),
+    ).toThrow();
+    await expect(service.updateWalkthrough(saved.ref, { ...input, assets: [] })).rejects.toThrow(
+      /Missing/,
+    );
+    expect(database.getWalkthrough(saved.id)?.assets).toEqual(saved.assets);
+    const changedImage = Buffer.from(input.assets[1]!.base64, "base64");
+    changedImage[changedImage.length - 1] = changedImage[changedImage.length - 1]! ^ 1;
+    await expect(
+      service.updateWalkthrough(saved.ref, {
+        ...input,
+        assets: [
+          input.assets[0]!,
+          { ...input.assets[1]!, base64: changedImage.toString("base64") },
+        ],
+      }),
+    ).rejects.toThrow(/immutable/);
+    const metadata = {
+      sourceOid: input.sourceOid,
+      title: input.title,
+      body: input.body,
+      references: input.references,
+    };
+    const updated = await service.updateWalkthrough(saved.ref, { ...metadata, title: "Updated" });
+    expect(updated.assets).toEqual(saved.assets);
+    await service.updateWalkthrough(saved.ref, {
+      ...metadata,
+      body: "[Handler](rvw-ref:handler)",
+      assets: [],
+    });
+    expect(database.listWalkthroughAssets(saved.id)).toEqual([]);
+    await service.updateWalkthrough(saved.ref, input);
+    service.deleteWalkthroughByUri(saved.ref);
+    expect(database.listWalkthroughAssets(saved.id)).toEqual([]);
+  });
+
+  it("persists exact HTML targets and rejects stale selections without remapping changed bodies", async () => {
+    const { repository, firstHead, service, database, dbFile } = setup("rvw-html-anchor-");
+    const opened = await service.openPullRequest(undefined, repository);
+    const body =
+      '```html-preview\n<table><tr><td>alpha</td><td>beta</td></tr></table>\n<a href="rvw-ref:source">Source</a>\n```';
+    const walkthrough = await service.publishWalkthrough({
+      pullRequest: opened.pullRequest.url,
+      sourceOid: firstHead,
+      title: "HTML",
+      body,
+      diagramBindings: {},
+      references: [
+        {
+          id: "source",
+          label: "Source",
+          path: "src.txt",
+          startLine: 1,
+          endLine: 2,
+          description: null,
+        },
+      ],
+    });
+    const target = {
+      kind: "walkthrough" as const,
+      walkthroughId: walkthrough.id,
+      startLine: 2,
+      endLine: 2,
+      expectedDocumentHash: hashDocument(body),
+      htmlAnchor: { fenceStartLine: 1, path: [0, 0, 0, 1] },
+    };
+    const comment = await service.createComment({
+      pullRequestId: opened.pullRequest.id,
+      target,
+      body: "second cell",
+    });
+    expect(database.getComment(comment.id)?.target).toMatchObject({
+      htmlAnchor: target.htmlAnchor,
+    });
+    const reopened = new RvwDatabase({ filePath: dbFile, migrationsDirectory: "./migrations" });
+    try {
+      expect(reopened.getComment(comment.id)?.target).toEqual(comment.target);
+    } finally {
+      reopened.close();
+    }
+    expect(service.placeWalkthroughComment(comment)).toMatchObject({
+      outdated: false,
+      range: { startLine: 2, endLine: 2 },
+    });
+    await expect(
+      service.createComment({
+        pullRequestId: opened.pullRequest.id,
+        target: { ...target, htmlAnchor: { ...target.htmlAnchor, fenceStartLine: 99 } },
+        body: "invalid fence",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await service.updateWalkthrough(walkthrough.ref, {
+      sourceOid: firstHead,
+      title: "HTML",
+      body: body.replace("alpha", "changed"),
+      diagramBindings: {},
+      references: walkthrough.references,
+    });
+    expect(service.placeWalkthroughComment(comment)).toEqual({
+      outdated: true,
+      range: null,
+      path: null,
+    });
+    await expect(
+      service.createComment({ pullRequestId: opened.pullRequest.id, target, body: "stale" }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(database.getComment(comment.id)?.posts[0]?.body).toBe("second cell");
   });
 
   it("publishes and replaces commit-fixed walkthroughs in place while preserving whole-document comments", async () => {

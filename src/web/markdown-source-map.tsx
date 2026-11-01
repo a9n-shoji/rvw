@@ -1,7 +1,10 @@
+import type { HtmlCommentAnchor } from "../domain/models.js";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 export interface MarkdownSourceRange {
+  htmlAnchor?: HtmlCommentAnchor;
+  htmlSourceBody?: string;
   startLine: number;
   endLine: number;
 }

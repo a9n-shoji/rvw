@@ -1,3 +1,8 @@
+import {
+  bundledAssetPath,
+  transformWalkthroughCss,
+  type CssAssetReference,
+} from "./walkthrough-css.js";
 import { fromHtml } from "hast-util-from-html";
 import { sanitize, type Schema } from "hast-util-sanitize";
 import { toHtml } from "hast-util-to-html";
@@ -15,6 +20,11 @@ const dataImagePattern = /^data:image\/(?:png|jpeg|gif|webp|avif);base64,[A-Za-z
 const documentElementPattern = /<\s*\/?\s*(?:html|head|body)(?:\s|>)/iu;
 
 const allowedHtmlTags = new Set([
+  "html",
+  "head",
+  "body",
+  "title",
+  "meta",
   "a",
   "article",
   "aside",
@@ -109,7 +119,6 @@ const forbiddenTags = new Set([
   "frame",
   "iframe",
   "link",
-  "meta",
   "object",
   "script",
   "video",
@@ -117,6 +126,14 @@ const forbiddenTags = new Set([
 ]);
 
 const automaticCommentSurfaceTags = new Set([
+  "p",
+  "li",
+  "blockquote",
+  "pre",
+  "div",
+  "td",
+  "th",
+  "tr",
   "article",
   "aside",
   "details",
@@ -143,6 +160,7 @@ const globalProperties = new Set([
 ]);
 
 const htmlProperties = new Map<string, Set<string>>([
+  ["style", new Set(["media", "type"])],
   ["a", new Set(["href", "hrefLang"])],
   ["blockquote", new Set(["cite"])],
   ["button", new Set(["disabled", "name", "type", "value"])],
@@ -299,6 +317,8 @@ export interface HtmlPreviewAnalysis {
   imageCount: number;
   referenceIds: string[];
   repositoryImages: string[];
+  assetReferences: CssAssetReference[];
+  standalone: boolean;
 }
 
 export interface RenderedHtmlPreview extends HtmlPreviewAnalysis {
@@ -352,33 +372,6 @@ function lineError(line: number, message: string): never {
   throw new RvwError("INVALID_INPUT", `html-preview L${line}: ${message}`);
 }
 
-function decodeCssEscapes(value: string): string {
-  return value.replace(/\\([\da-f]{1,6}\s?|.)/giu, (_match, escaped: string) => {
-    const hexadecimal = escaped.trim();
-    if (/^[\da-f]{1,6}$/iu.test(hexadecimal)) {
-      const codePoint = Number.parseInt(hexadecimal, 16);
-      return codePoint === 0 || codePoint > 0x10ffff ? "�" : String.fromCodePoint(codePoint);
-    }
-    return escaped;
-  });
-}
-
-function validateCss(value: string, line: number): void {
-  const normalized = decodeCssEscapes(value.replace(/\/\*[\s\S]*?\*\//gu, " ")).toLowerCase();
-  const withoutInternalFragments = normalized.replace(
-    /url\s*\(\s*(["']?)#[a-z_][\w:.-]*\1\s*\)/giu,
-    "internal-fragment",
-  );
-  if (
-    /@import\b|@font-face\b|(?:^|[^-])url\s*\(|image-set\s*\(|(?:^|[^-])image\s*\(|expression\s*\(|-moz-binding\s*:|behavior\s*:/u.test(
-      withoutInternalFragments,
-    ) ||
-    /(?:https?|file|blob|data):|\/\//u.test(withoutInternalFragments)
-  ) {
-    lineError(line, "network resourceを参照するCSSは使用できません。");
-  }
-}
-
 export function resolveWalkthroughRepositoryPath(value: string): string | null {
   const trimmed = value.trim();
   if (
@@ -413,8 +406,9 @@ export function resolveWalkthroughRepositoryPath(value: string): string | null {
 }
 
 function propertyAllowed(tagName: string, propertyName: string, inSvg: boolean): boolean {
+  if (tagName === "meta" && ["charSet", "name", "content"].includes(propertyName)) return true;
   if (globalProperties.has(propertyName) || /^aria[A-Z]/u.test(propertyName)) return true;
-  if (propertyName === "dataRvwCommentable") return true;
+  if (/^data[A-Z]/u.test(propertyName)) return true;
   if (inSvg && svgProperties.has(propertyName)) return true;
   return htmlProperties.get(tagName)?.has(propertyName) ?? false;
 }
@@ -457,6 +451,22 @@ function validateHref(value: string, line: number, inSvg: boolean, referenceIds:
   );
 }
 
+function validateCss(
+  value: string,
+  context: "stylesheet" | "declarationList" | "value",
+  references: CssAssetReference[],
+  line: number,
+): void {
+  try {
+    transformWalkthroughCss(value, context, references);
+  } catch (error) {
+    lineError(
+      line,
+      `network resourceを参照するCSSまたは未対応のCSSは使用できません。 ${error instanceof Error ? error.message : "Invalid CSS"}`,
+    );
+  }
+}
+
 function validateAndCollect(
   root: HastNode,
   fenceStartLine: number,
@@ -465,9 +475,11 @@ function validateAndCollect(
   repositoryImages: string[];
   propertyNames: Set<string>;
   imageCount: number;
+  assetReferences: CssAssetReference[];
 } {
   const referenceIds: string[] = [];
   const repositoryImages: string[] = [];
+  const assetReferences: CssAssetReference[] = [];
   const propertyNames = new Set<string>();
   let imageCount = 0;
 
@@ -482,10 +494,7 @@ function validateAndCollect(
       return;
     }
     if (node.type === "doctype") {
-      lineError(
-        absoluteLine(node.position, fenceStartLine),
-        "doctypeはfragment内で使用できません。",
-      );
+      return;
     }
     if (node.type !== "element" || !node.tagName) {
       node.children?.forEach((child) => visit(child, inSvg));
@@ -495,6 +504,18 @@ function validateAndCollect(
     const lowerTagName = tagName.toLowerCase();
     const line = absoluteLine(node.position, fenceStartLine);
     const nextInSvg = inSvg || lowerTagName === "svg";
+    if (tagName === "meta") {
+      const properties = node.properties ?? {};
+      if (!(
+        Object.keys(properties).every((key) => key === "charSet") ||
+        (Object.keys(properties).every((key) => ["name", "content"].includes(key)) &&
+          ["viewport", "color-scheme", "description"].includes(String(properties.name)))
+      ))
+        lineError(
+          line,
+          "Only charset, viewport, color-scheme and description metadata are supported.",
+        );
+    }
     if (forbiddenTags.has(lowerTagName)) lineError(line, `<${tagName}> は使用できません。`);
     if (!allowedHtmlTags.has(tagName) && !allowedSvgTags.has(tagName)) {
       lineError(line, `<${tagName}> は使用できません。`);
@@ -516,16 +537,21 @@ function validateAndCollect(
       propertyNames.add(propertyName);
     }
     const style = stringProperty(node, "style");
-    if (style !== null) validateCss(style, line);
+    if (style !== null) validateCss(style, "declarationList", assetReferences, line);
     if (tagName === "style") {
-      validateCss(node.children?.map((child) => child.value ?? "").join("") ?? "", line);
+      validateCss(
+        node.children?.map((child) => child.value ?? "").join("") ?? "",
+        "stylesheet",
+        assetReferences,
+        line,
+      );
     }
     const href = stringProperty(node, "href");
     if (href !== null) validateHref(href, line, nextInSvg, referenceIds);
     if (nextInSvg) {
       for (const propertyName of svgResourceProperties) {
         const value = stringProperty(node, propertyName);
-        if (value !== null) validateCss(value, line);
+        if (value !== null) validateCss(value, "value", assetReferences, line);
       }
     }
     if (tagName === "img") {
@@ -536,6 +562,10 @@ function validateAndCollect(
         if (!dataImagePattern.test(src)) {
           lineError(line, "inline imageは対応するbase64 data:imageだけを使用できます。");
         }
+      } else if (src.startsWith("rvw-asset:")) {
+        const path = bundledAssetPath(src);
+        if (!path) lineError(line, "Invalid bundled image path.");
+        assetReferences.push({ path, kind: "image" });
       } else {
         const repositoryPath = resolveWalkthroughRepositoryPath(src);
         if (!repositoryPath) {
@@ -553,17 +583,17 @@ function validateAndCollect(
       `画像はWalkthrough全体で${MAX_WALKTHROUGH_HTML_IMAGES}件以下にしてください。`,
     );
   }
-  return { referenceIds, repositoryImages, propertyNames, imageCount };
+  return { referenceIds, repositoryImages, propertyNames, imageCount, assetReferences };
 }
 
 function sanitizeSchema(propertyNames: ReadonlySet<string>): Schema {
   return {
     allowComments: true,
-    allowDoctypes: false,
+    allowDoctypes: true,
     ancestors: {},
     attributes: { "*": [...propertyNames] },
     clobber: [],
-    protocols: { href: ["http", "https", "rvw-ref"], src: ["data"] },
+    protocols: { href: ["http", "https", "rvw-ref"], src: ["data", "rvw-asset"] },
     required: {},
     strip: [...forbiddenTags],
     tagNames: [...allowedHtmlTags, ...allowedSvgTags],
@@ -634,10 +664,26 @@ function instrumentAndResolve(
     ) {
       node.properties.dataRvwCommentSurface = "true";
     }
+    const style = stringProperty(node, "style");
+    if (style !== null)
+      node.properties.style = transformWalkthroughCss(style, "declarationList", [], resolvedImages);
+    if (node.tagName === "style") {
+      const css = node.children?.map((child) => child.value ?? "").join("") ?? "";
+      node.children = [
+        { type: "text", value: transformWalkthroughCss(css, "stylesheet", [], resolvedImages) },
+      ];
+    }
+    for (const property of svgResourceProperties) {
+      const value = stringProperty(node, property);
+      if (value !== null)
+        node.properties[property] = transformWalkthroughCss(value, "value", [], resolvedImages);
+    }
     if (node.tagName === "img") {
       const src = stringProperty(node, "src");
       if (src && !src.startsWith("data:")) {
-        const repositoryPath = resolveWalkthroughRepositoryPath(src);
+        const repositoryPath = src.startsWith("rvw-asset:")
+          ? bundledAssetPath(src)
+          : resolveWalkthroughRepositoryPath(src);
         const resolved = repositoryPath ? resolvedImages.get(repositoryPath) : null;
         if (repositoryPath && resolved) {
           node.properties.src = resolved;
@@ -674,10 +720,8 @@ export function renderWalkthroughHtmlPreview(
   fenceStartLine: number,
   resolvedImages: HtmlPreviewResolvedImages = new Map(),
 ): RenderedHtmlPreview {
-  if (documentElementPattern.test(source)) {
-    lineError(fenceStartLine + 1, "<html>、<head>、<body>はfragment内で使用できません。");
-  }
-  const parsed = fromHtml(source, { fragment: true }) as unknown as HastNode;
+  const standalone = documentElementPattern.test(source) || /^\s*<!doctype\s/iu.test(source);
+  const parsed = fromHtml(source, { fragment: !standalone }) as unknown as HastNode;
   const collected = validateAndCollect(parsed, fenceStartLine);
   const safe = sanitize(
     parsed as Parameters<typeof sanitize>[0],
@@ -691,6 +735,8 @@ export function renderWalkthroughHtmlPreview(
     imageCount: collected.imageCount,
     referenceIds: collected.referenceIds,
     repositoryImages: collected.repositoryImages,
+    assetReferences: collected.assetReferences,
+    standalone,
     html: toHtml(safe as Parameters<typeof toHtml>[0]),
   };
 }
@@ -706,5 +752,7 @@ export function analyzeWalkthroughHtmlPreview(
     imageCount: rendered.imageCount,
     referenceIds: rendered.referenceIds,
     repositoryImages: rendered.repositoryImages,
+    assetReferences: rendered.assetReferences,
+    standalone: rendered.standalone,
   };
 }

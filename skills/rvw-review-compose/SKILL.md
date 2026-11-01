@@ -241,3 +241,11 @@ Report in the normal Agent response:
 The response is not a persistent Artifact. State that the committed code remains the source of truth
 and leave the reviewer free to enter through a file map, a behavior Structure, a Walkthrough, or code in
 another order.
+
+## Walkthrough format
+
+When delegating a new Walkthrough to `rvw-walkthrough`, request a complete static HTML/CSS document
+in one `html-preview` fence, with declared `rvw-ref:` code links. Preserve existing Markdown/Mermaid
+Walkthroughs for reading; do not convert existing artifacts unless requested.
+
+Walkthrough artifacts own their visual design. Choose layouts and visual languages for each explanation, not a repeated card template or the rvw chrome. Theme variables are optional. The Walkthrough skill supports standalone static HTML with bundled WOFF2/fonts and raster images; use that workflow for reproducible static artifacts without JavaScript or remote resources.

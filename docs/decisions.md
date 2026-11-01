@@ -3924,3 +3924,19 @@ The two overrides deliberately cross upstream dependency ranges and need compati
 their consumers change. Audit gates require the npm advisory service and may block an otherwise
 unrelated change when a new advisory is published or the service is unavailable. Existing published
 rvw bundles remain affected until a new release is built and approved through the release workflow.
+
+## HTML Walkthrough authoring and precise comments
+
+New Walkthroughs use one static `html-preview` fence; the existing body and reference protocol stays compatible. No comment mode is added. HTML comments store DOM paths and optional text endpoints in a nullable target field, plus the existing document hash. Paths are only resolved against the unchanged document. Any body change makes these anchors Outdated; we do not guess a new target or retain historical bodies. Legacy line comments keep their existing mapping. This supersedes the line-only HTML anchor rule in section 5.4.
+
+HTML comments use the exact browser text selection across cells and rows, without a cell/row/table chooser or automatic expansion to a larger element. Hover comments remain available for visual elements and empty cells. The preview uses warm neutral surfaces, restrained borders, and readable typography inspired by document artifacts; authored CSS still takes precedence over baseline typography.
+
+HTML preview layout stays author-owned: the viewer adds no inner wrapper padding or paragraph/table/blockquote/pre spacing. Shared CSS retains theme colors, basic typography, reference chips, and interaction styles. This avoids compounding viewer padding with authored page padding and heading margins.
+
+## Static artifacts own their design and local assets
+
+This supersedes the earlier warm-neutral artifact styling and fragment-only/font-prohibition rules. rvw provides a viewport and review UI, not a report design system. Defaults have low specificity; authored document typography/palette/layout remain intact. HTML-only documents use pane width; Markdown widths stay unchanged.
+
+Keep Walkthrough and html-preview as the model/storage envelope. Accept parsed standalone documents without stripping html/head/body. Add optional bounded asset envelopes over the existing CLI/socket protocol and store decoded bytes in a per-Walkthrough SQLite BLOB table, transactionally with content. No files need to enter Git, and no filesystem paths reach the server. Omitted assets preserve; explicit assets replace; cascade deletion cleans up. Immutable existing paths require changed resources to use new names, making content changes explicit. Hash-checked, PR-scoped reads prevent mixing a stale document with new asset bytes.
+
+Use css-tree AST parsing instead of regex relaxation. Permit only bundled raster images and WOFF2 in CSS resource positions; no external URL, import, local font lookup, executable function, or unparsed syntax. SVG continues inline under the existing allowlist; uploaded SVG and external stylesheets remain unsupported. Font headers and declared size bounds are validated, with browser font decoding as a final boundary. Parent resolves bytes into data URLs; CSP permits data fonts/images but continues denying scripts/network/frames/forms. No generic hosting or runtime is introduced.

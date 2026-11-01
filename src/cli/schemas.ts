@@ -1,3 +1,4 @@
+import { htmlCommentAnchorSchema } from "../shared/html-comment-anchor.js";
 import { z } from "zod";
 import {
   DEFAULT_COMMENT_LIST_LIMIT,
@@ -91,6 +92,7 @@ const walkthroughCommentTargetOutputSchema = z
     kind: z.literal("walkthrough"),
     walkthroughId: z.string(),
     walkthroughTitle: z.string(),
+    htmlAnchor: htmlCommentAnchorSchema.optional(),
     sourceDocumentHash: z.string().nullable(),
     quotedText: z.string().nullable(),
     startLine: z.number().int().nullable(),

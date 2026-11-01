@@ -429,6 +429,30 @@ export function createApp(service: RvwService, options: CreateAppOptions): Hono 
       }),
   );
 
+  app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId/asset", (context) => {
+    const fetchSite = context.req.header("sec-fetch-site");
+    const origin = context.req.header("origin");
+    if (
+      (fetchSite !== undefined && fetchSite !== "same-origin" && fetchSite !== "none") ||
+      (origin !== undefined && origin !== options.security.expectedOrigin)
+    ) {
+      throw new RvwError("INVALID_ORIGIN", "cross-origin bundled asset request is not allowed.", {
+        status: 403,
+      });
+    }
+    const asset = service.getWalkthroughAsset(
+      context.req.param("id"),
+      context.req.param("walkthroughId"),
+      requiredQuery(context.req.query("path"), "path"),
+      requiredQuery(context.req.query("sha256"), "sha256"),
+    );
+    context.header("Content-Type", asset.mediaType);
+    context.header("X-Content-Type-Options", "nosniff");
+    context.header("Content-Security-Policy", "default-src 'none'; sandbox");
+    context.header("Cache-Control", "no-store");
+    return context.body(Uint8Array.from(asset.content));
+  });
+
   app.get("/api/pull-requests/:id/walkthroughs/:walkthroughId", (context) =>
     context.json({
       ok: true,
