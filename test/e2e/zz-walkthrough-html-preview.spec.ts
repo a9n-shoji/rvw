@@ -258,11 +258,9 @@ test("renders a sandboxed full-Walkthrough HTML preview with exact-source assets
     .poll(async () => (await marker.boundingBox())?.x ?? Number.POSITIVE_INFINITY)
     .toBeLessThan(markerBeforeScroll!.x - iframeScrollLeft + 4);
   await marker.click();
-  const commentsToggle = page.locator(".sidebar-stack--comments > .sidebar-stack-toggle");
-  await expect(commentsToggle).toHaveAttribute("aria-expanded", "true");
-  await expect(
-    page.locator(".comment-sidebar .comment-thread").filter({ hasText: commentBody }),
-  ).toBeVisible();
+  const thread = shell.getByRole("dialog", { name: "HTML上のコメント" });
+  await expect(thread.getByText(commentBody, { exact: true })).toBeVisible();
+  await thread.getByRole("button", { name: "コメントを閉じる" }).click();
 
   // Full-width HTML now fits the original canvas; explicitly create a narrow viewport for scrolling.
   await page.setViewportSize({ width: 1000, height: 900 });
@@ -356,6 +354,7 @@ test("keeps same-line cells and partial text distinct across reload, without a c
   await shell.getByRole("button", { name: `${comment.id}のコメントを開く`, exact: true }).click();
   await expect(second).toHaveClass(/rvw-html-active-comment/);
   await expect(frame.locator("td").first()).not.toHaveClass(/rvw-html-active-comment/);
+  await shell.getByRole("button", { name: "コメントを閉じる" }).click();
   await second.evaluate((element) => {
     const range = element.ownerDocument.createRange();
     const text = [...element.childNodes].find((node) => node.nodeType === Node.TEXT_NODE)!;
@@ -392,6 +391,7 @@ test("keeps same-line cells and partial text distinct across reload, without a c
       }),
     )
     .toBe("beta");
+  await shell.getByRole("button", { name: "コメントを閉じる" }).click();
   await frame.locator("table").evaluate((element) => {
     const cells = element.querySelectorAll("td");
     const textNode = (cell: Element) =>
@@ -430,6 +430,7 @@ test("keeps same-line cells and partial text distinct across reload, without a c
       }),
     )
     .toBe("phabeta");
+  await shell.getByRole("button", { name: "コメントを閉じる" }).click();
   const changed = await request.post(`/api/fixture/walkthroughs/${walkthroughId}/update`, {
     data: { title, body: body.replace("alpha", "changed"), referenceLabel: "Route" },
   });
