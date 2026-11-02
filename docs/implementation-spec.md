@@ -1426,7 +1426,7 @@ LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthre
 未満だけauto-ackし、task stateを短周期で再確認する。投稿・返信ごとの`allowChanges`（既定false）で
 `investigate`と`change`のlaneに分ける。これは変更の許可であり、変更指示ではない。具体的な行動は本文の依頼から
 判断し、チェック済みでも回答だけで満たせる依頼には変更しない。uncheckedな投稿は確認・結果返信以外のコード、
-GitHub、Artifact更新を許可しない。rootの許可を返信へ継承しない。UIだけが許可を設定・変更でき、Agent CLIは
+GitHub、Artifact更新を許可しない。rootの許可を返信へ継承しない。UIでは新規投稿・返信の送信前だけ許可を設定でき、投稿後と編集時にはチェックを表示しない。本文編集は送信時の許可を保持する。Agent CLIは
 許可を付与できない。permission変更は同じpost IDの新規event（kind=`permission-changed`）として記録する。
 オンは本文の再評価をqueueし、オフは未着手の変更を止める。各write phase直前に対象postを再取得し、取り消し後の
 変更を止める。完了済み変更は自動で巻き戻さない。comment stateは引き続きunresolved/resolvedだけとする。
