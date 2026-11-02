@@ -44,6 +44,15 @@ describe("rvw-watch-comments delegation contract", () => {
     expect(skill).toMatch(/Activation does not discard[\s\S]*existing reservation/);
   });
 
+  it("allows requested local Artifacts while retaining the code-write boundary", () => {
+    expect(skill).toContain("--purpose artifact");
+    expect(skill).toContain("defaults to `--purpose code`");
+    expect(skill).toContain("It uses the same shared lock as code work");
+    expect(skill).toContain("does not upgrade the lane or grant code/GitHub permission");
+    expect(skill).toContain("Do not delete Artifacts without separate explicit authorization");
+    expect(skill).not.toContain("PR metadata, Walkthrough, Structure, or other Artifact changes");
+  });
+
   it("separates historical actionability from shared watcher authority", () => {
     expect(skill).toContain("watch-state.mjs' activate");
     expect(skill).toMatch(/Never run `activate` when resuming an existing task/);

@@ -6,13 +6,22 @@ const args = process.argv.slice(2);
 if (args[0] === "comment" && args[1] === "get") {
   const database = new DatabaseSync(process.env.FAKE_WATCH_STATE);
   const posts = database
-    .prepare("SELECT DISTINCT post_id AS id FROM events WHERE comment_ref = ? AND lane = 'change'")
+    .prepare(
+      `SELECT post_id AS id, lane FROM events e WHERE comment_ref = ?
+       AND sequence = (SELECT MAX(sequence) FROM events WHERE post_id = e.post_id)`,
+    )
     .all(args[2]);
   database.close();
   process.stdout.write(
     JSON.stringify({
       ok: true,
-      comment: { resolved: false, posts: posts.map((post) => ({ ...post, allowChanges: true })) },
+      comment: {
+        resolved: process.env.FAKE_WATCH_COMMENT_RESOLVED === "1",
+        posts:
+          process.env.FAKE_WATCH_COMMENT_GONE === "1"
+            ? []
+            : posts.map((post) => ({ id: post.id, allowChanges: post.lane === "change" })),
+      },
     }) + "\n",
   );
 } else if (args[0] !== "comment" || args[1] !== "watch-task") {

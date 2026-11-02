@@ -116,7 +116,7 @@ export function ChangePermissionCheckbox({
   return (
     <label
       className="comment-change-permission"
-      title="本文の依頼に応じてファイルやArtifactを変更してよい、という許可です。変更を指示するものではありません。"
+      title="本文の依頼に応じてコードやGitHubを変更してよい、という許可です。rvw内のWalkthrough・Structureの作成や更新には不要です。変更を指示するものではありません。"
     >
       <input
         type="checkbox"
