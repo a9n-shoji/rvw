@@ -86,7 +86,7 @@ export function HtmlPreviewOverlay({
               setOpenCommentId(marker.id);
               onActivateComment(marker.id);
             }
-          }
+          }}
         >
           <CommentIcon />
         </button>

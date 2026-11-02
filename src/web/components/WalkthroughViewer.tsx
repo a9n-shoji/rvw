@@ -454,7 +454,7 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
               onOpenRepositoryLink={context.onOpenRepositoryLink}
             />
           ) : null;
-        }
+        }}
         commentComposer={(label) =>
           previewCommentRange ? (
             <WalkthroughDiagramCommentComposer
