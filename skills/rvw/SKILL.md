@@ -22,6 +22,15 @@ Structure to `rvw-walkthrough` or `rvw-structure` respectively.
    unavailable. `RVW_DATABASE_PATH` selects an explicitly managed database path; the CLI uses a
    running viewer only when it reports that same database.
 
+## Comment-driven Artifact updates
+
+When handling feedback under `rvw-watch-comments`, a post with `allowChanges: false` may still
+request creation or updates of rvw-local Walkthrough or Structure Artifacts and bundled assets.
+Use the matching producer, read the current Artifact, and follow the watch parent's shared
+`--purpose artifact` reservation before publication. This does not permit repository source edits,
+commits, pushes, GitHub/PR metadata changes, or Artifact deletion. Keep payload staging outside the
+reviewed repository. The triggering post must still exist and its thread must remain unresolved.
+
 ## Create comments
 
 Create a new root thread only when the user explicitly asks to record review findings in rvw. Do not

@@ -17,10 +17,16 @@ function authorityEnvironment(state: string) {
   };
 }
 
-function run(state: string, command: string, args: string[] = [], input?: unknown) {
+function run(
+  state: string,
+  command: string,
+  args: string[] = [],
+  input?: unknown,
+  environment: Record<string, string> = {},
+) {
   const result = spawnSync(process.execPath, [script, command, "--state", state, ...args], {
     encoding: "utf8",
-    env: authorityEnvironment(state),
+    env: { ...authorityEnvironment(state), ...environment },
     ...(input === undefined ? {} : { input: JSON.stringify(input) }),
   });
   if (result.status !== 0) throw new Error(result.stderr);
@@ -46,6 +52,90 @@ function ingest(state: string, frame: unknown) {
 }
 
 describe("rvw-watch-comments task state", () => {
+  function permissionLease(allowChanges = false) {
+    const state = path.join(mkdtempSync(path.join(os.tmpdir(), "rvw-artifact-")), "task.db");
+    const pr = "https://github.com/acme/repo/pull/1";
+    run(state, "init");
+    ingest(state, {
+      type: "ready",
+      databaseId: "abc123abc123abc123abc123abc123ab",
+      cursor: "cursor-0",
+      anchoredAtCurrent: true,
+    });
+    const enqueue = (sequence: number) =>
+      ingest(state, {
+        type: "comment-posted",
+        cursor: `cursor-${sequence}`,
+        event: {
+          sequence,
+          postId: `post-${sequence}`,
+          commentRef: `rvw://comment/${sequence}`,
+          pullRequestUrl: pr,
+          createdAt: new Date().toISOString(),
+          deleted: false,
+          allowChanges,
+        },
+      });
+    enqueue(1);
+    const lease = run(state, "claim", [
+      "--pull-request",
+      pr,
+      "--lane",
+      allowChanges ? "change" : "investigate",
+    ]);
+    const args = ["--lease", String(lease.leaseId), "--write-key", "acme/repo#feature"];
+    return { state, pr, lease, args, enqueue };
+  }
+
+  it("reserves unchecked Artifact work without granting code permission and serializes writers", () => {
+    const { state, pr, args, enqueue } = permissionLease();
+    expect(() => run(state, "reserve-write", args)).toThrow("no change permission");
+    expect(() => run(state, "reserve-write", [...args, "--purpose", "unknown"])).toThrow(
+      "purpose must be code or artifact",
+    );
+    expect(run(state, "reserve-write", [...args, "--purpose", "artifact"])).toMatchObject({
+      purpose: "artifact",
+      status: "reserved",
+      writeKey: "acme/repo#feature",
+    });
+    expect(() => run(state, "reserve-write", args)).toThrow("no change permission");
+    enqueue(2);
+    const second = run(state, "claim", ["--pull-request", pr]);
+    expect(() =>
+      run(state, "reserve-write", [
+        "--lease",
+        String(second.leaseId),
+        "--write-key",
+        "acme/repo#feature",
+        "--purpose",
+        "artifact",
+      ]),
+    ).toThrow("Another write-capable batch owns repository");
+  });
+
+  it.each(["FAKE_WATCH_COMMENT_RESOLVED", "FAKE_WATCH_COMMENT_GONE"])(
+    "rejects Artifact writes for a non-actionable request (%s)",
+    (key) => {
+      const { state, args } = permissionLease();
+      expect(() =>
+        run(state, "reserve-write", [...args, "--purpose", "artifact"], undefined, { [key]: "1" }),
+      ).toThrow("no longer actionable");
+    },
+  );
+
+  it("keeps Artifact permission after code permission is revoked without upgrading the lease", () => {
+    const { state, args } = permissionLease(true);
+    const database = new DatabaseSync(state);
+    database.prepare("UPDATE events SET lane = 'investigate'").run();
+    database.close();
+    expect(() => run(state, "reserve-write", args)).toThrow("permission was revoked");
+    expect(run(state, "reserve-write", [...args, "--purpose", "artifact"])).toMatchObject({
+      purpose: "artifact",
+      status: "reserved",
+    });
+    expect(() => run(state, "reserve-write", args)).toThrow("permission was revoked");
+  });
+
   it("does not suppress human permission changes to an Agent-created post", () => {
     const state = path.join(
       mkdtempSync(path.join(os.tmpdir(), "rvw-human-permission-")),
