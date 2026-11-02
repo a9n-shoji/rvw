@@ -457,16 +457,6 @@ export function CommentThread({
     const current = readCommentReplyDraft(comment.pullRequestId, replyDraftKey);
     writeCommentReplyDraft(comment.pullRequestId, replyDraftKey, { ...current, allowChanges });
   };
-  const permissionMutation = useMutation({
-    mutationFn: async ({ postId, allowChanges }: { postId: string; allowChanges: boolean }) =>
-      await api<{ comment: ReviewComment }>(
-        `/api/comments/${comment.id}/posts/${postId}/permission`,
-        { ...jsonRequest({ allowChanges }), method: "PATCH" },
-      ),
-    onMutate: cancelCommentRefetch,
-    onError: recoverCommentRefetch,
-    onSuccess: ({ comment: next }) => cacheComment(next),
-  });
   const replyMutation = useMutation({
     mutationFn: async () =>
       await api<{ post: CommentPost; comment: ReviewComment }>(
@@ -842,13 +832,6 @@ export function CommentThread({
                     onOpenRepositoryLink={onOpenRepositoryLink}
                   />
                 )}
-                <ChangePermissionCheckbox
-                  checked={post.allowChanges}
-                  disabled={permissionMutation.isPending}
-                  onChange={(allowChanges) =>
-                    permissionMutation.mutate({ postId: post.id, allowChanges })
-                  }
-                />
                 {post.relatedCommitOid && <small>commit {post.relatedCommitOid.slice(0, 8)}</small>}
               </div>
             ))}
@@ -956,7 +939,6 @@ export function CommentThread({
           </div>
           <ErrorNotice
             error={
-              permissionMutation.error ??
               replyMutation.error ??
               stateMutation.error ??
               editMutation.error ??

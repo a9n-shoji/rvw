@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 const pullRequestId = "11111111-1111-4111-8111-111111111111";
 const permissionLabel = "この依頼に伴う変更を許可";
 
-test("keeps permission independent for each post and reply, including after reload", async ({
+test("hides submitted permissions even while editing, including after reload", async ({
   page,
   request,
 }) => {
@@ -26,10 +26,15 @@ test("keeps permission independent for each post and reply, including after relo
       .locator(".comment-post")
       .first()
       .getByRole("checkbox", { name: permissionLabel });
-    await expect(root).toBeChecked();
-    // Permission can be withdrawn without editing the request or changing resolution.
-    await root.click();
-    await expect(root).not.toBeChecked();
+    await expect(root).toHaveCount(0);
+    await thread.getByRole("button", { name: "コメントのその他の操作" }).click();
+    await thread.getByRole("menuitem", { name: "編集", exact: true }).click();
+    await expect(root).toHaveCount(0);
+    await thread
+      .getByRole("textbox", { name: "コメントを編集", exact: true })
+      .fill("Updated question");
+    await thread.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(root).toHaveCount(0);
     const draftPermission = thread.getByRole("checkbox", { name: permissionLabel }).last();
     await expect(draftPermission).not.toBeChecked();
     await thread
@@ -40,17 +45,29 @@ test("keeps permission independent for each post and reply, including after relo
     await expect(thread.locator(".comment-post")).toHaveCount(2);
     await expect(
       thread.locator(".comment-post").last().getByRole("checkbox", { name: permissionLabel }),
-    ).toBeChecked();
+    ).toHaveCount(0);
     await expect(thread.getByRole("checkbox", { name: permissionLabel }).last()).not.toBeChecked();
     await page.reload();
     const commentsToggle = page.getByRole("button", { name: /^コメント \d+$/ });
     await expect(commentsToggle).toBeVisible();
     if ((await commentsToggle.getAttribute("aria-expanded")) !== "true")
       await commentsToggle.click();
-    await expect(root).not.toBeChecked();
+    await expect(root).toHaveCount(0);
     await expect(
       thread.locator(".comment-post").last().getByRole("checkbox", { name: permissionLabel }),
-    ).toBeChecked();
+    ).toHaveCount(0);
+    await thread.getByRole("button", { name: "コメントのその他の操作" }).click();
+    await thread.getByRole("menuitem", { name: "編集", exact: true }).click();
+    await expect(root).toHaveCount(0);
+    await thread.getByRole("button", { name: "キャンセル", exact: true }).click();
+    await expect(root).toHaveCount(0);
+    await thread.getByRole("button", { name: "1件目の返信のその他の操作" }).click();
+    await thread.getByRole("menuitem", { name: "編集", exact: true }).click();
+    await expect(
+      thread.locator(".comment-post").last().getByRole("checkbox", { name: permissionLabel }),
+    ).toHaveCount(0);
+    await thread.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(thread.locator(".comment-post").getByRole("checkbox")).toHaveCount(0);
     await expect(thread.getByRole("button", { name: "解決", exact: true })).toBeVisible();
   } finally {
     await request.delete(`/api/comments/${comment.id}`, { data: {} });

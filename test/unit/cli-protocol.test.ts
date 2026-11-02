@@ -196,7 +196,7 @@ describe("CLI protocol discovery", () => {
 
     expect(readStdout()).toEqual({
       protocolVersion: 7,
-      appVersion: "0.15.1",
+      appVersion: "0.15.2",
       capabilities: [
         "agent.transport",
         "comment.create",
@@ -830,6 +830,77 @@ describe("CLI protocol discovery", () => {
         live: null,
       },
     });
+  });
+
+  it.each([
+    { assets: undefined },
+    { assets: [] },
+    {
+      assets: [
+        {
+          path: "assets/pixel.png",
+          mediaType: "image/png",
+          byteLength: 68,
+          sha256: "a".repeat(64),
+        },
+        {
+          path: "assets/editorial.woff2",
+          mediaType: "font/woff2",
+          byteLength: 128,
+          sha256: "b".repeat(64),
+        },
+      ],
+    },
+  ])("gets a Walkthrough comment with asset metadata $assets", async ({ assets }) => {
+    const walkthrough = {
+      id: "70000000-0000-4000-8000-000000000001",
+      ref: "rvw://walkthrough/70000000-0000-4000-8000-000000000001",
+      pullRequestId: commentReviewContext.comment.pullRequestId,
+      sourceOid: "c".repeat(40),
+      title: "Review guide",
+      body: "Review the implementation.",
+      authorLabel: null,
+      diagramBindings: {},
+      references: [],
+      createdAt: rootPost.createdAt,
+      updatedAt: rootPost.updatedAt,
+      ...(assets === undefined ? {} : { assets }),
+    };
+    const getCommentReviewContext = vi.fn().mockResolvedValue({
+      ...commentReviewContext,
+      comment: {
+        ...commentReviewContext.comment,
+        target: {
+          kind: "walkthrough",
+          walkthroughId: walkthrough.id,
+          walkthroughTitle: walkthrough.title,
+          sourceDocumentHash: null,
+          quotedText: null,
+          startLine: null,
+          endLine: null,
+        },
+      },
+      latestPlacement: { outdated: false, range: null, path: null },
+      exactSource: null,
+      walkthrough,
+    });
+    const { runtime, close } = mockRuntime({ getCommentReviewContext });
+    const readStdout = captureStdout();
+
+    await createProgram(() => runtime).parseAsync([
+      "node",
+      "rvw",
+      "comment",
+      "get",
+      commentRef,
+      "--json",
+    ]);
+
+    expect(getCommentReviewContext).toHaveBeenCalledWith(commentRef, { live: false });
+    const output = readStdout();
+    expect(output).toMatchObject({ ok: true, walkthrough });
+    expect((output as { walkthrough: unknown }).walkthrough).toEqual(walkthrough);
+    expect(close).toHaveBeenCalledOnce();
   });
 
   it("includes the PR body in comment get only when requested", async () => {

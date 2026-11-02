@@ -220,6 +220,18 @@ const reviewCommentOutputSchema = z
 
 const walkthroughOutputSchema = z
   .object({
+    assets: z
+      .array(
+        z
+          .object({
+            path: z.string(),
+            mediaType: z.string(),
+            byteLength: z.number().int().min(0),
+            sha256: z.string(),
+          })
+          .strict(),
+      )
+      .optional(),
     id: z.string(),
     ref: z.string(),
     pullRequestId: z.string(),
