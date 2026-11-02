@@ -437,7 +437,24 @@ const WalkthroughMarkdownPre: NonNullable<Components["pre"]> = ({ children, node
         onOpenReference={context.onOpenReference}
         onOpenRepositoryLink={context.onOpenRepositoryLink}
         onCommentRange={context.onCommentRange}
-        onActivateComment={context.onActivateComment}
+        onActivateComment={(commentId) => context.onCommentActiveChange(commentId, true)}
+        renderCommentThread={(commentId) => {
+          const annotation = context.placedComments.find(({ comment }) => comment.id === commentId);
+          return annotation ? (
+            <CommentThread
+              comment={annotation.comment}
+              variant="sidebar"
+              draftScope={`${context.draftScope}:html:${sourceRange.startLine}`}
+              placement={annotation.placement}
+              markdownSourceOid={context.sourceOid}
+              themePreference={context.themePreference}
+              cancelDraftOnEscape
+              replyContextLabel="HTML"
+              onOpenCodeReference={context.onOpenCommentCodeReference}
+              onOpenRepositoryLink={context.onOpenRepositoryLink}
+            />
+          ) : null;
+        }
         commentComposer={(label) =>
           previewCommentRange ? (
             <WalkthroughDiagramCommentComposer
