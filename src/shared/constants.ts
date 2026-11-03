@@ -1,4 +1,4 @@
-export const APP_VERSION = "0.16.0";
+export const APP_VERSION = "0.17.0";
 export const PROTOCOL_VERSION = 7;
 export const DEFAULT_VIEWER_PORT = 43_117;
 
