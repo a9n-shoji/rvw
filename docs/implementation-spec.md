@@ -1425,15 +1425,19 @@ LLM往復なしにclaim、thread再読込、ack投稿まで進め、leaseとthre
 それ未満なら保証できる最大の正数、複数枠を保証できなければ1を指定し、予約数を超えない。driverはlimit
 未満だけauto-ackし、task stateを短周期で再確認する。投稿・返信ごとの`allowChanges`（既定false）で
 `investigate`と`change`のlaneに分ける。これは変更の許可であり、変更指示ではない。具体的な行動は本文の依頼から
-判断し、チェック済みでも回答だけで満たせる依頼には変更しない。uncheckedな投稿は確認・結果返信以外のコード、
-GitHub、Artifact更新を許可しない。rootの許可を返信へ継承しない。UIでは新規投稿・返信の送信前だけ許可を設定でき、投稿後と編集時にはチェックを表示しない。本文編集は送信時の許可を保持する。Agent CLIは
+判断し、チェック済みでも回答だけで満たせる依頼には変更しない。uncheckedな投稿でもrvw内のWalkthrough・Structure・同梱アセットの作成と更新は依頼に応じて許可する。
+コード、commit、push、GitHub・PR情報の変更には引き続き対象投稿の`allowChanges: true`が必要で、成果物の削除は別途明示許可を要する。
+Artifact用の一時ファイルはレビュー対象リポジトリ外に作成する。rootの許可を返信へ継承しない。UIでは新規投稿・返信の送信前だけ許可を設定でき、投稿後と編集時にはチェックを表示しない。本文編集は送信時の許可を保持する。Agent CLIは
 許可を付与できない。permission変更は同じpost IDの新規event（kind=`permission-changed`）として記録する。
-オンは本文の再評価をqueueし、オフは未着手の変更を止める。各write phase直前に対象postを再取得し、取り消し後の
-変更を止める。完了済み変更は自動で巻き戻さない。comment stateは引き続きunresolved/resolvedだけとする。
+オンは本文の再評価をqueueし、オフは未着手のコード・GitHub変更を止める。各write phase直前に対象postを再取得し、取り消し後の
+コード・GitHub変更を止める。依頼に応じたrvw内のArtifact作成・更新は継続できる。完了済み変更は自動で巻き戻さない。comment stateは引き続きunresolved/resolvedだけとする。
 調査は同一PRのchange leaseを待たず、immutable commitを読み別workerへ渡す。2枠以上なら調査用に1枠を確保する。
 1枠のruntimeでは並行調査できないことを明示する。changeはPRごとに1 active leaseとし、後続依頼を同じPR担当へ
 lease境界で渡す。専用worktreeをPRごとに使い、別PRは並行できる。shared writer keyはhead repository + encoded
 head branchとし、同じbranchを共有するPRは直列化する。旧repository単位のreservationとも競合させる。
+watchの`reserve-write`は既定の`--purpose code`ではchange laneと最新の投稿許可を検証する。
+`--purpose artifact`はinvestigate laneからも利用でき、投稿の存在と未解決状態を検証して同じ共有branch予約を取得する。
+Artifact予約によってコード変更権限は増えない。予約待ちの後は対象Artifactを再取得してから更新する。
 retryable failureは`nextAttemptAt`到達後に、新しいwatch eventやreconnectを待たずauto-ackする。
 state toolはpending集合のemptyからnon-emptyへの遷移を一行JSONで待機できる。task-private stateとは別に、
 rvw databaseはlogical watch task IDと単調増加generationをshared authorityとして保持する。new taskの明示的
@@ -1448,7 +1452,7 @@ subagentを起動せず、task-private queue、lease、retry stateも保持し�
 acknowledgement、delegation、write reservationを停止するが、activation前にdelegate済みでwrite reservationも
 取得済みのleaseに対するdistributed cancellationではない。そのworkはsafe boundaryまで進められる。
 対象postの変更許可があり、live PR authorと起動時GitHub loginが一致し、live head repository、branch、
-OIDとpush先が一致する場合だけコード/GitHubを変更できる。他人・不明なPRでは、明示許可されたlocal Artifact更新と調査・返信のみを扱う。
+OIDとpush先が一致する場合だけコード/GitHubを変更できる。他人・不明なPRでも、依頼に応じたrvw内のArtifact作成・更新と調査・返信を扱う。
 親taskはacknowledge済みleaseをbatchの大きさ、mode、変更有無にかかわらず同じscheduling turn内で一つの
 subagentへ必ず委譲し、直接調査・実装しない。changeは同じPR担当を再利用し、investigateは独立workerへ渡す。subagentを速やかに起動できない場合はleaseをretryable
 failureへ戻し、親taskが代行しない。subagent結果は、最終bodyに加えて`relatedCommitOid`、完全な

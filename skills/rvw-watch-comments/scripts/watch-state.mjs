@@ -905,13 +905,15 @@ function abandonClaim(database, leaseId) {
   });
 }
 
-async function reserveWrite(database, leaseId, writeKey) {
+async function reserveWrite(database, leaseId, writeKey, purpose = "code") {
+  if (!["code", "artifact"].includes(purpose)) fail("purpose must be code or artifact");
   assertPermissionPolicy(database);
   if (getMeta(database, "own_mode") === "per-comment") {
     const batch = database
       .prepare("SELECT * FROM batches WHERE lease_id = ? AND status = 'in_flight'")
       .get(leaseId);
-    if (!batch || batch.lane !== "change") fail("This lease has no change permission");
+    if (!batch) fail("Active lease was not found");
+    if (purpose === "code" && batch.lane !== "change") fail("This lease has no change permission");
     const events = database
       .prepare("SELECT post_id, comment_ref FROM events WHERE batch_id = ? AND status = 'pending'")
       .all(batch.id);
@@ -922,18 +924,25 @@ async function reserveWrite(database, leaseId, writeKey) {
       if (
         !result.json.comment.resolved &&
         result.json.comment.posts.some(
-          (post) => post.id === event.post_id && post.allowChanges === true,
+          (post) =>
+            post.id === event.post_id && (purpose === "artifact" || post.allowChanges === true),
         )
       )
         allowed = true;
     }
-    if (!allowed) fail("Change permission was revoked or the request is no longer actionable");
+    if (!allowed)
+      fail(
+        purpose === "artifact"
+          ? "Artifact request is no longer actionable"
+          : "Change permission was revoked or the request is no longer actionable",
+      );
   }
   const reservation = await acquireSharedWriteReservation(database, leaseId, writeKey);
   try {
     return {
       ...recordWriteReservation(database, leaseId, reservation.writeKey),
       status: reservation.status,
+      purpose,
     };
   } catch (error) {
     await releaseSharedWriteReservation(database, leaseId);
@@ -1215,7 +1224,7 @@ function status(database) {
     authorLabelBound: getMeta(database, "author_label") !== null,
     expectedGitHubLogin: getMeta(database, "expected_login") || null,
     ownPullRequests: getMeta(database, "own_mode"),
-    otherPullRequests: "investigate-and-reply",
+    otherPullRequests: "investigate-reply-and-local-artifacts",
     batches: {
       pending: batchCounts.pending ?? 0,
       inFlight: batchCounts.in_flight ?? 0,
@@ -1308,6 +1317,7 @@ async function main() {
           database,
           required(options, "lease"),
           required(options, "write-key"),
+          options.purpose,
         )),
       });
       return;

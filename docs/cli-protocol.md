@@ -379,9 +379,16 @@ endpoint emits another `comment-posted` envelope with the same post ID, new sequ
 `kind: "permission-changed"`; creation events use `kind: "posted"`. Events carry `allowChanges` as
 historical routing context; a fresh post read remains authoritative before writes. Permission is
 never an instruction: determine intent from the body, and do not change anything unnecessarily.
-The Skill requires the triggering post's current permission before code or Artifact changes, and verifies the
-live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
-Another or unknown author remains code/GitHub read-only.
+The Skill requires the triggering post's current permission before code/GitHub changes, and verifies
+the live head repository, branch, and OID so fork PRs cannot target the base repository accidentally.
+Requested rvw-local Walkthrough/Structure creation and updates, including bundled assets, do not
+require `allowChanges`; another or unknown author remains code/GitHub read-only. The bundled
+`watch-state.mjs reserve-write --purpose artifact` checks current post/thread actionability and
+acquires the same shared branch reservation as code writes, including for investigation leases.
+The default purpose is `code`, which still requires the change lane and fresh code permission.
+An Artifact reservation never upgrades a lease's code permission. Artifact deletion still requires
+separate explicit authorization. This is a Skill policy and additive task-script option; public CLI
+and socket request schemas are unchanged.
 
 The Skill also bundles one aggregate preflight, a cursor-resolving RFC 7464 driver, an empty-to-non-empty
 pending waiter, and an auto-ack command. The normal driver polls once per second and invokes auto-ack
