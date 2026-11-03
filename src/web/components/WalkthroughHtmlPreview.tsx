@@ -233,6 +233,7 @@ export function WalkthroughHtmlPreview({
   navigationLine,
   themePreference,
   commentComposer,
+  renderCommentThread,
   onOpenReference,
   onOpenRepositoryLink,
   onCommentRange,
@@ -250,6 +251,7 @@ export function WalkthroughHtmlPreview({
   navigationLine: number | null;
   themePreference: ThemePreference;
   commentComposer: (label: string) => ReactNode;
+  renderCommentThread: (commentId: string) => ReactNode;
   onOpenReference: (reference: WalkthroughReference, openInRightPane: boolean) => void;
   onOpenRepositoryLink: (path: string, sourceOid: string, openInRightPane: boolean) => void;
   onCommentRange: (range: MarkdownSourceRange) => void;
@@ -788,6 +790,7 @@ export function WalkthroughHtmlPreview({
         <HtmlPreviewOverlay
           action={overlayAction}
           markers={markers}
+          renderCommentThread={renderCommentThread}
           composer={composerAnchor ? commentComposer(composerAnchor.label) : null}
           composerAnchor={composerAnchor}
           onComment={(action) => {

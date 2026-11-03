@@ -90,8 +90,37 @@ for (const width of [1440, 900, 640]) {
       expect(composerBox!.y).toBeGreaterThanOrEqual(targetBox!.y + targetBox!.height);
       expect(composerBox!.x).toBeGreaterThanOrEqual(0);
       expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual(width);
-      await composer.getByRole("textbox").press("Escape");
+      const createdResponse = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/comments") && response.request().method() === "POST",
+      );
+      await composer.getByRole("button", { name: "コメント", exact: true }).click();
+      const created = (await (await createdResponse).json()) as { comment: { id: string } };
       await expect(composer).toHaveCount(0);
+      const marker = shell.getByRole("button", { name: `${created.comment.id}のコメントを開く` });
+      await marker.click();
+      const thread = shell.getByRole("dialog", { name: "HTML上のコメント" });
+      await expect(thread).toBeVisible();
+      await expect(
+        thread.getByText("再試行の上限はどこで定義されていますか？", { exact: true }),
+      ).toBeVisible();
+      await expect(marker).toHaveAttribute("aria-expanded", "true");
+      const threadBox = await thread.boundingBox();
+      expect(threadBox!.x).toBeGreaterThanOrEqual(0);
+      expect(threadBox!.x + threadBox!.width).toBeLessThanOrEqual(width);
+      await thread.locator(".comment-reply-composer textarea").fill("上限の確認もお願いします");
+      await thread.getByRole("button", { name: /HTMLから返信を送信/ }).click();
+      await expect(thread.getByText("上限の確認もお願いします", { exact: true })).toBeVisible();
+      await thread.getByRole("button", { name: "解決", exact: true }).click();
+      await expect(thread.getByRole("button", { name: "再度開く", exact: true })).toBeVisible();
+      await thread.getByRole("button", { name: "コメントを閉じる" }).click();
+      await expect(thread).toHaveCount(0);
+      await expect(marker).toBeFocused();
+      await marker.press("Enter");
+      await expect(thread.getByText("上限の確認もお願いします", { exact: true })).toBeVisible();
+      await thread.press("Escape");
+      await expect(thread).toHaveCount(0);
+      await expect(marker).toBeFocused();
       await frame.getByRole("link").click({ modifiers: ["ControlOrMeta"] });
       await expect(page.locator(".document-pane")).toHaveCount(2);
       await expect(page.locator('.document-pane[data-pane="right"] diffs-container')).toBeVisible();

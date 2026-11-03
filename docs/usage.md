@@ -477,3 +477,6 @@ rvw pr list --include-archived --include-closed --offset 0 --limit 50 --json
 HTMLコメントは選択した文字範囲・要素を保存します。本文更新後は誤った位置への再配置を避けるためOutdatedとして残ります。既存の行コメントは従来の再配置規則を維持します。
 
 HTML Walkthroughの配色・文字組み・レイアウトは成果物側で自由に設計できます。スタンドアロンHTMLと同梱画像・WOFF2は`--html` / `--assets-dir`で取り込めます。Gitへのアセットコミットや外部CDNは不要です。詳しくは[Static Artifactの取り込み](static-artifacts.md)を参照してください。
+
+HTML Walkthrough上のコメントマークを押すと、その位置の近くで本文と返信を開けます。
+返信・編集・解決もその場で操作できます。「閉じる」またはEscで閉じると、元のマークへフォーカスが戻ります。

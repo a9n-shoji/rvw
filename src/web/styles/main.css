@@ -3036,6 +3036,19 @@ diffs-container > [slot="header-metadata"] {
   width: 100%;
   margin: 0;
 }
+.walkthrough-html-comment-thread {
+  position: absolute;
+  z-index: 3;
+  width: min(420px, calc(100% - 24px));
+  max-height: min(560px, 70vh);
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px var(--shadow-medium);
+  pointer-events: auto;
+}
 .walkthrough-html-preview-error {
   margin: 18px 0;
   padding: 12px;
